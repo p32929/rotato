@@ -440,18 +440,21 @@ class AutoRevival {
 
   async runOnce() {
     const dead = this.quarantineTracker.getDeadKeys();
-    if (dead.length === 0) return { checked: 0, revived: 0 };
+    if (dead.length === 0) return { checked: 0, revived: 0, inconclusive: 0 };
     console.log(`[AUTO-REVIVAL] Checking ${dead.length} quarantined keys…`);
     let revived = 0;
+    let inconclusive = 0;
     for (const entry of dead) {
-      const alive = await this.testKey(entry.key, entry.apiType);
-      if (alive) {
+      const result = await this.testKey(entry.key, entry.apiType);
+      if (result === true) {
         this.quarantineTracker.unmarkDead(entry.key);
         console.log(`[AUTO-REVIVAL] Revived key ${entry.key.substring(0, 8)}...`);
         revived += 1;
+      } else if (result === null) {
+        inconclusive += 1;
       }
     }
-    return { checked: dead.length, revived };
+    return { checked: dead.length, revived, inconclusive };
   }
 
   async testKey(key, apiType) {
@@ -477,8 +480,16 @@ class AutoRevival {
         }
       }, res => {
         res.resume();
-        const ok = res.statusCode < 400;
-        resolve(ok);
+        if (res.statusCode >= 200 && res.statusCode < 400) {
+          resolve(true);
+        } else if (res.statusCode === 401) {
+          resolve(false);
+        } else if (res.statusCode === 403 || res.statusCode === 404) {
+          console.log(`[AUTO-REVIVAL] ${apiType} returned ${res.statusCode} (endpoint not available, not marking dead)`);
+          resolve(null);
+        } else {
+          resolve(false);
+        }
       });
       req.on('error', () => resolve(false));
       req.on('timeout', () => { req.destroy(); resolve(false); });

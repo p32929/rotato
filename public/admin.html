@@ -1318,6 +1318,15 @@
             html += statCard('Requests (24h)', t.total_requests_24h || 0, 'blue');
             html += '</div>';
 
+            const authRejected = t.auth_rejected_24h || 0;
+            if (authRejected > 0) {
+                html += '<div class="card p-3 border-l-4 border-l-yellow-500 mt-3">';
+                html += '<div class="text-xs text-muted-foreground">Auth Rejected (24h)</div>';
+                html += '<div class="text-lg font-semibold text-yellow-600">' + authRejected + ' requests</div>';
+                html += '<div class="text-xs text-muted-foreground mt-1">Rotato gate rejected these (missing/invalid ACCESS_KEY). Not counted in provider usage.</div>';
+                html += '</div>';
+            }
+
             if (dk.length > 0) {
                 html += '<div class="card p-4 border border-destructive/30 bg-destructive/5">';
                 html += '<h3 class="text-sm font-semibold text-destructive mb-2">⚠ Dead Keys (quarantined 24h)</h3>';
@@ -1339,7 +1348,7 @@
 
             const providerOrder = ['openrouter', 'omniroute', 'gemini', 'mistral', 'groq', 'opencoderouter'];
             providerOrder.forEach(prov => {
-                const keys = u[prov] || [];
+                const keys = (u[prov] || []).filter(k => k.key !== '(no key)' && k.name !== '(no key)');
                 if (keys.length === 0 && !nk[prov]) return;
                 const quota = QUOTA_LIMITS[prov] || 100;
                 const totalUses = keys.reduce((s, k) => s + k.count, 0);

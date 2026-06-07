@@ -852,6 +852,7 @@ class ProxyServer {
 
       const usage = {};
       const last24h = now - 24 * 60 * 60 * 1000;
+      let authRejectedCount = 0;
       if (fs.existsSync(logFile)) {
         const lines = fs.readFileSync(logFile, 'utf8').split('\n').filter(Boolean);
         for (const line of lines) {
@@ -859,6 +860,10 @@ class ProxyServer {
             const entry = JSON.parse(line);
             const ts = new Date(entry.timestamp || 0).getTime();
             if (ts < last24h) continue;
+            if (entry.status === 401 && (!entry.keyUsed || entry.keyUsed === null)) {
+              authRejectedCount += 1;
+              continue;
+            }
             const provider = entry.provider || 'unknown';
             const key = entry.keyUsed || '(no key)';
             if (!usage[provider]) usage[provider] = {};
@@ -873,8 +878,12 @@ class ProxyServer {
         }
       }
 
+      const providers = this.config ? Array.from(this.config.getProviders().keys()) : [];
+      const validProviders = new Set(providers);
+
       const namedUsage = {};
       for (const [prov, keys] of Object.entries(usage)) {
+        if (!validProviders.has(prov)) continue;
         namedUsage[prov] = [];
         for (const [key, stats] of Object.entries(keys)) {
           const name = cleanRegistry[prov]?.[key] || (key.length > 20 ? `${key.substring(0, 8)}...${key.substring(key.length - 6)}` : key);
@@ -883,8 +892,6 @@ class ProxyServer {
         namedUsage[prov].sort((a, b) => b.count - a.count);
       }
 
-      const providers = this.config ? Object.keys(this.config.providers || {}) : [];
-
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
         timestamp: new Date().toISOString(),
@@ -892,11 +899,13 @@ class ProxyServer {
         named_keys: cleanRegistry,
         dead_keys: deadKeys,
         usage_24h: namedUsage,
+        auth_rejected_24h: authRejectedCount,
         totals: {
           providers: providers.length,
           named_keys: Object.values(cleanRegistry).reduce((sum, v) => sum + Object.keys(v).length, 0),
           dead_keys: deadKeys.length,
-          total_requests_24h: Object.values(namedUsage).reduce((sum, p) => sum + p.reduce((s, k) => s + k.count, 0), 0)
+          total_requests_24h: Object.values(namedUsage).reduce((sum, p) => sum + p.reduce((s, k) => s + k.count, 0), 0),
+          auth_rejected_24h: authRejectedCount
         }
       }));
     } catch (e) {

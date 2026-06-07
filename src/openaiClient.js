@@ -17,7 +17,7 @@ class OpenAIClient {
     const failedKeys = []; // Track which keys failed and why
 
     const rotationStatusCodes = customStatusCodes || new Set([429, 401, 403, 400]);
-    const deadKeyStatusCodes = new Set([401, 403]);
+    const deadKeyStatusCodes = new Set([401]);
     const quarantineTracker = this.keyRotator.quarantineTracker;
     const latencyTracker = this.keyRotator.latencyTracker;
     const costTracker = this.keyRotator.costTracker;
