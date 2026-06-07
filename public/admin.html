@@ -501,8 +501,8 @@
                             </svg>
                             <span class="text-sm">API Keys</span>
                         </button>
-                        <button 
-                            onclick="showTab('logs')" 
+                        <button
+                            onclick="showTab('logs')"
                             class="tab-btn py-3 px-2 border-b-2 border-transparent text-muted-foreground hover:text-foreground hover:border-border transition-colors flex items-center space-x-2"
                             data-tab="logs"
                         >
@@ -510,6 +510,16 @@
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
                             </svg>
                             <span class="text-sm">API Logs</span>
+                        </button>
+                        <button
+                            onclick="showTab('status')"
+                            class="tab-btn py-3 px-2 border-b-2 border-transparent text-muted-foreground hover:text-foreground hover:border-border transition-colors flex items-center space-x-2"
+                            data-tab="status"
+                        >
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                            </svg>
+                            <span class="text-sm">Status</span>
                         </button>
                     </nav>
                     
@@ -643,6 +653,24 @@
                 <!-- Status Messages -->
                 <div id="envSuccess" class="hidden bg-green-50 border border-green-200 text-green-800 px-4 py-3 rounded-md mt-4"></div>
                 <div id="envError" class="hidden bg-destructive/10 border border-destructive/20 text-destructive px-4 py-3 rounded-md mt-4"></div>
+            </div>
+
+            <div id="status" class="tab-content hidden">
+                <div class="section-header flex items-center justify-between">
+                    <div>
+                        <h2 class="text-lg font-semibold text-foreground">Gateway Status</h2>
+                        <p class="text-muted-foreground text-xs mt-1">Named keys, quota usage, dead keys &middot; auto-refresh every 10s</p>
+                    </div>
+                    <div class="flex items-center space-x-2">
+                        <span id="statusUpdated" class="text-xs text-muted-foreground">—</span>
+                        <button onclick="loadStatus()" class="btn btn-secondary px-3 py-1 text-xs">Refresh</button>
+                        <button onclick="clearAllQuarantine()" class="btn btn-secondary px-3 py-1 text-xs">Clear Dead Keys</button>
+                    </div>
+                </div>
+
+                <div id="statusContent" class="space-y-4">
+                    <div class="text-muted-foreground text-sm py-8 text-center">Loading status…</div>
+                </div>
             </div>
 
             <!-- Logs Tab -->
@@ -1226,7 +1254,261 @@
         
         let originalValues = {};
         let keyUsageData = {};
-        
+
+        let statusAutoRefresh = null;
+        let statusData = null;
+        let latencyData = null;
+        let costData = null;
+
+        const QUOTA_LIMITS = {
+            openrouter: 50,
+            omniroute: 300,
+            gemini: 50,
+            mistral: 100,
+            groq: 14,
+            opencoderouter: 1000
+        };
+
+        async function loadStatus() {
+            try {
+                const [statusRes, latencyRes, costRes] = await Promise.all([
+                    fetch('/admin/api/status'),
+                    fetch('/admin/api/latency').catch(() => ({ ok: false })),
+                    fetch('/admin/api/cost').catch(() => ({ ok: false }))
+                ]);
+                if (!statusRes.ok) throw new Error('HTTP ' + statusRes.status);
+                statusData = await statusRes.json();
+                if (latencyRes.ok) latencyData = await latencyRes.json();
+                if (costRes.ok) costData = await costRes.json();
+                renderStatus();
+            } catch (e) {
+                document.getElementById('statusContent').innerHTML = '<div class="text-destructive text-sm py-4">Failed to load status: ' + e.message + '</div>';
+            }
+        }
+
+        async function runAutoRevival() {
+            try {
+                const res = await fetch('/admin/api/revival/run', { method: 'POST' });
+                if (res.ok) {
+                    const r = await res.json();
+                    showSuccessToast('Revival: checked ' + r.checked + ', revived ' + r.revived);
+                    loadStatus();
+                } else {
+                    showErrorToast('Revival failed');
+                }
+            } catch (e) {
+                showErrorToast('Error: ' + e.message);
+            }
+        }
+
+        function renderStatus() {
+            if (!statusData) return;
+            const c = document.getElementById('statusContent');
+            const t = statusData.totals || {};
+            const dk = statusData.dead_keys || [];
+            const u = statusData.usage_24h || {};
+            const nk = statusData.named_keys || {};
+
+            let html = '';
+
+            html += '<div class="grid grid-cols-2 md:grid-cols-4 gap-3">';
+            html += statCard('Providers', t.providers || 0, 'blue');
+            html += statCard('Named Keys', t.named_keys || 0, 'blue');
+            html += statCard('Dead Keys', dk.length, dk.length > 0 ? 'red' : 'green');
+            html += statCard('Requests (24h)', t.total_requests_24h || 0, 'blue');
+            html += '</div>';
+
+            const authRejected = t.auth_rejected_24h || 0;
+            if (authRejected > 0) {
+                html += '<div class="card p-3 border-l-4 border-l-yellow-500 mt-3">';
+                html += '<div class="text-xs text-muted-foreground">Auth Rejected (24h)</div>';
+                html += '<div class="text-lg font-semibold text-yellow-600">' + authRejected + ' requests</div>';
+                html += '<div class="text-xs text-muted-foreground mt-1">Rotato gate rejected these (missing/invalid ACCESS_KEY). Not counted in provider usage.</div>';
+                html += '</div>';
+            }
+
+            if (dk.length > 0) {
+                html += '<div class="card p-4 border border-destructive/30 bg-destructive/5">';
+                html += '<h3 class="text-sm font-semibold text-destructive mb-2">⚠ Dead Keys (quarantined 24h)</h3>';
+                html += '<div class="space-y-1 text-xs">';
+                dk.forEach(d => {
+                    const expiresIn = Math.max(0, Math.round((d.expiresAt - Date.now()) / 60000));
+                    const apiType = d.apiType || 'openai';
+                    const name = (nk[apiType] && nk[apiType][d.key]) || d.key;
+                    html += '<div class="flex items-center justify-between font-mono">';
+                    html += '<span>' + escapeHtml(name) + ' <span class="text-muted-foreground">(HTTP ' + d.statusCode + ')</span></span>';
+                    html += '<span class="text-destructive">expires in ' + expiresIn + ' min</span>';
+                    html += '</div>';
+                });
+                html += '</div>';
+                html += '<div class="flex justify-end">';
+                html += '<button onclick="runAutoRevival()" class="btn btn-secondary px-3 py-1 text-xs">↻ Run Auto-Revival Now</button>';
+                html += '</div></div>';
+            }
+
+            const providerOrder = ['openrouter', 'omniroute', 'gemini', 'mistral', 'groq', 'opencoderouter'];
+            providerOrder.forEach(prov => {
+                const keys = (u[prov] || []).filter(k => k.key !== '(no key)' && k.name !== '(no key)');
+                if (keys.length === 0 && !nk[prov]) return;
+                const quota = QUOTA_LIMITS[prov] || 100;
+                const totalUses = keys.reduce((s, k) => s + k.count, 0);
+                const pct = Math.min(100, Math.round((totalUses / quota) * 100));
+                const barColor = pct >= 90 ? 'bg-destructive' : pct >= 70 ? 'bg-yellow-500' : 'bg-green-500';
+                html += '<div class="card p-4">';
+                html += '<div class="flex items-center justify-between mb-2">';
+                html += '<h3 class="text-sm font-semibold text-foreground capitalize">' + prov + '</h3>';
+                html += '<span class="text-xs text-muted-foreground">' + totalUses + ' / ' + quota + ' req/day</span>';
+                html += '</div>';
+                html += '<div class="w-full bg-muted rounded-full h-2 mb-3"><div class="' + barColor + ' h-2 rounded-full transition-all" style="width:' + pct + '%"></div></div>';
+                if (keys.length > 0) {
+                    html += '<div class="space-y-1">';
+                    keys.slice(0, 8).forEach(k => {
+                        const kpct = Math.min(100, Math.round((k.count / quota) * 100));
+                        const kbar = kpct >= 90 ? 'bg-destructive' : kpct >= 70 ? 'bg-yellow-500' : 'bg-green-500';
+                        const rl = k.rate_limited > 0 ? ' <span class="text-destructive">(' + k.rate_limited + 'x 429)</span>' : '';
+                        const dead = dk.some(d => d.key === k.key) ? ' <span class="text-destructive">💀</span>' : '';
+                        html += '<div class="flex items-center gap-2 text-xs">';
+                        html += '<span class="font-mono flex-1 truncate">' + escapeHtml(k.name) + dead + '</span>';
+                        html += '<span class="w-12 text-right text-muted-foreground">' + k.count + '</span>';
+                        html += '<div class="w-20 bg-muted rounded-full h-1.5"><div class="' + kbar + ' h-1.5 rounded-full" style="width:' + kpct + '%"></div></div>';
+                        html += '<span class="w-12 text-right">' + rl + '</span>';
+                        html += '</div>';
+                    });
+                    if (keys.length > 8) {
+                        html += '<div class="text-xs text-muted-foreground mt-1">+' + (keys.length - 8) + ' more…</div>';
+                    }
+                }
+                html += '</div>';
+            });
+
+            if (Object.keys(nk).length === 0 && dk.length === 0) {
+                html += '<div class="card p-8 text-center text-muted-foreground text-sm">No usage data yet. Make some API calls to populate this view.</div>';
+            }
+
+            renderSmartRouting(c, nk);
+            renderCostSummary(c);
+
+            c.innerHTML = html;
+            document.getElementById('statusUpdated').textContent = 'Updated ' + new Date().toLocaleTimeString();
+        }
+
+        function renderSmartRouting(container, namedKeys) {
+            if (!latencyData || !latencyData.stats || Object.keys(latencyData.stats).length === 0) {
+                return;
+            }
+            const stats = latencyData.stats;
+            const entries = Object.entries(stats).filter(([k, v]) => v && v.samples > 0)
+                .sort((a, b) => a[1].avg - b[1].avg);
+            if (entries.length === 0) return;
+
+            let html = '<div class="card p-4 border-l-4 border-l-blue-500">';
+            html += '<div class="flex items-center justify-between mb-3">';
+            html += '<h3 class="text-sm font-semibold text-foreground">⚡ Smart Routing — Latency Rank</h3>';
+            html += '<span class="text-xs text-muted-foreground">fastest key picked first · auto-updated</span>';
+            html += '</div>';
+            html += '<div class="space-y-1">';
+            entries.forEach(([key, s], i) => {
+                const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : '  ';
+                const found = Object.values(namedKeys).find(p => p && p[key]);
+                const name = (found && found[key]) || (key.length > 16 ? key.substring(0, 8) + '…' + key.substring(key.length - 4) : key);
+                const color = s.avg < 2000 ? 'text-green-600' : s.avg < 5000 ? 'text-yellow-600' : 'text-destructive';
+                html += '<div class="flex items-center gap-3 text-xs font-mono">';
+                html += '<span class="w-4">' + medal + '</span>';
+                html += '<span class="flex-1 truncate">' + escapeHtml(name) + '</span>';
+                html += '<span class="w-20 text-right ' + color + '">' + s.avg + 'ms avg</span>';
+                html += '<span class="w-20 text-right text-muted-foreground">p50: ' + s.p50 + 'ms</span>';
+                html += '<span class="w-20 text-right text-muted-foreground">p95: ' + s.p95 + 'ms</span>';
+                html += '<span class="w-12 text-right text-muted-foreground">' + s.samples + '×</span>';
+                html += '</div>';
+            });
+            html += '</div></div>';
+            container.insertAdjacentHTML('beforeend', html);
+        }
+
+        function renderCostSummary(container) {
+            if (!costData || !costData.summary || costData.summary.total.calls === 0) {
+                return;
+            }
+            const s = costData.summary;
+            const t = s.total;
+            let html = '<div class="card p-4 border-l-4 border-l-green-500">';
+            html += '<div class="flex items-center justify-between mb-3">';
+            html += '<h3 class="text-sm font-semibold text-foreground">💰 Cost & Token Usage (24h)</h3>';
+            html += '<span class="text-xs text-muted-foreground">' + t.calls + ' calls · $' + t.cost.toFixed(4) + ' estimated</span>';
+            html += '</div>';
+            html += '<div class="grid grid-cols-3 gap-3 mb-3">';
+            html += '<div><div class="text-xs text-muted-foreground">Total Tokens</div><div class="text-lg font-semibold">' + (t.tokensIn + t.tokensOut).toLocaleString() + '</div></div>';
+            html += '<div><div class="text-xs text-muted-foreground">Input</div><div class="text-lg font-semibold">' + t.tokensIn.toLocaleString() + '</div></div>';
+            html += '<div><div class="text-xs text-muted-foreground">Output</div><div class="text-lg font-semibold">' + t.tokensOut.toLocaleString() + '</div></div>';
+            html += '</div>';
+            html += '<div class="text-xs font-medium text-foreground mb-1">By Provider</div>';
+            html += '<div class="space-y-1 mb-3">';
+            Object.entries(s.byProvider).sort((a, b) => b[1].calls - a[1].calls).forEach(([p, d]) => {
+                html += '<div class="flex items-center gap-2 text-xs">';
+                html += '<span class="font-mono flex-1 capitalize">' + escapeHtml(p) + '</span>';
+                html += '<span class="w-20 text-right text-muted-foreground">' + (d.tokensIn + d.tokensOut).toLocaleString() + ' tok</span>';
+                html += '<span class="w-12 text-right">' + d.calls + '×</span>';
+                html += '</div>';
+            });
+            html += '</div>';
+            html += '<div class="text-xs font-medium text-foreground mb-1">By Model</div>';
+            html += '<div class="space-y-1">';
+            Object.entries(s.byModel).sort((a, b) => b[1].calls - a[1].calls).slice(0, 8).forEach(([m, d]) => {
+                html += '<div class="flex items-center gap-2 text-xs">';
+                html += '<span class="font-mono flex-1 truncate">' + escapeHtml(m) + '</span>';
+                html += '<span class="w-20 text-right text-muted-foreground">' + (d.tokensIn + d.tokensOut).toLocaleString() + ' tok</span>';
+                html += '<span class="w-12 text-right">' + d.calls + '×</span>';
+                html += '</div>';
+            });
+            html += '</div></div>';
+            container.insertAdjacentHTML('beforeend', html);
+        }
+
+        function statCard(label, value, color) {
+            const colorMap = {
+                blue: 'text-blue-600',
+                green: 'text-green-600',
+                red: 'text-destructive'
+            };
+            return '<div class="card p-3"><div class="text-xs text-muted-foreground">' + label + '</div><div class="text-2xl font-semibold ' + (colorMap[color] || 'text-foreground') + '">' + value + '</div></div>';
+        }
+
+        function escapeHtml(s) {
+            return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+        }
+
+        async function clearAllQuarantine() {
+            if (!confirm('Clear all dead keys? They will become usable again immediately.')) return;
+            try {
+                const res = await fetch('/admin/api/quarantine/clear', { method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}' });
+                if (res.ok) {
+                    showSuccessToast('Dead keys cleared');
+                    loadStatus();
+                } else {
+                    showErrorToast('Failed to clear');
+                }
+            } catch (e) {
+                showErrorToast('Error: ' + e.message);
+            }
+        }
+
+        function startStatusAutoRefresh() {
+            if (statusAutoRefresh) return;
+            loadStatus();
+            statusAutoRefresh = setInterval(loadStatus, 10000);
+        }
+
+        function stopStatusAutoRefresh() {
+            if (statusAutoRefresh) { clearInterval(statusAutoRefresh); statusAutoRefresh = null; }
+        }
+
+        const _origShowTab = showTab;
+        showTab = function(tabName) {
+            _origShowTab(tabName);
+            if (tabName === 'status') startStatusAutoRefresh();
+            else stopStatusAutoRefresh();
+        };
+
         function renderEnvVars() {
             
             // Render providers

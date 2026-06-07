@@ -31,6 +31,16 @@ class ProxyServer {
     this.GeminiClient = require('./geminiClient');
     this.OpenAIClient = require('./openaiClient');
 
+    if (!global.__rotatoQuarantineTracker) {
+      global.__rotatoQuarantineTracker = new this.KeyRotator.QuarantineTracker();
+    }
+
+    this.AutoRevival = this.KeyRotator.AutoRevival;
+    this.autoRevival = new this.AutoRevival(
+      global.__rotatoQuarantineTracker,
+      config
+    );
+
     // Telegram bot (started after server.listen in start())
     this.telegramBot = new TelegramBot(this);
   }
@@ -424,7 +434,7 @@ class ProxyServer {
         console.log(`[SERVER] Provider '${providerName}' has no enabled keys`);
         return null;
       }
-      const keyRotator = new this.KeyRotator(enabledKeys, provider.apiType);
+      const keyRotator = new this.KeyRotator(enabledKeys, provider.apiType, providerName);
       let client;
 
       if (provider.apiType === 'openai') {
@@ -748,8 +758,210 @@ class ProxyServer {
       await this.handleGetTelegramSettings(res);
     } else if (path === '/admin/api/telegram' && req.method === 'POST') {
       await this.handleUpdateTelegramSettings(res, body);
+    } else if (path === '/admin/api/status' && req.method === 'GET') {
+      await this.handleGetStatus(res);
+    } else if (path === '/admin/api/quarantine' && req.method === 'GET') {
+      await this.handleGetQuarantine(res);
+    } else if (path === '/admin/api/quarantine/clear' && req.method === 'POST') {
+      await this.handleClearQuarantine(res, body);
+    } else if (path === '/admin/api/reload-registry' && req.method === 'POST') {
+      await this.handleReloadRegistry(res);
+    } else if (path === '/admin/api/latency' && req.method === 'GET') {
+      await this.handleGetLatency(res);
+    } else if (path === '/admin/api/cost' && req.method === 'GET') {
+      await this.handleGetCost(res);
+    } else if (path === '/admin/api/revival/run' && req.method === 'POST') {
+      await this.handleRunRevival(res);
+    } else if (path === '/admin/api/reload-registry' && req.method === 'POST') {
+      await this.handleReloadRegistry(res);
     } else {
       this.sendError(res, 404, 'Not found');
+    }
+  }
+
+  async handleGetLatency(res) {
+    try {
+      const tracker = global.__rotatoLatencyTracker;
+      const stats = tracker ? tracker.getAll() : {};
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ timestamp: new Date().toISOString(), stats }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+  }
+
+  async handleGetCost(res) {
+    try {
+      const tracker = global.__rotatoCostTracker;
+      if (!tracker) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ summary: null, recent: [] }));
+        return;
+      }
+      const summary = tracker.getSummary();
+      const recent = tracker.getRecent(20);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ summary, recent }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+  }
+
+  async handleRunRevival(res) {
+    try {
+      const result = await this.autoRevival.runOnce();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ...result, timestamp: new Date().toISOString() }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+  }
+
+  async handleGetStatus(res) {
+    try {
+      const fs = require('fs');
+      const path = require('path');
+      const logFile = path.join(require('os').homedir(), 'rotato', 'logs.jsonl');
+      const registryFile = path.join(require('os').homedir(), 'rotato', 'keys_registry.json');
+      const quarantineFile = path.join(require('os').homedir(), 'rotato', 'quarantine_state.json');
+
+      let registry = {};
+      if (fs.existsSync(registryFile)) {
+        try { registry = JSON.parse(fs.readFileSync(registryFile, 'utf8')); } catch (e) {}
+      }
+      const cleanRegistry = {};
+      for (const [prov, keys] of Object.entries(registry)) {
+        if (prov.startsWith('_')) continue;
+        if (typeof keys === 'object' && keys !== null) cleanRegistry[prov] = keys;
+      }
+
+      let quarantine = {};
+      if (fs.existsSync(quarantineFile)) {
+        try { quarantine = JSON.parse(fs.readFileSync(quarantineFile, 'utf8')); } catch (e) {}
+      }
+      const now = Date.now();
+      const deadKeys = [];
+      for (const [k, v] of Object.entries(quarantine)) {
+        if (v && v.expiresAt && now < v.expiresAt) {
+          deadKeys.push({ key: k, ...v });
+        }
+      }
+
+      const usage = {};
+      const last24h = now - 24 * 60 * 60 * 1000;
+      let authRejectedCount = 0;
+      if (fs.existsSync(logFile)) {
+        const lines = fs.readFileSync(logFile, 'utf8').split('\n').filter(Boolean);
+        for (const line of lines) {
+          try {
+            const entry = JSON.parse(line);
+            const ts = new Date(entry.timestamp || 0).getTime();
+            if (ts < last24h) continue;
+            if (entry.status === 401 && (!entry.keyUsed || entry.keyUsed === null)) {
+              authRejectedCount += 1;
+              continue;
+            }
+            const provider = entry.provider || 'unknown';
+            const key = entry.keyUsed || '(no key)';
+            if (!usage[provider]) usage[provider] = {};
+            if (!usage[provider][key]) usage[provider][key] = { count: 0, rate_limited: 0, last_hit: null };
+            usage[provider][key].count += 1;
+            if (entry.status === 429) usage[provider][key].rate_limited += 1;
+            const tsStr = entry.timestamp || '';
+            if (tsStr > (usage[provider][key].last_hit || '')) {
+              usage[provider][key].last_hit = tsStr;
+            }
+          } catch (e) {}
+        }
+      }
+
+      const providers = this.config ? Array.from(this.config.getProviders().keys()) : [];
+      const validProviders = new Set(providers);
+
+      const namedUsage = {};
+      for (const [prov, keys] of Object.entries(usage)) {
+        if (!validProviders.has(prov)) continue;
+        namedUsage[prov] = [];
+        for (const [key, stats] of Object.entries(keys)) {
+          const name = cleanRegistry[prov]?.[key] || (key.length > 20 ? `${key.substring(0, 8)}...${key.substring(key.length - 6)}` : key);
+          namedUsage[prov].push({ name, key, ...stats });
+        }
+        namedUsage[prov].sort((a, b) => b.count - a.count);
+      }
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        timestamp: new Date().toISOString(),
+        providers,
+        named_keys: cleanRegistry,
+        dead_keys: deadKeys,
+        usage_24h: namedUsage,
+        auth_rejected_24h: authRejectedCount,
+        totals: {
+          providers: providers.length,
+          named_keys: Object.values(cleanRegistry).reduce((sum, v) => sum + Object.keys(v).length, 0),
+          dead_keys: deadKeys.length,
+          total_requests_24h: Object.values(namedUsage).reduce((sum, p) => sum + p.reduce((s, k) => s + k.count, 0), 0),
+          auth_rejected_24h: authRejectedCount
+        }
+      }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+  }
+
+  async handleGetQuarantine(res) {
+    try {
+      const fs = require('fs');
+      const path = require('path');
+      const quarantineFile = path.join(require('os').homedir(), 'rotato', 'quarantine_state.json');
+      let quarantine = {};
+      if (fs.existsSync(quarantineFile)) {
+        try { quarantine = JSON.parse(fs.readFileSync(quarantineFile, 'utf8')); } catch (e) {}
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(quarantine));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+  }
+
+  async handleClearQuarantine(res, body) {
+    try {
+      const fs = require('fs');
+      const path = require('path');
+      const quarantineFile = path.join(require('os').homedir(), 'rotato', 'quarantine_state.json');
+      let data = {};
+      try { data = JSON.parse(body || '{}'); } catch (e) {}
+      if (data.key) {
+        const current = JSON.parse(fs.existsSync(quarantineFile) ? fs.readFileSync(quarantineFile, 'utf8') : '{}');
+        delete current[data.key];
+        fs.writeFileSync(quarantineFile, JSON.stringify(current, null, 2));
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ cleared: data.key, remaining: Object.keys(current).length }));
+      } else {
+        fs.writeFileSync(quarantineFile, '{}');
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ cleared: 'all' }));
+      }
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+  }
+
+  async handleReloadRegistry(res) {
+    try {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ reloaded: true, timestamp: new Date().toISOString() }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: e.message }));
     }
   }
   

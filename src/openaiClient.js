@@ -1,10 +1,12 @@
 const https = require('https');
+const http = require('http');
 const { URL } = require('url');
 
 class OpenAIClient {
   constructor(keyRotator, baseUrl = 'https://api.openai.com') {
     this.keyRotator = keyRotator;
     this.baseUrl = baseUrl;
+    this.protocol = baseUrl.startsWith('http://') ? http : https;
   }
 
   async makeRequest(method, path, body, headers = {}, customStatusCodes = null, streaming = false) {
@@ -14,13 +16,21 @@ class OpenAIClient {
     let lastResponse = null;
     const failedKeys = []; // Track which keys failed and why
 
-    // Determine which status codes should trigger rotation
-    const rotationStatusCodes = customStatusCodes || new Set([429]);
+    const rotationStatusCodes = customStatusCodes || new Set([429, 401, 403, 400]);
+    const deadKeyStatusCodes = new Set([401]);
+    const quarantineTracker = this.keyRotator.quarantineTracker;
+    const latencyTracker = this.keyRotator.latencyTracker;
+    const costTracker = this.keyRotator.costTracker;
 
-    // Try each available key for this request
+    const modelName = (() => {
+      try { return body && typeof body === 'string' ? (JSON.parse(body).model || null) : (body && body.model) || null; }
+      catch (e) { return null; }
+    })();
+
     let apiKey;
     while ((apiKey = requestContext.getNextKey()) !== null) {
       const maskedKey = this.maskApiKey(apiKey);
+      const keyStartTime = Date.now();
 
       console.log(`[OPENAI::${maskedKey}] Attempting ${method} ${path}${streaming ? ' (streaming)' : ''}`);
 
@@ -30,15 +40,19 @@ class OpenAIClient {
 
           if (rotationStatusCodes.has(response.statusCode)) {
             console.log(`[OPENAI::${maskedKey}] Status ${response.statusCode} triggers rotation - trying next key`);
+            if (deadKeyStatusCodes.has(response.statusCode) && quarantineTracker) {
+              quarantineTracker.markDead(apiKey, this.keyRotator.apiType, response.statusCode);
+            }
             response.stream.resume();
             requestContext.markKeyAsRateLimited(apiKey);
-            failedKeys.push({ key: maskedKey, status: response.statusCode, reason: 'rate_limited' });
+            failedKeys.push({ key: maskedKey, status: response.statusCode, reason: deadKeyStatusCodes.has(response.statusCode) ? 'dead_key' : 'rate_limited' });
             lastResponse = { statusCode: response.statusCode, headers: response.headers, data: '' };
             continue;
           }
 
           console.log(`[OPENAI::${maskedKey}] Success (${response.statusCode}) - streaming`);
           this.keyRotator.incrementKeyUsage(apiKey);
+          if (latencyTracker) latencyTracker.record(apiKey, Date.now() - keyStartTime);
           response._keyInfo = { keyUsed: maskedKey, failedKeys };
           return response;
         } else {
@@ -46,14 +60,26 @@ class OpenAIClient {
 
           if (rotationStatusCodes.has(response.statusCode)) {
             console.log(`[OPENAI::${maskedKey}] Status ${response.statusCode} triggers rotation - trying next key`);
+            if (deadKeyStatusCodes.has(response.statusCode) && quarantineTracker) {
+              quarantineTracker.markDead(apiKey, this.keyRotator.apiType, response.statusCode);
+            }
             requestContext.markKeyAsRateLimited(apiKey);
-            failedKeys.push({ key: maskedKey, status: response.statusCode, reason: 'rate_limited' });
+            failedKeys.push({ key: maskedKey, status: response.statusCode, reason: deadKeyStatusCodes.has(response.statusCode) ? 'dead_key' : 'rate_limited' });
             lastResponse = response;
             continue;
           }
 
           console.log(`[OPENAI::${maskedKey}] Success (${response.statusCode})`);
           this.keyRotator.incrementKeyUsage(apiKey);
+          if (latencyTracker) latencyTracker.record(apiKey, Date.now() - keyStartTime);
+          if (costTracker && response.data) {
+            try {
+              const parsed = JSON.parse(response.data);
+              if (parsed.usage) {
+                costTracker.record(this.keyRotator.providerName, modelName, parsed.usage.prompt_tokens || 0, parsed.usage.completion_tokens || 0, 0);
+              }
+            } catch (e) {}
+          }
           response._keyInfo = { keyUsed: maskedKey, failedKeys };
           return response;
         }
@@ -113,7 +139,7 @@ class OpenAIClient {
       ...headers
     };
 
-    if (!headers || !headers.authorization) {
+    if ((!headers || !headers.authorization) && apiKey !== 'keyless') {
       finalHeaders['Authorization'] = `Bearer ${apiKey}`;
     }
 
@@ -137,7 +163,7 @@ class OpenAIClient {
     return new Promise((resolve, reject) => {
       const options = this._buildRequestOptions(method, path, body, headers, apiKey);
 
-      const req = https.request(options, (res) => {
+      const req = this.protocol.request(options, (res) => {
         let data = '';
 
         res.on('data', (chunk) => {
@@ -172,7 +198,7 @@ class OpenAIClient {
     return new Promise((resolve, reject) => {
       const options = this._buildRequestOptions(method, path, body, headers, apiKey);
 
-      const req = https.request(options, (res) => {
+      const req = this.protocol.request(options, (res) => {
         // Resolve immediately with the raw stream - don't buffer
         resolve({
           statusCode: res.statusCode,
