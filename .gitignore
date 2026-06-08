@@ -4,3 +4,4 @@
 *.log
 /.serena
 logs.jsonl
+keys_registry.json
