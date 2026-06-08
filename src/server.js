@@ -316,12 +316,13 @@ class ProxyServer {
         this.sendResponse(res, response);
       }
     } catch (error) {
+      const providerName = routeInfo ? routeInfo.providerName : 'unknown';
       console.log(`[REQ-${requestId}] Request handling error: ${error.message}`);
       console.log(`[REQ-${requestId}] Response: 500 Internal Server Error`);
       
       if (isApiCall) {
         const responseTime = Date.now() - startTime;
-        this.logApiRequest(requestId, req.method, req.url, 'unknown', 500, responseTime, error.message, clientIp);
+        this.logApiRequest(requestId, req.method, req.url, providerName, 500, responseTime, error.message, clientIp);
       }
       
       this.sendError(res, 500, 'Internal server error');
@@ -724,7 +725,13 @@ class ProxyServer {
     }
     
     // Admin API routes
-    if (path === '/admin/api/env' && req.method === 'GET') {
+    if (path === '/admin/api/status' && req.method === 'GET') {
+      await this.handleGetStatus(res);
+    } else if (path === '/admin/api/quarantine' && req.method === 'GET') {
+      await this.handleGetQuarantine(res);
+    } else if (path === '/admin/api/quarantine/clear' && req.method === 'POST') {
+      await this.handleClearQuarantine(res);
+    } else if (path === '/admin/api/env' && req.method === 'GET') {
       await this.handleGetEnvVars(res);
     } else if (path === '/admin/api/env-file' && req.method === 'GET') {
       await this.handleGetEnvFile(res);
@@ -748,6 +755,10 @@ class ProxyServer {
       await this.handleGetTelegramSettings(res);
     } else if (path === '/admin/api/telegram' && req.method === 'POST') {
       await this.handleUpdateTelegramSettings(res, body);
+    } else if (path.startsWith('/admin/api/keys/') && req.method === 'GET') {
+      await this.handleGetKeyDetail(req, res);
+    } else if (path === '/admin/api/verify-all' && req.method === 'GET') {
+      await this.handleVerifyAllKeys(res);
     } else {
       this.sendError(res, 404, 'Not found');
     }
@@ -1507,6 +1518,297 @@ class ProxyServer {
       }
     } catch (err) {
       console.log(`[TELEGRAM] Init error: ${err.message}`);
+    }
+  }
+
+  async handleGetStatus(res) {
+    try {
+      const providers = this.config.getProviders();
+      const providersList = [];
+      let requestCount24h = 0;
+
+      // Count requests from logs in last 24h
+      const now = Date.now();
+      const oneDayAgo = now - 24 * 60 * 60 * 1000;
+      for (const entry of this.logBuffer) {
+        const ts = new Date(entry.timestamp).getTime();
+        if (ts >= oneDayAgo) requestCount24h++;
+      }
+
+      for (const [name, config] of providers.entries()) {
+        const client = this.providerClients.get(name);
+        let usageStats = [];
+        if (client && client.keyRotator) {
+          usageStats = client.keyRotator.getKeyUsageStats();
+        }
+        providersList.push({
+          name,
+          apiType: config.apiType,
+          keyCount: config.keys ? config.keys.length : 0,
+          keyCountAll: config.allKeys ? config.allKeys.length : (config.keys ? config.keys.length : 0),
+          baseUrl: config.baseUrl,
+          defaultModel: config.defaultModel || null,
+          disabled: !!config.disabled,
+          keys: config.keys || [],
+          requestCount: usageStats.reduce((sum, s) => sum + s.usageCount, 0)
+        });
+      }
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        providers: providersList,
+        requestCount24h,
+        uptime: process.uptime()
+      }));
+    } catch (error) {
+      this.sendError(res, 500, 'Failed to get status: ' + error.message);
+    }
+  }
+
+  async handleGetQuarantine(res) {
+    try {
+      const qPath = path.join(process.cwd(), 'quarantine_state.json');
+      if (!fs.existsSync(qPath)) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ deadKeys: [], quarantinedKeys: [] }));
+        return;
+      }
+      const data = JSON.parse(fs.readFileSync(qPath, 'utf8'));
+      const keys = data.quarantinedKeys || [];
+
+      // Filter out expired (>24h) quarantines
+      const now = Date.now();
+      const activeKeys = keys.filter(k => {
+        const ts = new Date(k.timestamp).getTime();
+        return (now - ts) < 24 * 60 * 60 * 1000;
+      });
+
+      // Mask keys for display
+      const masked = activeKeys.map(k => ({
+        ...k,
+        masked: k.key ? (k.key.substring(0, 4) + '...' + k.key.substring(k.key.length - 4)) : 'unknown'
+      }));
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ deadKeys: masked, quarantinedKeys: masked }));
+    } catch (error) {
+      this.sendError(res, 500, 'Failed to get quarantine: ' + error.message);
+    }
+  }
+
+  async handleClearQuarantine(res) {
+    try {
+      const qPath = path.join(process.cwd(), 'quarantine_state.json');
+      if (fs.existsSync(qPath)) {
+        fs.writeFileSync(qPath, JSON.stringify({ quarantinedKeys: [] }));
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true }));
+    } catch (error) {
+      this.sendError(res, 500, 'Failed to clear quarantine: ' + error.message);
+    }
+  }
+
+  async handleGetKeyDetail(req, res) {
+    try {
+      // Path: /admin/api/keys/:provider/:keyIndex
+      const pathParts = req.url.split('/');
+      // ["", "admin", "api", "keys", "providerName", "keyIndex"]
+      const providerName = pathParts[4];
+      const keyIndex = parseInt(pathParts[5]);
+
+      if (!providerName || isNaN(keyIndex) || keyIndex < 0) {
+        this.sendError(res, 400, 'Invalid provider or key index');
+        return;
+      }
+
+      const provider = this.config.getProvider(providerName);
+      if (!provider) {
+        this.sendError(res, 404, `Provider '${providerName}' not found`);
+        return;
+      }
+
+      const allKeys = provider.allKeys || provider.keys.map(k => ({ key: k, disabled: false }));
+      if (keyIndex >= allKeys.length) {
+        this.sendError(res, 404, `Key index ${keyIndex} out of range for provider '${providerName}'`);
+        return;
+      }
+
+      const keyEntry = allKeys[keyIndex];
+      const maskedKey = this.config.maskApiKey ? this.config.maskApiKey(keyEntry.key) : keyEntry.key.substring(0,8)+'...';
+
+      // Get usage from provider client
+      let usageCount = 0;
+      const client = this.providerClients.get(providerName);
+      if (client && client.keyRotator) {
+        const stats = client.keyRotator.getKeyUsageStats();
+        const found = stats.find(s => s.fullKey === keyEntry.key);
+        if (found) usageCount = found.usageCount;
+      }
+
+      // Build response
+      const detail = {
+        provider: providerName,
+        keyIndex,
+        masked: maskedKey,
+        disabled: !!keyEntry.disabled,
+        usageCount,
+        apiType: provider.apiType,
+        baseUrl: provider.baseUrl,
+        defaultModel: provider.defaultModel || null
+      };
+
+      // For OpenRouter providers, fetch live quota info from their API
+      if (providerName === 'openrouter' || (provider.baseUrl && provider.baseUrl.includes('openrouter'))) {
+        try {
+          const orUrl = 'https://openrouter.ai/api/v1/auth/key';
+          const orResponse = await fetch(orUrl, {
+            headers: { 'Authorization': `Bearer ${keyEntry.key}` }
+          });
+          const orData = await orResponse.json();
+          detail.liveCheck = {
+            status: orResponse.status,
+            ok: orResponse.ok
+          };
+          if (orResponse.ok && orData.data) {
+            detail.quota = {
+              used: orData.data.usage || 0,
+              limit: orData.data.limit || 0,
+              isFreeTier: orData.data.is_free_tier || false,
+              resetAt: orData.data.reset_at || null
+            };
+          } else {
+            detail.quota = null;
+            detail.error = orData.error?.message || `HTTP ${orResponse.status}`;
+          }
+        } catch (fetchErr) {
+          detail.liveCheck = { status: null, ok: false };
+          detail.error = fetchErr.message;
+        }
+      }
+
+      // Check quarantine status
+      try {
+        const qPath = path.join(process.cwd(), 'quarantine_state.json');
+        if (fs.existsSync(qPath)) {
+          const qData = JSON.parse(fs.readFileSync(qPath, 'utf8'));
+          const quarantineEntry = qData.quarantinedKeys?.find(
+            q => q.key === keyEntry.key && q.provider === providerName
+          );
+          if (quarantineEntry) {
+            detail.quarantined = true;
+            detail.quarantinedAt = quarantineEntry.timestamp;
+            detail.quarantinedReason = quarantineEntry.reason;
+            const elapsed = Date.now() - new Date(quarantineEntry.timestamp).getTime();
+            detail.quarantineRemainingMs = Math.max(0, 24 * 60 * 60 * 1000 - elapsed);
+          }
+        }
+      } catch (e) {
+        // quarantine file read error - non-critical
+      }
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(detail));
+    } catch (error) {
+      this.sendError(res, 500, 'Failed to get key detail: ' + error.message);
+    }
+  }
+
+  async handleVerifyAllKeys(res) {
+    try {
+      const providers = this.config.getProviders();
+      const results = [];
+
+      for (const [providerName, provider] of providers.entries()) {
+        const enabledKeys = provider.keys || [];
+        if (enabledKeys.length === 0) continue;
+
+        for (let i = 0; i < enabledKeys.length; i++) {
+          const apiKey = enabledKeys[i];
+          const startTime = Date.now();
+          const masked = this.config.maskApiKey(apiKey);
+          let status, ok, error;
+          let quotaData = null;
+
+          try {
+            let testUrl, testHeaders;
+
+            if (provider.apiType === 'openai') {
+              // Determine base URL for testing
+              let baseTestUrl = provider.baseUrl || 'https://api.openai.com';
+              testUrl = baseTestUrl.endsWith('/') ? baseTestUrl.slice(0, -1) : baseTestUrl;
+              if (!testUrl.includes('/models')) {
+                testUrl += testUrl.includes('/v1') ? '/models' : '/v1/models';
+              }
+              testHeaders = { 'Authorization': `Bearer ${apiKey}` };
+
+              // For OpenRouter, also fetch quota
+              if (providerName === 'openrouter' || provider.baseUrl?.includes('openrouter')) {
+                try {
+                  const qr = await fetch('https://openrouter.ai/api/v1/auth/key', {
+                    headers: { 'Authorization': `Bearer ${apiKey}` }
+                  });
+                  const qData = await qr.json();
+                  if (qr.ok && qData.data) {
+                    quotaData = {
+                      used: qData.data.usage || 0,
+                      limit: qData.data.limit || 0,
+                      isFreeTier: qData.data.is_free_tier || false,
+                      resetAt: qData.data.reset_at || null
+                    };
+                  }
+                } catch (qe) {
+                  // quota fetch non-critical
+                }
+              }
+            } else if (provider.apiType === 'gemini') {
+              let baseTestUrl = provider.baseUrl || 'https://generativelanguage.googleapis.com';
+              testUrl = baseTestUrl.endsWith('/') ? baseTestUrl.slice(0, -1) : baseTestUrl;
+              if (!testUrl.includes('/models')) {
+                testUrl += testUrl.includes('/v1') || testUrl.includes('/v1beta') ? '/models' : '/v1/models';
+              }
+              testUrl += `?key=${apiKey}`;
+              testHeaders = {};
+            } else {
+              throw new Error(`Unknown API type: ${provider.apiType}`);
+            }
+
+            const testResponse = await fetch(testUrl, { headers: testHeaders });
+            status = testResponse.status;
+            ok = testResponse.ok;
+            if (!ok) {
+              const text = await testResponse.text();
+              error = text.substring(0, 200);
+            }
+          } catch (fetchErr) {
+            status = null;
+            ok = false;
+            error = fetchErr.message;
+          }
+
+          const latency = Date.now() - startTime;
+          results.push({
+            provider: providerName,
+            keyIndex: i,
+            masked,
+            ok,
+            status,
+            latency,
+            error: error || null,
+            quota: quotaData
+          });
+        }
+      }
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        results,
+        total: results.length,
+        passed: results.filter(r => r.ok).length,
+        failed: results.filter(r => !r.ok).length
+      }));
+    } catch (error) {
+      this.sendError(res, 500, 'Failed to verify keys: ' + error.message);
     }
   }
 

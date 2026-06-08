@@ -1,4 +1,5 @@
 const https = require('https');
+const http = require('http');
 const { URL } = require('url');
 
 class OpenAIClient {
@@ -137,7 +138,8 @@ class OpenAIClient {
     return new Promise((resolve, reject) => {
       const options = this._buildRequestOptions(method, path, body, headers, apiKey);
 
-      const req = https.request(options, (res) => {
+      const protocol = this.baseUrl.startsWith('https') ? https : http;
+      const req = protocol.request(options, (res) => {
         let data = '';
 
         res.on('data', (chunk) => {
@@ -172,7 +174,8 @@ class OpenAIClient {
     return new Promise((resolve, reject) => {
       const options = this._buildRequestOptions(method, path, body, headers, apiKey);
 
-      const req = https.request(options, (res) => {
+      const protocol = this.baseUrl.startsWith('https') ? https : http;
+      const req = protocol.request(options, (res) => {
         // Resolve immediately with the raw stream - don't buffer
         resolve({
           statusCode: res.statusCode,
