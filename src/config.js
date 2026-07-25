@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const ProxyManager = require('./proxyManager');
 
 class Config {
   constructor() {
@@ -8,6 +9,9 @@ class Config {
     this.geminiApiKeys = [];
     this.openaiApiKeys = [];
     this.baseUrl = null;
+    this.proxyUrls = [];
+    this.proxyEnabled = false;
+    this.proxyManager = new ProxyManager([], false);
     this.loadConfig();
   }
 
@@ -60,6 +64,9 @@ class Config {
     // Parse new provider format and maintain backward compatibility
     this.parseProviders(envVars);
     this.parseBackwardCompatibility(envVars);
+
+    // Parse outbound proxy configuration
+    this.parseProxyConfig(envVars);
 
     console.log(`[CONFIG] Found ${this.providers.size} providers configured`);
 
@@ -254,6 +261,37 @@ class Config {
         baseUrl: baseUrl
       });
     }
+  }
+
+  parseProxyConfig(envVars) {
+    this.proxyUrls = (envVars.PROXY_URLS || '')
+      .split(',')
+      .map(u => u.trim())
+      .filter(u => u.length > 0);
+
+    this.proxyEnabled = (envVars.PROXY_ENABLED || '').trim().toLowerCase() === 'true'
+      && this.proxyUrls.length > 0;
+
+    this.proxyManager = new ProxyManager(this.proxyUrls, this.proxyEnabled);
+
+    if (this.proxyEnabled) {
+      const masked = this.proxyUrls.map(u => ProxyManager.maskProxyUrl(u));
+      console.log(`[CONFIG] Outbound proxy ENABLED — rotating across ${this.proxyUrls.length} proxy(ies): [${masked.join(', ')}]`);
+    } else if (this.proxyUrls.length > 0) {
+      console.log(`[CONFIG] ${this.proxyUrls.length} proxy(ies) configured but proxy routing is DISABLED`);
+    }
+  }
+
+  getProxyManager() {
+    return this.proxyManager;
+  }
+
+  getProxyUrls() {
+    return [...this.proxyUrls];
+  }
+
+  isProxyEnabled() {
+    return this.proxyEnabled;
   }
 
   getPort() {

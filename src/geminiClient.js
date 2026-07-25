@@ -2,9 +2,10 @@ const https = require('https');
 const { URL } = require('url');
 
 class GeminiClient {
-  constructor(keyRotator, baseUrl = 'https://generativelanguage.googleapis.com') {
+  constructor(keyRotator, baseUrl = 'https://generativelanguage.googleapis.com', proxyManager = null) {
     this.keyRotator = keyRotator;
     this.baseUrl = baseUrl;
+    this.proxyManager = proxyManager;
   }
 
   async makeRequest(method, path, body, headers = {}, customStatusCodes = null, streaming = false) {
@@ -173,6 +174,16 @@ class GeminiClient {
       options.headers['Content-Length'] = Buffer.byteLength(bodyData);
     }
 
+    // Route through a rotating proxy if one is configured and enabled
+    if (this.proxyManager && this.proxyManager.isEnabled()) {
+      const picked = this.proxyManager.pick();
+      if (picked) {
+        options.agent = picked.agent;
+        options._proxyMasked = picked.maskedUrl;
+        console.log(`[GEMINI] Routing request via proxy ${picked.maskedUrl}`);
+      }
+    }
+
     return options;
   }
 
@@ -191,7 +202,8 @@ class GeminiClient {
           resolve({
             statusCode: res.statusCode,
             headers: res.headers,
-            data: data
+            data: data,
+            proxyUsed: options._proxyMasked || null
           });
         });
       });
@@ -219,7 +231,8 @@ class GeminiClient {
         resolve({
           statusCode: res.statusCode,
           headers: res.headers,
-          stream: res
+          stream: res,
+          proxyUsed: options._proxyMasked || null
         });
       });
 

@@ -455,13 +455,6 @@
                         </div>
                     </div>
                     <div class="flex items-center space-x-3">
-                        <!-- Settings Button -->
-                        <button onclick="openSettingsModal()" class="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors" title="Settings">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                            </svg>
-                        </button>
                         <!-- Dark Mode Toggle -->
                         <div class="flex items-center space-x-1.5">
                             <svg class="w-3 h-3 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -510,6 +503,27 @@
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
                             </svg>
                             <span class="text-sm">API Logs</span>
+                        </button>
+                        <button
+                            onclick="showTab('proxy')"
+                            class="tab-btn py-3 px-2 border-b-2 border-transparent text-muted-foreground hover:text-foreground hover:border-border transition-colors flex items-center space-x-2"
+                            data-tab="proxy"
+                        >
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12h18M3 12a9 9 0 019-9m-9 9a9 9 0 009 9m0-18a9 9 0 019 9m-9-9c2.5 2.5 2.5 15.5 0 18m0-18c-2.5 2.5-2.5 15.5 0 18" />
+                            </svg>
+                            <span class="text-sm">Proxy</span>
+                        </button>
+                        <button
+                            onclick="showTab('settings')"
+                            class="tab-btn py-3 px-2 border-b-2 border-transparent text-muted-foreground hover:text-foreground hover:border-border transition-colors flex items-center space-x-2"
+                            data-tab="settings"
+                        >
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                            </svg>
+                            <span class="text-sm">Settings</span>
                         </button>
                     </nav>
                     
@@ -649,26 +663,196 @@
             <div id="logs" class="tab-content hidden">
                 <div class="section-header">
                     <h2 class="text-lg font-semibold text-foreground">API Request Logs</h2>
-                    <p class="text-muted-foreground text-xs mt-1">Monitor OpenAI and Gemini API requests and responses</p>
+                    <p class="text-muted-foreground text-xs mt-1">Monitor OpenAI and Gemini API requests, keys, and the proxy each request used</p>
+                </div>
+
+                <div class="section">
+                    <!-- Toolbar: search + filters + actions -->
+                    <div class="flex flex-wrap items-center gap-2 mb-3">
+                        <div class="relative flex-1 min-w-[200px]">
+                            <svg class="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                            </svg>
+                            <input id="logSearch" type="text" oninput="renderLogs()" placeholder="Search endpoint, key, proxy, status…" class="input-field w-full pl-8 pr-2 py-1.5 text-xs rounded">
+                        </div>
+                        <select id="logProviderFilter" onchange="renderLogs()" class="input-field px-2 py-1.5 text-xs rounded">
+                            <option value="">All providers</option>
+                        </select>
+                        <select id="logStatusFilter" onchange="renderLogs()" class="input-field px-2 py-1.5 text-xs rounded">
+                            <option value="">All statuses</option>
+                            <option value="success">✓ Success (2xx)</option>
+                            <option value="redirect">Redirect (3xx)</option>
+                            <option value="clienterror">Client error (4xx)</option>
+                            <option value="servererror">Server error (5xx)</option>
+                        </select>
+                        <select id="logProxyFilter" onchange="renderLogs()" class="input-field px-2 py-1.5 text-xs rounded">
+                            <option value="">Any routing</option>
+                            <option value="proxy">Via proxy</option>
+                            <option value="direct">Direct</option>
+                        </select>
+                        <label class="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none px-1" title="Auto-refresh every 5s">
+                            <input type="checkbox" id="logAutoRefresh" onchange="toggleLogAutoRefresh()" class="w-3.5 h-3.5"> Live
+                        </label>
+                        <button onclick="handleRefreshLogs(this)" class="btn btn-secondary px-3 py-1.5 text-xs font-medium flex items-center gap-1.5" title="Refresh logs">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                            </svg>
+                            Reload
+                        </button>
+                    </div>
+
+                    <div class="flex items-center justify-between mb-2 text-xs text-muted-foreground">
+                        <span id="logCount">—</span>
+                        <span>Last 100 entries in memory • lost on restart</span>
+                    </div>
+
+                    <!-- Table -->
+                    <div class="border border-border rounded-md overflow-hidden">
+                        <div class="overflow-x-auto max-h-[70vh] overflow-y-auto">
+                            <table class="w-full text-xs border-collapse">
+                                <thead class="bg-muted sticky top-0 z-10">
+                                    <tr class="text-left text-muted-foreground">
+                                        <th class="font-medium px-2.5 py-2 whitespace-nowrap">Time</th>
+                                        <th class="font-medium px-2.5 py-2">Request</th>
+                                        <th class="font-medium px-2.5 py-2 whitespace-nowrap">Provider</th>
+                                        <th class="font-medium px-2.5 py-2 whitespace-nowrap">Status</th>
+                                        <th class="font-medium px-2.5 py-2 whitespace-nowrap text-right">Latency</th>
+                                        <th class="font-medium px-2.5 py-2 whitespace-nowrap">Key</th>
+                                        <th class="font-medium px-2.5 py-2 whitespace-nowrap">Proxy</th>
+                                        <th class="font-medium px-2.5 py-2"></th>
+                                    </tr>
+                                </thead>
+                                <tbody id="logsTableBody" class="divide-y divide-border"></tbody>
+                            </table>
+                        </div>
+                        <div id="logsEmpty" class="hidden p-8 text-center text-xs text-muted-foreground">No logs available yet.</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Proxy Tab -->
+            <div id="proxy" class="tab-content hidden">
+                <div class="section-header">
+                    <h2 class="text-lg font-semibold text-foreground">Outbound Proxy</h2>
+                    <p class="text-muted-foreground text-xs mt-1">Route all upstream API requests through a proxy. If an IP gets blocked, change the proxy here and save — no restart needed.</p>
                 </div>
 
                 <div class="space-y-4">
-
-                    <!-- Logs Display -->
+                    <!-- Enable + Proxy List -->
                     <div class="section">
                         <div class="flex items-center justify-between mb-3">
-                            <h3 class="text-sm font-medium text-foreground">Recent API Requests</h3>
-                            <button onclick="handleRefreshLogs(this)" class="btn btn-secondary px-3 py-1.5 text-xs font-medium flex items-center gap-1.5" title="Refresh logs">
-                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
-                                </svg>
-                                Reload
-                            </button>
+                            <h3 class="text-sm font-medium text-foreground">Proxy Configuration</h3>
+                            <label class="flex items-center gap-2 cursor-pointer select-none">
+                                <input type="checkbox" id="proxyEnabled" class="w-4 h-4">
+                                <span class="text-sm text-foreground">Enable proxy routing</span>
+                            </label>
                         </div>
-                        <p class="text-xs text-muted-foreground mb-3">Last 100 entries kept in memory • Lost on server restart</p>
-                        <div class="bg-gray-900 border border-border rounded">
-                            <div id="logsContainer" class="text-green-400 p-3 font-mono text-xs h-80 overflow-y-auto whitespace-pre-wrap"></div>
+
+                        <label class="block text-xs font-medium text-muted-foreground mb-2">Proxy URLs — one per line (rotated round-robin, one per request)</label>
+                        <textarea
+                            id="proxyUrls"
+                            rows="5"
+                            class="input-field w-full px-2 py-1.5 text-xs rounded transition-colors font-mono"
+                            placeholder="http://user:pass@host:port&#10;https://host:port&#10;socks5://user:pass@host:1080"
+                        ></textarea>
+                        <p class="text-muted-foreground text-xs mt-1">Supported: <code>http://</code>, <code>https://</code>, <code>socks5://</code> — with optional <code>user:pass@</code>. A bare <code>host:port</code> is treated as HTTP.</p>
+
+                        <div class="flex items-center space-x-2 mt-3">
+                            <button onclick="saveProxySettings(this)" class="btn btn-primary px-3 py-1.5 text-xs font-medium">Save Proxy Settings</button>
+                            <button onclick="loadProxySettings()" class="btn btn-secondary px-3 py-1.5 text-xs font-medium">Reload</button>
                         </div>
+                    </div>
+
+                    <!-- Configured proxies + per-proxy test -->
+                    <div class="section">
+                        <div class="flex items-center justify-between mb-3">
+                            <h3 class="text-sm font-medium text-foreground">Saved Proxies</h3>
+                            <button onclick="testAllProxies(this)" class="btn btn-secondary px-3 py-1.5 text-xs font-medium">Test All (show outbound IP)</button>
+                        </div>
+                        <div id="proxyListContainer" class="space-y-2"></div>
+                        <p id="proxyListEmpty" class="text-xs text-muted-foreground">No proxies saved yet.</p>
+                    </div>
+                </div>
+
+                <div id="proxySuccess" class="hidden bg-green-50 border border-green-200 text-green-800 px-4 py-3 rounded-md mt-4"></div>
+                <div id="proxyError" class="hidden bg-destructive/10 border border-destructive/20 text-destructive px-4 py-3 rounded-md mt-4"></div>
+            </div>
+
+            <!-- Settings Tab -->
+            <div id="settings" class="tab-content hidden">
+                <div class="section-header">
+                    <h2 class="text-lg font-semibold text-foreground">Settings</h2>
+                    <p class="text-muted-foreground text-xs mt-1">Key rotation behavior and Telegram bot configuration</p>
+                </div>
+
+                <div class="space-y-4">
+                    <!-- Key Rotation Section -->
+                    <div class="section">
+                        <h3 class="text-sm font-medium text-foreground mb-3 flex items-center gap-2">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                            </svg>
+                            Key Rotation
+                        </h3>
+                        <div class="space-y-3">
+                            <div>
+                                <label class="block text-xs font-medium text-muted-foreground mb-1">Default Status Codes to Rotate <span class="font-normal">(comma-separated)</span></label>
+                                <input type="text" id="defaultStatusCodes" class="input-field w-full px-3 py-2 rounded-md text-sm" placeholder="429" value="429">
+                                <p class="text-xs text-muted-foreground mt-1">When the API returns any of these status codes, the proxy rotates to the next API key. Reflected in all generated cURL commands.</p>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-muted-foreground mb-1">Keep-Alive Interval <span class="font-normal">(minutes, 0 to disable)</span></label>
+                                <input type="number" id="keepAliveMinutes" class="input-field w-full px-3 py-2 rounded-md text-sm" placeholder="10" value="10" min="0" step="1">
+                                <p class="text-xs text-muted-foreground mt-1">Pings the server periodically to prevent hosting platforms from sleeping it due to inactivity. Set to 0 to disable.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Telegram Bot Section -->
+                    <div class="section">
+                        <h3 class="text-sm font-medium text-foreground mb-3 flex items-center gap-2">
+                            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.74-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .38z"/>
+                            </svg>
+                            Telegram Bot
+                        </h3>
+                        <div class="space-y-3">
+                            <div>
+                                <label class="block text-xs font-medium text-muted-foreground mb-1">Bot Token</label>
+                                <input type="password" id="telegramBotToken" class="input-field w-full px-3 py-2 rounded-md text-sm" placeholder="123456789:ABCdefGhIjKlMnOpQrStUvWxYz">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-muted-foreground mb-1">Allowed User IDs <span class="font-normal">(comma-separated, leave empty to allow all)</span></label>
+                                <input type="text" id="telegramAllowedUsers" class="input-field w-full px-3 py-2 rounded-md text-sm" placeholder="123456789, 987654321">
+                            </div>
+                            <div id="telegramBotStatus" class="text-xs"></div>
+
+                            <div class="border border-border rounded-md p-3 bg-muted/30">
+                                <p class="text-xs font-medium text-foreground mb-2">How to set up:</p>
+                                <ol class="text-xs text-muted-foreground space-y-1.5 list-decimal list-inside">
+                                    <li>Open Telegram and search for <strong>@BotFather</strong></li>
+                                    <li>Send <code class="bg-muted px-1 rounded">/newbot</code> and follow the prompts</li>
+                                    <li>Copy the bot token and paste it above</li>
+                                    <li>To get your User ID, search for <strong>@userinfobot</strong> on Telegram and send it any message</li>
+                                    <li>Add your User ID to the allowed list (or leave empty to allow anyone)</li>
+                                </ol>
+                                <div class="mt-2 pt-2 border-t border-border">
+                                    <p class="text-xs font-medium text-foreground mb-1">Bot commands:</p>
+                                    <div class="text-xs text-muted-foreground space-y-0.5">
+                                        <p><code class="bg-muted px-1 rounded">/models</code> - Select provider & model</p>
+                                        <p><code class="bg-muted px-1 rounded">/clear</code> - Clear conversation history</p>
+                                        <p><code class="bg-muted px-1 rounded">/logs</code> - View recent API logs</p>
+                                        <p><code class="bg-muted px-1 rounded">/status</code> - Show current model info</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Save (persists both Key Rotation + Telegram settings) -->
+                    <div class="flex items-center space-x-2">
+                        <button onclick="saveTelegramSettings()" class="btn btn-primary px-3 py-1.5 text-xs font-medium">Save Settings</button>
+                        <button onclick="loadTelegramSettings()" class="btn btn-secondary px-3 py-1.5 text-xs font-medium">Reload</button>
                     </div>
                 </div>
             </div>
@@ -748,45 +932,47 @@
     </div>
 
     <!-- Response Viewer Dialog -->
-    <div id="responseDialog" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-[110]">
-        <div class="bg-card border border-border rounded-lg p-6 max-w-4xl w-full h-[80vh] flex flex-col shadow-xl">
-            <div class="flex items-center justify-between mb-4 flex-shrink-0">
-                <div>
-                    <h3 class="text-lg font-semibold text-foreground">API Response</h3>
-                    <p class="text-sm text-muted-foreground" id="responseInfo">Loading...</p>
+    <div id="responseDialog" class="hidden fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-[110]" onclick="if(event.target===this)closeResponseDialog()">
+        <div class="bg-card border border-border rounded-xl w-full max-w-4xl h-[85vh] flex flex-col shadow-2xl overflow-hidden">
+            <!-- Header: status + method + endpoint + meta chips -->
+            <div class="flex items-start justify-between gap-3 px-4 py-3 border-b border-border flex-shrink-0">
+                <div class="min-w-0 flex-1">
+                    <div class="flex items-center gap-2 flex-wrap">
+                        <span id="rvStatusBadge" class="inline-block px-2 py-0.5 rounded-md text-xs font-semibold border">—</span>
+                        <span id="rvMethod" class="inline-block px-1.5 py-0.5 rounded bg-muted text-foreground text-xs font-medium">—</span>
+                        <span id="rvEndpoint" class="font-mono text-sm text-foreground truncate max-w-full" title=""></span>
+                    </div>
+                    <div class="flex items-center gap-1.5 flex-wrap mt-2" id="rvMeta"></div>
                 </div>
-                <button 
-                    onclick="closeResponseDialog()" 
-                    class="text-muted-foreground hover:text-foreground transition-colors p-1"
-                >
+                <button onclick="closeResponseDialog()" class="text-muted-foreground hover:text-foreground transition-colors p-1 flex-shrink-0" title="Close (Esc)">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
                     </svg>
                 </button>
             </div>
-            
-            <!-- Tabs for Request/Response -->
-            <div class="flex space-x-4 mb-4 flex-shrink-0" id="requestResponseTabs">
-                <button 
-                    id="responseTab"
-                    onclick="switchResponseTab('response')" 
-                    class="px-4 py-2 rounded-md text-sm font-medium btn-primary"
-                >
-                    Response
-                </button>
-                <button 
-                    id="requestTab"
-                    onclick="switchResponseTab('request')" 
-                    class="px-4 py-2 rounded-md text-sm font-medium btn-secondary hidden disabled:opacity-50 disabled:cursor-not-allowed"
-                    disabled
-                >
-                    Request Body
-                </button>
+
+            <!-- Toolbar: segmented tabs + actions -->
+            <div class="flex items-center justify-between gap-2 px-4 py-2 border-b border-border flex-shrink-0 bg-muted/30">
+                <div class="inline-flex rounded-md border border-border p-0.5 bg-background" id="requestResponseTabs">
+                    <button id="responseTab" onclick="switchResponseTab('response')" class="px-3 py-1 rounded text-xs font-medium transition-colors">Response</button>
+                    <button id="requestTab" onclick="switchResponseTab('request')" class="px-3 py-1 rounded text-xs font-medium transition-colors" disabled>Request</button>
+                </div>
+                <div class="flex items-center gap-1.5">
+                    <button onclick="toggleResponseWrap()" id="rvWrapBtn" class="btn btn-secondary px-2.5 py-1 text-xs font-medium flex items-center gap-1" title="Toggle line wrapping">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h13a3 3 0 010 6h-3m0 0l2-2m-2 2l2 2M4 18h4"/></svg>
+                        Wrap
+                    </button>
+                    <button onclick="copyResponseView(this)" id="rvCopyBtn" class="btn btn-secondary px-2.5 py-1 text-xs font-medium flex items-center gap-1" title="Copy visible content">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+                        Copy
+                    </button>
+                </div>
             </div>
-            
-            <div class="flex-1 min-h-0">
-                <pre id="responseContent" class="bg-gray-900 text-green-400 p-4 rounded-md text-sm h-full overflow-auto font-mono whitespace-pre-wrap border"></pre>
-                <pre id="requestContent" class="bg-gray-900 text-yellow-400 p-4 rounded-md text-sm h-full overflow-auto font-mono whitespace-pre-wrap border hidden"></pre>
+
+            <!-- Body -->
+            <div class="flex-1 min-h-0 overflow-auto" style="background:#0d1117;">
+                <pre id="responseContent" class="p-4 text-[13px] leading-relaxed font-mono whitespace-pre text-gray-200 min-w-full"></pre>
+                <pre id="requestContent" class="p-4 text-[13px] leading-relaxed font-mono whitespace-pre text-gray-200 min-w-full hidden"></pre>
             </div>
         </div>
     </div>
@@ -3303,196 +3489,323 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             }
         }
         
+        // In-memory cache of the most recent logs (newest first, deduped by requestId).
+        // Filters/search re-render from this without re-fetching.
+        let _logsCache = [];
+        let _logAutoRefreshTimer = null;
+
+        // Normalize any log entry (new object format or legacy string) into a common shape.
+        function normalizeLog(log) {
+            if (typeof log === 'string') {
+                const reqMatch = log.match(/\[(?:REQ|TEST)-([a-zA-Z0-9]+)\]/);
+                return {
+                    timestamp: null, requestId: reqMatch ? reqMatch[1] : 'legacy',
+                    method: '', endpoint: log, provider: '', status: null,
+                    responseTime: null, error: null, keyUsed: null, failedKeys: [],
+                    proxyUsed: null, _raw: true
+                };
+            }
+            return {
+                timestamp: log.timestamp || null,
+                requestId: log.requestId || 'unknown',
+                method: log.method || '',
+                endpoint: log.endpoint || '',
+                provider: log.provider || '',
+                status: (log.status === 0 || log.status) ? log.status : null,
+                responseTime: log.responseTime != null ? log.responseTime : null,
+                error: log.error || null,
+                keyUsed: log.keyUsed || null,
+                failedKeys: Array.isArray(log.failedKeys) ? log.failedKeys : [],
+                proxyUsed: log.proxyUsed || null,
+                _raw: false
+            };
+        }
+
         async function refreshLogs() {
             try {
                 const response = await fetch('/admin/api/logs');
                 const data = await response.json();
-                
-                const logsContainer = document.getElementById('logsContainer');
-                if (!data.logs || data.logs.length === 0) {
-                    logsContainer.textContent = 'No logs available';
-                    return;
+                const logs = Array.isArray(data.logs) ? data.logs : [];
+
+                // Deduplicate by requestId - keep the LAST (most complete) entry
+                const seen = new Map();
+                for (const log of logs) {
+                    const key = (log && typeof log === 'object' && log.requestId)
+                        ? log.requestId
+                        : (typeof log === 'string'
+                            ? (log.match(/\[(?:REQ|TEST)-([a-zA-Z0-9]+)\]/)?.[1] || log)
+                            : JSON.stringify(log));
+                    seen.set(key, log);
                 }
-                
-                // Check if we're receiving the new JSON format
-                const isJsonFormat = data.format === 'json' || (data.logs.length > 0 && typeof data.logs[0] === 'object');
-                
-                let processedLogs;
-                
-                if (isJsonFormat) {
-                    // Deduplicate logs - keep the LAST (most complete) entry per requestId
-                    const seenRequests = new Map();
+                _logsCache = [...seen.values()].reverse(); // newest first
 
-                    for (const log of data.logs) {
-                        let key;
-                        if (typeof log === 'object' && log.requestId) {
-                            key = log.requestId;
-                        } else if (typeof log === 'string') {
-                            const reqIdMatch = log.match(/\[([a-zA-Z0-9]+)\]/);
-                            key = reqIdMatch ? reqIdMatch[1] : log;
-                        } else {
-                            key = JSON.stringify(log);
-                        }
-                        // Always overwrite - last entry wins (has status + key info)
-                        seenRequests.set(key, log);
-                    }
-                    const uniqueLogs = [...seenRequests.values()].reverse();
-
-                    // New JSON format - create formatted display
-                    processedLogs = uniqueLogs.map(log => {
-                        if (typeof log === 'string') {
-                            // Legacy string format - display as is with view button if possible
-                            const testMatch = log.match(/\[TEST-([a-zA-Z0-9]+)\]/);
-                            const reqMatch = log.match(/\[REQ-([a-zA-Z0-9]+)\]/);
-                            if (testMatch) {
-                                const testId = testMatch[1];
-                                return log + ` <button onclick="viewResponse('${testId}')" class="ml-2 text-blue-400 hover:text-blue-300 underline cursor-pointer text-xs">View Details</button>`;
-                            } else if (reqMatch) {
-                                const requestId = reqMatch[1];
-                                return log + ` <button onclick="viewResponse('${requestId}')" class="ml-2 text-blue-400 hover:text-blue-300 underline cursor-pointer text-xs">View Details</button>`;
-                            }
-                            return log;
-                        } else {
-                            // New JSON format - create structured display
-                            const timestamp = new Date(log.timestamp).toLocaleTimeString();
-                            const status = log.status ? `(${log.status})` : '';
-                            const responseTime = log.responseTime ? `${log.responseTime}ms` : '';
-                            const error = log.error ? ` ERROR: ${log.error}` : '';
-                            
-                            // Color coding based on status
-                            let statusColor = 'text-green-400';
-                            if (log.status >= 400) {
-                                statusColor = 'text-red-400';
-                            } else if (log.status >= 300) {
-                                statusColor = 'text-yellow-400';
-                            }
-                            
-                            // Key usage info
-                            let keyInfoHtml = '';
-                            if (log.keyUsed) {
-                                keyInfoHtml += ` <span class="text-green-300" title="Key used successfully">key:${log.keyUsed}</span>`;
-                            }
-                            if (log.failedKeys && log.failedKeys.length > 0) {
-                                const failedList = log.failedKeys.map(fk => `${fk.key}(${fk.status || 'err'})`).join(', ');
-                                keyInfoHtml += ` <span class="text-orange-400" title="Failed keys">failed:[${failedList}]</span>`;
-                            }
-
-                            const logLine = `<span class="text-gray-400">${timestamp}</span> <span class="text-blue-400">[${log.requestId}]</span> <span class="text-white">${log.method} ${log.endpoint}</span> <span class="text-cyan-400">(${log.provider})</span> <span class="${statusColor}">${status}</span> <span class="text-gray-400">${responseTime}</span>${keyInfoHtml}<span class="text-red-400">${error}</span>`;
-                            
-                            // Add view button if we have detailed response data
-                            if (log.requestId && log.requestId !== 'unknown') {
-                                return logLine + ` <button onclick="viewResponse('${log.requestId}')" class="ml-2 text-blue-400 hover:text-blue-300 underline cursor-pointer text-xs">View Details</button>`;
-                            }
-                            return logLine;
-                        }
-                    }).join('\n');
-                } else {
-                    // Legacy string format - deduplicate based on request ID
-                    const seenIds = new Set();
-                    const uniqueLogs = [];
-                    
-                    for (const log of data.logs) {
-                        // Extract any ID from the log string
-                        const idMatch = log.match(/\[([a-zA-Z0-9]+)\]/);
-                        const logId = idMatch ? idMatch[1] : log;
-                        
-                        if (!seenIds.has(logId)) {
-                            seenIds.add(logId);
-                            uniqueLogs.push(log);
-                        }
-                    }
-                    
-                    // Legacy string format - reverse so latest is first
-                    uniqueLogs.reverse();
-                    processedLogs = uniqueLogs.map(log => {
-                        const testMatch = log.match(/\[TEST-([a-zA-Z0-9]+)\]/);
-                        if (testMatch) {
-                            const testId = testMatch[1];
-                            return log + ` <button onclick="viewResponse('${testId}')" class="ml-2 text-blue-400 hover:text-blue-300 underline cursor-pointer text-xs">View Details</button>`;
-                        }
-                        
-                        const reqMatch = log.match(/\[REQ-([a-zA-Z0-9]+)\]/);
-                        if (reqMatch) {
-                            const requestId = reqMatch[1];
-                            return log + ` <button onclick="viewResponse('${requestId}')" class="ml-2 text-blue-400 hover:text-blue-300 underline cursor-pointer text-xs">View Details</button>`;
-                        }
-                        
-                        return log;
-                    }).join('\n');
-                }
-                
-                logsContainer.innerHTML = processedLogs || 'No logs available';
-
-                // Latest logs are already at top, scroll to top
-                logsContainer.scrollTop = 0;
+                populateLogProviderFilter();
+                renderLogs();
             } catch (error) {
-                document.getElementById('logsContainer').textContent = 'Failed to load logs: ' + error.message;
+                const body = document.getElementById('logsTableBody');
+                if (body) body.innerHTML = '';
+                const empty = document.getElementById('logsEmpty');
+                if (empty) { empty.classList.remove('hidden'); empty.textContent = 'Failed to load logs: ' + error.message; }
             }
+        }
+
+        function populateLogProviderFilter() {
+            const sel = document.getElementById('logProviderFilter');
+            if (!sel) return;
+            const current = sel.value;
+            const providers = [...new Set(_logsCache.map(l => normalizeLog(l).provider).filter(p => p && p !== 'unknown'))].sort();
+            sel.innerHTML = '<option value="">All providers</option>' +
+                providers.map(p => `<option value="${escapeHtml(p)}">${escapeHtml(p)}</option>`).join('');
+            if (providers.includes(current)) sel.value = current;
+        }
+
+        function statusMatchesFilter(status, filter) {
+            if (!filter) return true;
+            if (status == null) return false;
+            if (filter === 'success') return status >= 200 && status < 300;
+            if (filter === 'redirect') return status >= 300 && status < 400;
+            if (filter === 'clienterror') return status >= 400 && status < 500;
+            if (filter === 'servererror') return status >= 500;
+            return true;
+        }
+
+        function statusBadge(status) {
+            if (status == null) return '<span class="inline-block px-1.5 py-0.5 rounded bg-muted text-muted-foreground">—</span>';
+            let cls = 'bg-green-500/15 text-green-400 border-green-500/30';
+            if (status >= 500) cls = 'bg-red-500/15 text-red-400 border-red-500/30';
+            else if (status >= 400) cls = 'bg-orange-500/15 text-orange-400 border-orange-500/30';
+            else if (status >= 300) cls = 'bg-yellow-500/15 text-yellow-400 border-yellow-500/30';
+            return `<span class="inline-block px-1.5 py-0.5 rounded border font-medium ${cls}">${status}</span>`;
+        }
+
+        function logRowHtml(log) {
+            const time = log.timestamp ? new Date(log.timestamp).toLocaleTimeString() : '—';
+            const timeTitle = log.timestamp ? new Date(log.timestamp).toLocaleString() : '';
+
+            // Request cell: method chip + endpoint
+            let requestCell;
+            if (log._raw) {
+                requestCell = `<span class="text-muted-foreground break-all">${escapeHtml(log.endpoint)}</span>`;
+            } else {
+                const method = log.method
+                    ? `<span class="inline-block px-1.5 py-0.5 rounded bg-muted text-foreground font-medium mr-1.5">${escapeHtml(log.method)}</span>` : '';
+                requestCell = `${method}<span class="font-mono text-foreground align-middle inline-block max-w-[320px] truncate" title="${escapeHtml(log.endpoint)}">${escapeHtml(log.endpoint || '—')}</span>`;
+            }
+
+            const provider = log.provider
+                ? `<span class="text-cyan-400">${escapeHtml(log.provider)}</span>` : '<span class="text-muted-foreground">—</span>';
+
+            const latency = log.responseTime != null
+                ? `<span class="text-muted-foreground tabular-nums">${log.responseTime}ms</span>` : '<span class="text-muted-foreground">—</span>';
+
+            // Key cell: successful key + failed-key count chip
+            let keyCell = '<span class="text-muted-foreground">—</span>';
+            if (log.keyUsed) {
+                keyCell = `<span class="font-mono text-green-400" title="Key used">${escapeHtml(log.keyUsed)}</span>`;
+            }
+            if (log.failedKeys && log.failedKeys.length > 0) {
+                const failedList = log.failedKeys.map(fk => `${fk.key} (${fk.status || 'err'})`).join(', ');
+                keyCell += ` <span class="inline-block px-1 py-0.5 rounded bg-orange-500/15 text-orange-400 text-[10px]" title="Rotated past: ${escapeHtml(failedList)}">↻${log.failedKeys.length}</span>`;
+            }
+
+            // Proxy cell: which proxy routed this request (or Direct)
+            let proxyCell;
+            if (log.proxyUsed) {
+                proxyCell = `<span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-300 border border-purple-500/30 font-mono max-w-[200px] truncate" title="${escapeHtml(log.proxyUsed)}">
+                    <svg class="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                    <span class="truncate">${escapeHtml(log.proxyUsed)}</span></span>`;
+            } else {
+                proxyCell = '<span class="text-muted-foreground" title="Sent directly, no proxy">direct</span>';
+            }
+
+            const errorRow = log.error
+                ? `<div class="text-red-400 text-[11px] mt-0.5 break-all" title="${escapeHtml(log.error)}">${escapeHtml(log.error)}</div>` : '';
+
+            const detailsBtn = (log.requestId && log.requestId !== 'unknown' && log.requestId !== 'legacy')
+                ? `<button onclick="viewResponse('${escapeHtml(log.requestId)}')" class="text-blue-400 hover:text-blue-300 underline cursor-pointer whitespace-nowrap">View</button>`
+                : '';
+
+            return `<tr class="hover:bg-muted/40 align-top">
+                <td class="px-2.5 py-1.5 whitespace-nowrap text-muted-foreground tabular-nums" title="${escapeHtml(timeTitle)}">${escapeHtml(time)}</td>
+                <td class="px-2.5 py-1.5">${requestCell}${errorRow}</td>
+                <td class="px-2.5 py-1.5 whitespace-nowrap">${provider}</td>
+                <td class="px-2.5 py-1.5 whitespace-nowrap">${statusBadge(log.status)}</td>
+                <td class="px-2.5 py-1.5 whitespace-nowrap text-right">${latency}</td>
+                <td class="px-2.5 py-1.5 whitespace-nowrap">${keyCell}</td>
+                <td class="px-2.5 py-1.5 whitespace-nowrap">${proxyCell}</td>
+                <td class="px-2.5 py-1.5 whitespace-nowrap text-right">${detailsBtn}</td>
+            </tr>`;
+        }
+
+        function renderLogs() {
+            const body = document.getElementById('logsTableBody');
+            if (!body) return;
+            const q = (document.getElementById('logSearch')?.value || '').toLowerCase().trim();
+            const provFilter = document.getElementById('logProviderFilter')?.value || '';
+            const statFilter = document.getElementById('logStatusFilter')?.value || '';
+            const proxyFilter = document.getElementById('logProxyFilter')?.value || '';
+
+            const rows = [];
+            for (const raw of _logsCache) {
+                const log = normalizeLog(raw);
+                if (provFilter && log.provider !== provFilter) continue;
+                if (statFilter && !statusMatchesFilter(log.status, statFilter)) continue;
+                if (proxyFilter === 'proxy' && !log.proxyUsed) continue;
+                if (proxyFilter === 'direct' && log.proxyUsed) continue;
+                if (q) {
+                    const hay = [
+                        log.endpoint, log.method, log.provider, log.status, log.keyUsed,
+                        log.proxyUsed, log.error, (log.failedKeys || []).map(f => f.key).join(' ')
+                    ].join(' ').toLowerCase();
+                    if (!hay.includes(q)) continue;
+                }
+                rows.push(logRowHtml(log));
+            }
+
+            body.innerHTML = rows.join('');
+            const empty = document.getElementById('logsEmpty');
+            if (empty) {
+                empty.classList.toggle('hidden', rows.length > 0);
+                if (rows.length === 0) {
+                    empty.textContent = _logsCache.length === 0
+                        ? 'No logs available yet. Make an API request to see it here.'
+                        : 'No logs match the current filters.';
+                }
+            }
+            const count = document.getElementById('logCount');
+            if (count) {
+                const filtered = rows.length !== _logsCache.length ? `${rows.length} shown · ` : '';
+                count.textContent = `${filtered}${_logsCache.length} request${_logsCache.length === 1 ? '' : 's'}`;
+            }
+        }
+
+        function toggleLogAutoRefresh() {
+            const on = document.getElementById('logAutoRefresh')?.checked;
+            if (_logAutoRefreshTimer) { clearInterval(_logAutoRefreshTimer); _logAutoRefreshTimer = null; }
+            if (on) {
+                _logAutoRefreshTimer = setInterval(refreshLogs, 5000);
+                refreshLogs();
+            }
+        }
+
+        // --- Response viewer state ---
+        let _rvResponseRaw = '';   // raw (pretty-printed) text for copy
+        let _rvRequestRaw = '';
+        let _rvActive = 'response';
+
+        // Segmented-tab styling
+        const RV_TAB_ACTIVE = 'px-3 py-1 rounded text-xs font-medium transition-colors bg-primary text-primary-foreground';
+        const RV_TAB_INACTIVE = 'px-3 py-1 rounded text-xs font-medium transition-colors text-muted-foreground hover:text-foreground';
+        const RV_TAB_DISABLED = 'px-3 py-1 rounded text-xs font-medium text-muted-foreground/40 cursor-not-allowed';
+
+        // Lightweight JSON syntax highlighter (keys / strings / numbers / booleans / null)
+        function highlightJson(jsonString) {
+            const esc = jsonString.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            return esc.replace(/("(\\u[a-fA-F0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false)\b|\bnull\b|-?\d+(?:\.\d+)?(?:[eE][+\-]?\d+)?)/g, (m) => {
+                let cls = 'text-emerald-300'; // number
+                if (/^"/.test(m)) cls = /:$/.test(m) ? 'text-sky-300' : 'text-amber-200'; // key : string
+                else if (/true|false/.test(m)) cls = 'text-purple-300';
+                else if (/null/.test(m)) cls = 'text-rose-300';
+                return `<span class="${cls}">${m}</span>`;
+            });
+        }
+
+        // Pretty-print + highlight into a <pre>, returning the raw pretty text
+        function renderIntoPre(preEl, raw) {
+            const text = (raw == null) ? '' : String(raw);
+            let pretty;
+            try {
+                pretty = JSON.stringify(JSON.parse(text), null, 2);
+                preEl.innerHTML = highlightJson(pretty);
+            } catch (e) {
+                pretty = text;
+                preEl.textContent = pretty; // not JSON — plain text, no highlight
+            }
+            return pretty;
+        }
+
+        function rvStatusBadge(status, statusText) {
+            const el = document.getElementById('rvStatusBadge');
+            const s = parseInt(status, 10);
+            let cls = 'bg-muted text-muted-foreground border-border';
+            if (s >= 200 && s < 300) cls = 'bg-green-500/15 text-green-400 border-green-500/30';
+            else if (s >= 300 && s < 400) cls = 'bg-yellow-500/15 text-yellow-400 border-yellow-500/30';
+            else if (s >= 400 && s < 500) cls = 'bg-orange-500/15 text-orange-400 border-orange-500/30';
+            else if (s >= 500) cls = 'bg-red-500/15 text-red-400 border-red-500/30';
+            el.className = `inline-block px-2 py-0.5 rounded-md text-xs font-semibold border ${cls}`;
+            el.textContent = isNaN(s) ? '—' : `${s}${statusText ? ' ' + statusText : ''}`;
+        }
+
+        function rvChip(label, value, tone) {
+            const tones = {
+                default: 'bg-muted text-muted-foreground',
+                cyan: 'bg-cyan-500/15 text-cyan-300',
+                purple: 'bg-purple-500/15 text-purple-300 border border-purple-500/30',
+                green: 'bg-green-500/15 text-green-400',
+                orange: 'bg-orange-500/15 text-orange-400'
+            };
+            return `<span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] ${tones[tone] || tones.default}">
+                <span class="opacity-60">${escapeHtml(label)}</span><span class="font-medium font-mono">${escapeHtml(value)}</span></span>`;
+        }
+
+        function bytesHuman(n) {
+            if (n == null) return null;
+            if (n < 1024) return n + ' B';
+            if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+            return (n / (1024 * 1024)).toFixed(2) + ' MB';
         }
 
         async function viewResponse(testId) {
             try {
                 const response = await fetch(`/admin/api/response/${testId}`);
                 if (!response.ok) {
-                    alert('Response data not found');
+                    showErrorToast ? showErrorToast('Response data not found') : alert('Response data not found');
                     return;
                 }
-                
                 const data = await response.json();
-                
-                // Update dialog content
-                document.getElementById('responseInfo').textContent = 
-                    `${data.method} ${data.endpoint} (${data.apiType}) → ${data.status} ${data.statusText} | ${data.contentType}`;
-                
-                // Format JSON response
-                let formattedResponse;
-                try {
-                    const jsonData = JSON.parse(data.responseData);
-                    formattedResponse = JSON.stringify(jsonData, null, 2);
-                } catch (e) {
-                    // Not JSON, show as plain text
-                    formattedResponse = data.responseData;
-                }
-                
-                document.getElementById('responseContent').textContent = formattedResponse;
-                
-                // Handle request body tab
+
+                // Header
+                rvStatusBadge(data.status, data.statusText);
+                document.getElementById('rvMethod').textContent = data.method || '—';
+                const epEl = document.getElementById('rvEndpoint');
+                epEl.textContent = data.endpoint || '';
+                epEl.title = data.endpoint || '';
+
+                // Meta chips
+                const size = bytesHuman(data.responseData ? new Blob([data.responseData]).size : null);
+                const chips = [];
+                if (data.provider) chips.push(rvChip('provider', data.provider, 'cyan'));
+                if (data.apiType) chips.push(rvChip('type', data.apiType, 'default'));
+                if (data.streaming) chips.push(`<span class="inline-block px-1.5 py-0.5 rounded text-[11px] bg-blue-500/15 text-blue-300">streaming</span>`);
+                if (data.contentType) chips.push(rvChip('content-type', data.contentType, 'default'));
+                if (size) chips.push(rvChip('size', size, 'default'));
+                if (data.keyInfo && data.keyInfo.keyUsed) chips.push(rvChip('key', data.keyInfo.keyUsed, 'green'));
+                if (data.keyInfo && data.keyInfo.failedKeys && data.keyInfo.failedKeys.length)
+                    chips.push(rvChip('rotated', '↻' + data.keyInfo.failedKeys.length, 'orange'));
+                if (data.proxyUsed) chips.push(rvChip('proxy', data.proxyUsed, 'purple'));
+                else chips.push(`<span class="inline-block px-1.5 py-0.5 rounded text-[11px] bg-muted text-muted-foreground">direct</span>`);
+                document.getElementById('rvMeta').innerHTML = chips.join('');
+
+                // Body panes
+                _rvResponseRaw = renderIntoPre(document.getElementById('responseContent'), data.responseData);
+
                 const requestTab = document.getElementById('requestTab');
                 const requestContent = document.getElementById('requestContent');
-                
-                if (data.requestBody && data.requestBody.trim()) {
-                    // Show and enable request tab if there's a request body
-                    requestTab.classList.remove('hidden');
+                if (data.requestBody && String(data.requestBody).trim()) {
                     requestTab.disabled = false;
                     requestTab.title = '';
-                    requestTab.className = 'px-4 py-2 rounded-md text-sm font-medium btn-secondary';
-                    
-                    // Format request body
-                    let formattedRequest;
-                    try {
-                        const requestJson = JSON.parse(data.requestBody);
-                        formattedRequest = JSON.stringify(requestJson, null, 2);
-                    } catch (e) {
-                        formattedRequest = data.requestBody;
-                    }
-                    
-                    requestContent.textContent = formattedRequest;
+                    _rvRequestRaw = renderIntoPre(requestContent, data.requestBody);
                 } else {
-                    // Show but disable request tab if no request body
-                    requestTab.classList.remove('hidden');
                     requestTab.disabled = true;
-                    requestTab.title = 'No request body available';
-                    requestTab.className = 'px-4 py-2 rounded-md text-sm font-medium bg-gray-100 dark:bg-gray-800 text-gray-400 dark:text-gray-600 cursor-not-allowed opacity-50';
+                    requestTab.title = 'No request body for this request';
+                    _rvRequestRaw = '';
                     requestContent.textContent = 'No request body data available for this request.';
                 }
-                
-                // Start with response tab active
+
                 switchResponseTab('response');
-                
-                // Show dialog
                 document.getElementById('responseDialog').classList.remove('hidden');
             } catch (error) {
-                alert('Failed to load response: ' + error.message);
+                showErrorToast ? showErrorToast('Failed to load response: ' + error.message) : alert('Failed to load response: ' + error.message);
             }
         }
 
@@ -3501,33 +3814,44 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             const requestTab = document.getElementById('requestTab');
             const responseContent = document.getElementById('responseContent');
             const requestContent = document.getElementById('requestContent');
-            
-            // Don't switch if request tab is disabled and trying to switch to it
-            if (tab === 'request' && requestTab.disabled) {
-                return;
-            }
-            
-            if (tab === 'response') {
-                // Activate response tab
-                responseTab.className = 'px-4 py-2 rounded-md text-sm font-medium btn-primary';
-                // Only update request tab style if it's not disabled
-                if (!requestTab.disabled) {
-                    requestTab.className = 'px-4 py-2 rounded-md text-sm font-medium btn-secondary';
-                }
-                responseContent.classList.remove('hidden');
-                requestContent.classList.add('hidden');
-            } else {
-                // Activate request tab (only reachable if not disabled)
-                requestTab.className = 'px-4 py-2 rounded-md text-sm font-medium btn-primary';
-                responseTab.className = 'px-4 py-2 rounded-md text-sm font-medium btn-secondary';
-                requestContent.classList.remove('hidden');
-                responseContent.classList.add('hidden');
-            }
+
+            if (tab === 'request' && requestTab.disabled) return;
+            _rvActive = tab;
+
+            responseTab.className = tab === 'response' ? RV_TAB_ACTIVE : RV_TAB_INACTIVE;
+            requestTab.className = requestTab.disabled ? RV_TAB_DISABLED : (tab === 'request' ? RV_TAB_ACTIVE : RV_TAB_INACTIVE);
+
+            responseContent.classList.toggle('hidden', tab !== 'response');
+            requestContent.classList.toggle('hidden', tab !== 'request');
+        }
+
+        function toggleResponseWrap() {
+            const btn = document.getElementById('rvWrapBtn');
+            const on = document.getElementById('responseContent').classList.toggle('whitespace-pre-wrap');
+            document.getElementById('responseContent').classList.toggle('whitespace-pre', !on);
+            document.getElementById('requestContent').classList.toggle('whitespace-pre-wrap', on);
+            document.getElementById('requestContent').classList.toggle('whitespace-pre', !on);
+            document.getElementById('responseContent').classList.toggle('break-all', on);
+            document.getElementById('requestContent').classList.toggle('break-all', on);
+            btn.classList.toggle('btn-primary', on);
+            btn.classList.toggle('btn-secondary', !on);
+        }
+
+        function copyResponseView(btn) {
+            const raw = _rvActive === 'request' ? _rvRequestRaw : _rvResponseRaw;
+            copyToClipboard(raw, `${_rvActive === 'request' ? 'Request' : 'Response'} copied to clipboard!`);
         }
 
         function closeResponseDialog() {
             document.getElementById('responseDialog').classList.add('hidden');
         }
+
+        // Esc closes the response viewer
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && !document.getElementById('responseDialog').classList.contains('hidden')) {
+                closeResponseDialog();
+            }
+        });
         
         // Load logs when logs tab is shown
         function showTab(tabName) {
@@ -3551,10 +3875,143 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             activeBtn.classList.add('active', 'text-foreground', 'border-primary');
             activeBtn.classList.remove('text-muted-foreground');
             
-            // Load logs if logs tab is selected
+            // Load logs if logs tab is selected; pause auto-refresh polling elsewhere
             if (tabName === 'logs') {
                 refreshLogs();
+                if (document.getElementById('logAutoRefresh')?.checked && !_logAutoRefreshTimer) {
+                    _logAutoRefreshTimer = setInterval(refreshLogs, 5000);
+                }
+            } else if (_logAutoRefreshTimer) {
+                clearInterval(_logAutoRefreshTimer);
+                _logAutoRefreshTimer = null;
             }
+
+            // Load proxy settings when the proxy tab is selected
+            if (tabName === 'proxy') {
+                loadProxySettings();
+            }
+
+            // Load settings when the settings tab is selected
+            if (tabName === 'settings') {
+                loadTelegramSettings();
+            }
+        }
+
+        // ===== Proxy settings =====
+        let proxyState = { enabled: false, proxies: [] };
+
+        async function loadProxySettings() {
+            try {
+                const res = await fetch('/admin/api/proxy');
+                if (!res.ok) throw new Error('Failed to load proxy settings');
+                const data = await res.json();
+                proxyState = data;
+                document.getElementById('proxyEnabled').checked = !!data.enabled;
+                document.getElementById('proxyUrls').value = (data.proxies || []).map(p => p.url).join('\n');
+                renderProxyList(data.proxies || []);
+            } catch (e) {
+                showError('proxyError', e.message);
+            }
+        }
+
+        function renderProxyList(proxies) {
+            const container = document.getElementById('proxyListContainer');
+            const empty = document.getElementById('proxyListEmpty');
+            container.innerHTML = '';
+            if (!proxies || proxies.length === 0) {
+                empty.classList.remove('hidden');
+                return;
+            }
+            empty.classList.add('hidden');
+            proxies.forEach((p) => {
+                const row = document.createElement('div');
+                row.className = 'flex items-center justify-between gap-3 border border-border rounded p-2 bg-muted/20';
+                row.innerHTML = `
+                    <code class="text-xs text-foreground truncate flex-1" title="${escapeHtml(p.masked)}">${escapeHtml(p.masked)}</code>
+                    <span class="proxy-test-result text-xs text-muted-foreground whitespace-nowrap"></span>
+                    <button class="btn btn-secondary px-2 py-1 text-xs font-medium flex-shrink-0">Test</button>
+                `;
+                const btn = row.querySelector('button');
+                const resultEl = row.querySelector('.proxy-test-result');
+                btn.onclick = () => testProxy(p.url, btn, resultEl);
+                container.appendChild(row);
+            });
+        }
+
+        function escapeHtml(str) {
+            return String(str).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        }
+
+        async function saveProxySettings(btn) {
+            const original = btn ? btn.textContent : '';
+            if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
+            try {
+                const enabled = document.getElementById('proxyEnabled').checked;
+                const proxies = document.getElementById('proxyUrls').value
+                    .split('\n')
+                    .map(s => s.trim())
+                    .filter(s => s.length > 0);
+
+                const res = await fetch('/admin/api/proxy', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enabled, proxies }),
+                });
+                const data = await res.json();
+                if (!res.ok || !data.success) throw new Error(data.error || 'Failed to save');
+
+                showSuccess('proxySuccess', `Saved ${data.count} proxy(ies). Routing ${data.enabled ? 'ENABLED' : 'disabled'}.`);
+                await loadProxySettings();
+            } catch (e) {
+                showError('proxyError', e.message);
+            } finally {
+                if (btn) { btn.disabled = false; btn.textContent = original; }
+            }
+        }
+
+        async function testProxy(url, btn, resultEl) {
+            const original = btn ? btn.textContent : '';
+            if (btn) { btn.disabled = true; btn.textContent = 'Testing...'; }
+            if (resultEl) { resultEl.textContent = ''; resultEl.className = 'proxy-test-result text-xs text-muted-foreground whitespace-nowrap'; }
+            try {
+                const res = await fetch('/admin/api/proxy/test', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ proxy: url }),
+                });
+                const data = await res.json();
+                if (data.success) {
+                    if (resultEl) {
+                        resultEl.textContent = `IP: ${data.ip} (${data.ms}ms)`;
+                        resultEl.className = 'proxy-test-result text-xs text-green-600 whitespace-nowrap';
+                    }
+                } else {
+                    if (resultEl) {
+                        resultEl.textContent = `✗ ${data.error}`;
+                        resultEl.className = 'proxy-test-result text-xs text-destructive whitespace-nowrap';
+                    }
+                }
+            } catch (e) {
+                if (resultEl) {
+                    resultEl.textContent = `✗ ${e.message}`;
+                    resultEl.className = 'proxy-test-result text-xs text-destructive whitespace-nowrap';
+                }
+            } finally {
+                if (btn) { btn.disabled = false; btn.textContent = original; }
+            }
+        }
+
+        async function testAllProxies(btn) {
+            const original = btn ? btn.textContent : '';
+            if (btn) { btn.disabled = true; btn.textContent = 'Testing...'; }
+            const rows = document.querySelectorAll('#proxyListContainer > div');
+            const proxies = proxyState.proxies || [];
+            for (let i = 0; i < rows.length; i++) {
+                const rowBtn = rows[i].querySelector('button');
+                const resultEl = rows[i].querySelector('.proxy-test-result');
+                if (proxies[i]) await testProxy(proxies[i].url, rowBtn, resultEl);
+            }
+            if (btn) { btn.disabled = false; btn.textContent = original; }
         }
         
         // Utility functions
@@ -3725,109 +4182,8 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             checkAuth();
         });
     </script>
-<!-- Settings Modal -->
-<div id="settingsModal" class="fixed inset-0 z-50 hidden">
-    <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" onclick="closeSettingsModal()"></div>
-    <div class="absolute inset-0 flex items-center justify-center p-4">
-        <div class="bg-card border border-border rounded-lg shadow-xl w-full max-w-lg relative">
-            <div class="flex items-center justify-between p-4 border-b border-border">
-                <h3 class="text-lg font-semibold text-foreground">Settings</h3>
-                <button onclick="closeSettingsModal()" class="text-muted-foreground hover:text-foreground p-1">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                </button>
-            </div>
-            <div class="p-4 space-y-5 max-h-[70vh] overflow-y-auto">
-                <!-- Default Status Codes Section -->
-                <div>
-                    <h4 class="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                        </svg>
-                        Key Rotation
-                    </h4>
-                    <div class="space-y-3">
-                        <div>
-                            <label class="block text-xs font-medium text-muted-foreground mb-1">Default Status Codes to Rotate <span class="text-muted-foreground font-normal">(comma-separated)</span></label>
-                            <input type="text" id="defaultStatusCodes" class="input-field w-full px-3 py-2 rounded-md text-sm" placeholder="429" value="429">
-                        </div>
-                        <p class="text-xs text-muted-foreground">When the API returns any of these status codes, the proxy will rotate to the next API key. This is reflected in all generated cURL commands.</p>
-                        <div class="mt-3">
-                            <label class="block text-xs font-medium text-muted-foreground mb-1">Keep-Alive Interval <span class="text-muted-foreground font-normal">(minutes, 0 to disable)</span></label>
-                            <input type="number" id="keepAliveMinutes" class="input-field w-full px-3 py-2 rounded-md text-sm" placeholder="10" value="10" min="0" step="1">
-                        </div>
-                        <p class="text-xs text-muted-foreground">Pings the server periodically to prevent hosting platforms from shutting it down due to inactivity. Set to 0 to disable.</p>
-                    </div>
-                </div>
-
-                <hr class="border-border">
-
-                <!-- Telegram Bot Section -->
-                <div>
-                    <h4 class="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
-                        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
-                            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.74-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .38z"/>
-                        </svg>
-                        Telegram Bot
-                    </h4>
-
-                    <div class="space-y-3">
-                        <div>
-                            <label class="block text-xs font-medium text-muted-foreground mb-1">Bot Token</label>
-                            <input type="password" id="telegramBotToken" class="input-field w-full px-3 py-2 rounded-md text-sm" placeholder="123456789:ABCdefGhIjKlMnOpQrStUvWxYz">
-                        </div>
-                        <div>
-                            <label class="block text-xs font-medium text-muted-foreground mb-1">Allowed User IDs <span class="text-muted-foreground font-normal">(comma-separated, leave empty to allow all)</span></label>
-                            <input type="text" id="telegramAllowedUsers" class="input-field w-full px-3 py-2 rounded-md text-sm" placeholder="123456789, 987654321">
-                        </div>
-                        <div id="telegramBotStatus" class="text-xs"></div>
-
-                        <button onclick="saveTelegramSettings()" class="btn btn-primary w-full py-2 text-sm font-medium">Save Telegram Settings</button>
-
-                        <div class="border border-border rounded-md p-3 bg-muted/30">
-                            <p class="text-xs font-medium text-foreground mb-2">How to set up:</p>
-                            <ol class="text-xs text-muted-foreground space-y-1.5 list-decimal list-inside">
-                                <li>Open Telegram and search for <strong>@BotFather</strong></li>
-                                <li>Send <code class="bg-muted px-1 rounded">/newbot</code> and follow the prompts</li>
-                                <li>Copy the bot token and paste it above</li>
-                                <li>To get your User ID, search for <strong>@userinfobot</strong> on Telegram and send it any message</li>
-                                <li>Add your User ID to the allowed list (or leave empty to allow anyone)</li>
-                            </ol>
-                            <div class="mt-2 pt-2 border-t border-border">
-                                <p class="text-xs font-medium text-foreground mb-1">Bot commands:</p>
-                                <div class="text-xs text-muted-foreground space-y-0.5">
-                                    <p><code class="bg-muted px-1 rounded">/models</code> - Select provider & model</p>
-                                    <p><code class="bg-muted px-1 rounded">/clear</code> - Clear conversation history</p>
-                                    <p><code class="bg-muted px-1 rounded">/logs</code> - View recent API logs</p>
-                                    <p><code class="bg-muted px-1 rounded">/status</code> - Show current model info</p>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
 
 <script>
-    function openSettingsModal() {
-        document.getElementById('settingsModal').classList.remove('hidden');
-        loadTelegramSettings();
-    }
-
-    function closeSettingsModal() {
-        document.getElementById('settingsModal').classList.add('hidden');
-    }
-
-    // Close on Escape
-    document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && !document.getElementById('settingsModal').classList.contains('hidden')) {
-            closeSettingsModal();
-        }
-    });
-
     async function loadTelegramSettings() {
         try {
             const response = await fetch('/admin/api/telegram');
