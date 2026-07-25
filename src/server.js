@@ -1,9 +1,11 @@
 const http = require('http');
+const https = require('https');
 const { URL } = require('url');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const TelegramBot = require('./telegramBot');
+const ProxyManager = require('./proxyManager');
 
 class ProxyServer {
   constructor(config, geminiClient = null, openaiClient = null) {
@@ -245,6 +247,7 @@ class ProxyServer {
 
       // Extract key info from response
       const keyInfo = response._keyInfo || null;
+      const proxyUsed = response.proxyUsed || null;
 
       if (isStreaming && response.stream) {
         // Streaming response - pipe directly to client
@@ -287,13 +290,15 @@ class ProxyServer {
             responseData: streamedData,
             requestBody: body,
             streaming: true,
+            provider: providerName,
+            proxyUsed: proxyUsed,
             keyInfo: keyInfo
           });
 
           if (isApiCall) {
             const responseTime = Date.now() - startTime;
             const error = response.statusCode >= 400 ? `HTTP ${response.statusCode}` : null;
-            this.logApiRequest(requestId, req.method, path, providerName, response.statusCode, responseTime, error, clientIp, keyInfo);
+            this.logApiRequest(requestId, req.method, path, providerName, response.statusCode, responseTime, error, clientIp, keyInfo, proxyUsed);
           }
           console.log(`[REQ-${requestId}] Streaming response completed`);
         });
@@ -309,10 +314,13 @@ class ProxyServer {
         if (isApiCall) {
           const responseTime = Date.now() - startTime;
           const error = response.statusCode >= 400 ? `HTTP ${response.statusCode}` : null;
-          this.logApiRequest(requestId, req.method, path, providerName, response.statusCode, responseTime, error, clientIp, keyInfo);
+          this.logApiRequest(requestId, req.method, path, providerName, response.statusCode, responseTime, error, clientIp, keyInfo, proxyUsed);
         }
 
-        this.logApiResponse(requestId, response, body);
+        this.logApiResponse(requestId, response, body, {
+          method: req.method, endpoint: path, apiType: apiType.toUpperCase(),
+          provider: providerName, proxyUsed, keyInfo
+        });
         this.sendResponse(res, response);
       }
     } catch (error) {
@@ -427,10 +435,11 @@ class ProxyServer {
       const keyRotator = new this.KeyRotator(enabledKeys, provider.apiType);
       let client;
 
+      const proxyManager = this.config.getProxyManager();
       if (provider.apiType === 'openai') {
-        client = new this.OpenAIClient(keyRotator, provider.baseUrl);
+        client = new this.OpenAIClient(keyRotator, provider.baseUrl, proxyManager);
       } else if (provider.apiType === 'gemini') {
-        client = new this.GeminiClient(keyRotator, provider.baseUrl);
+        client = new this.GeminiClient(keyRotator, provider.baseUrl, proxyManager);
       } else {
         return null;
       }
@@ -598,20 +607,23 @@ class ProxyServer {
     }
   }
 
-  logApiResponse(requestId, response, requestBody = null) {
+  logApiResponse(requestId, response, requestBody = null, meta = {}) {
     const contentLength = response.headers['content-length'] || (response.data ? response.data.length : 0);
     const contentType = response.headers['content-type'] || 'unknown';
-    
+
     // Store response data for viewing
     this.storeResponseData(requestId, {
-      method: 'API_CALL',
-      endpoint: 'proxied_request',
-      apiType: 'LLM_API',
+      method: meta.method || 'API_CALL',
+      endpoint: meta.endpoint || 'proxied_request',
+      apiType: meta.apiType || 'LLM_API',
       status: response.statusCode,
       statusText: this.getStatusText(response.statusCode),
       contentType: contentType,
       responseData: response.data,
-      requestBody: requestBody
+      requestBody: requestBody,
+      provider: meta.provider || null,
+      proxyUsed: meta.proxyUsed || null,
+      keyInfo: meta.keyInfo || null
     });
     
     // Log basic response info to console only (structured logging handled in handleRequest)
@@ -748,6 +760,12 @@ class ProxyServer {
       await this.handleGetTelegramSettings(res);
     } else if (path === '/admin/api/telegram' && req.method === 'POST') {
       await this.handleUpdateTelegramSettings(res, body);
+    } else if (path === '/admin/api/proxy' && req.method === 'GET') {
+      await this.handleGetProxySettings(res);
+    } else if (path === '/admin/api/proxy' && req.method === 'POST') {
+      await this.handleUpdateProxySettings(res, body);
+    } else if (path === '/admin/api/proxy/test' && req.method === 'POST') {
+      await this.handleTestProxy(res, body);
     } else {
       this.sendError(res, 404, 'Not found');
     }
@@ -894,7 +912,7 @@ class ProxyServer {
 
       // Preserve _DISABLED, TELEGRAM_, and DEFAULT_STATUS_CODES entries from current env if not in new vars
       for (const [key, value] of Object.entries(currentEnvVars)) {
-        if ((key.endsWith('_DISABLED') || key.startsWith('TELEGRAM_') || key === 'DEFAULT_STATUS_CODES' || key === 'KEEP_ALIVE_MINUTES') && !(key in finalEnvVars)) {
+        if ((key.endsWith('_DISABLED') || key.startsWith('TELEGRAM_') || key.startsWith('PROXY_') || key === 'DEFAULT_STATUS_CODES' || key === 'KEEP_ALIVE_MINUTES') && !(key in finalEnvVars)) {
           finalEnvVars[key] = value;
         }
       }
@@ -1098,7 +1116,7 @@ class ProxyServer {
   }
   
   
-  logApiRequest(requestId, method, endpoint, provider, status = null, responseTime = null, error = null, clientIp = null, keyInfo = null) {
+  logApiRequest(requestId, method, endpoint, provider, status = null, responseTime = null, error = null, clientIp = null, keyInfo = null, proxyUsed = null) {
     const logEntry = {
       timestamp: new Date().toISOString(),
       requestId: requestId || 'unknown',
@@ -1110,7 +1128,8 @@ class ProxyServer {
       error: error,
       clientIp: clientIp,
       keyUsed: keyInfo ? keyInfo.keyUsed : null,
-      failedKeys: keyInfo ? keyInfo.failedKeys : []
+      failedKeys: keyInfo ? keyInfo.failedKeys : [],
+      proxyUsed: proxyUsed || null
     };
     
     // Add to buffer (keep last 100 entries in RAM only)
@@ -1362,6 +1381,155 @@ class ProxyServer {
   }
 
   /**
+   * Return current outbound-proxy settings.
+   * Full URLs (incl. credentials) are returned so the admin can edit them —
+   * consistent with the existing /admin/api/env-file endpoint, and gated by
+   * admin authentication.
+   */
+  async handleGetProxySettings(res) {
+    try {
+      const envPath = path.join(process.cwd(), '.env');
+      const envVars = this.config.parseEnvFile(fs.readFileSync(envPath, 'utf8'));
+
+      const proxies = (envVars.PROXY_URLS || '')
+        .split(',')
+        .map(u => u.trim())
+        .filter(u => u.length > 0)
+        .map(url => ({ url, masked: ProxyManager.maskProxyUrl(url) }));
+
+      const enabled = (envVars.PROXY_ENABLED || '').trim().toLowerCase() === 'true';
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ enabled, proxies }));
+    } catch (error) {
+      this.sendError(res, 500, 'Failed to read proxy settings');
+    }
+  }
+
+  /**
+   * Update outbound-proxy settings.
+   * Body: { enabled: boolean, proxies: string[] }
+   */
+  async handleUpdateProxySettings(res, body) {
+    try {
+      const { enabled, proxies } = JSON.parse(body);
+
+      const list = Array.isArray(proxies)
+        ? proxies.map(p => String(p).trim()).filter(p => p.length > 0)
+        : [];
+
+      // Validate every proxy URL before persisting anything
+      const invalid = [];
+      for (const url of list) {
+        try {
+          ProxyManager.parse(url);
+        } catch (e) {
+          invalid.push(`${ProxyManager.maskProxyUrl(url)} (${e.message})`);
+        }
+      }
+      if (invalid.length > 0) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: `Invalid proxy URL(s): ${invalid.join('; ')}` }));
+        return;
+      }
+
+      const envPath = path.join(process.cwd(), '.env');
+      const envVars = this.config.parseEnvFile(fs.readFileSync(envPath, 'utf8'));
+
+      if (list.length > 0) {
+        envVars.PROXY_URLS = list.join(',');
+      } else {
+        delete envVars.PROXY_URLS;
+      }
+
+      const enable = !!enabled && list.length > 0;
+      if (enable) {
+        envVars.PROXY_ENABLED = 'true';
+      } else {
+        delete envVars.PROXY_ENABLED;
+      }
+
+      this.writeEnvFile(envVars);
+      this.config.loadConfig();
+      this.reinitializeClients();
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, count: list.length, enabled: enable }));
+    } catch (error) {
+      this.sendError(res, 500, 'Failed to update proxy settings: ' + error.message);
+    }
+  }
+
+  /**
+   * Test a single proxy by fetching the current outbound IP through it.
+   * Body: { proxy: string }
+   */
+  async handleTestProxy(res, body) {
+    try {
+      const { proxy } = JSON.parse(body);
+      if (!proxy || !String(proxy).trim()) {
+        this.sendError(res, 400, 'Missing proxy URL');
+        return;
+      }
+      const result = await this.testProxyConnection(String(proxy).trim());
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+    } catch (error) {
+      this.sendError(res, 500, 'Failed to test proxy: ' + error.message);
+    }
+  }
+
+  /**
+   * Route a request to an IP-echo service through the given proxy and return
+   * the observed outbound IP. Uses only Node built-ins via ProxyManager.
+   */
+  testProxyConnection(proxyUrl) {
+    return new Promise((resolve) => {
+      let agent;
+      try {
+        agent = ProxyManager.createAgent(proxyUrl);
+      } catch (e) {
+        return resolve({ success: false, error: 'Invalid proxy URL: ' + e.message });
+      }
+
+      const startTime = Date.now();
+      const options = {
+        hostname: 'api.ipify.org',
+        port: 443,
+        path: '/?format=json',
+        method: 'GET',
+        agent,
+        headers: { 'Accept': 'application/json', 'User-Agent': 'rotato-proxy-test' },
+        timeout: 15000,
+      };
+
+      const req = https.request(options, (r) => {
+        let data = '';
+        r.on('data', (c) => { data += c; });
+        r.on('end', () => {
+          const ms = Date.now() - startTime;
+          let ip = null;
+          try { ip = JSON.parse(data).ip; } catch (e) { ip = data.trim(); }
+          if (r.statusCode === 200 && ip) {
+            resolve({ success: true, ip, ms, masked: ProxyManager.maskProxyUrl(proxyUrl) });
+          } else {
+            resolve({ success: false, error: `Unexpected response (HTTP ${r.statusCode})`, ms });
+          }
+        });
+      });
+
+      req.on('timeout', () => {
+        req.destroy();
+        resolve({ success: false, error: 'Timed out after 15s (proxy unreachable or too slow)' });
+      });
+      req.on('error', (e) => {
+        resolve({ success: false, error: e.message });
+      });
+      req.end();
+    });
+  }
+
+  /**
    * Write env vars back to .env file (shared helper)
    */
   writeEnvFile(envVars) {
@@ -1464,19 +1632,21 @@ class ProxyServer {
     // Clear all provider clients
     this.providerClients.clear();
     
+    const proxyManager = this.config.getProxyManager();
+
     // Reinitialize legacy clients for backward compatibility
     if (this.config.hasGeminiKeys()) {
       const geminiKeyRotator = new this.KeyRotator(this.config.getGeminiApiKeys(), 'gemini');
-      this.geminiClient = new this.GeminiClient(geminiKeyRotator, this.config.getGeminiBaseUrl());
+      this.geminiClient = new this.GeminiClient(geminiKeyRotator, this.config.getGeminiBaseUrl(), proxyManager);
       console.log('[SERVER] Legacy Gemini client reinitialized');
     } else {
       this.geminiClient = null;
       console.log('[SERVER] Legacy Gemini client disabled (no keys available)');
     }
-    
+
     if (this.config.hasOpenaiKeys()) {
       const openaiKeyRotator = new this.KeyRotator(this.config.getOpenaiApiKeys(), 'openai');
-      this.openaiClient = new this.OpenAIClient(openaiKeyRotator, this.config.getOpenaiBaseUrl());
+      this.openaiClient = new this.OpenAIClient(openaiKeyRotator, this.config.getOpenaiBaseUrl(), proxyManager);
       console.log('[SERVER] Legacy OpenAI client reinitialized');
     } else {
       this.openaiClient = null;

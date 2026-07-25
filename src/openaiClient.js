@@ -2,9 +2,10 @@ const https = require('https');
 const { URL } = require('url');
 
 class OpenAIClient {
-  constructor(keyRotator, baseUrl = 'https://api.openai.com') {
+  constructor(keyRotator, baseUrl = 'https://api.openai.com', proxyManager = null) {
     this.keyRotator = keyRotator;
     this.baseUrl = baseUrl;
+    this.proxyManager = proxyManager;
   }
 
   async makeRequest(method, path, body, headers = {}, customStatusCodes = null, streaming = false) {
@@ -130,6 +131,16 @@ class OpenAIClient {
       options.headers['Content-Length'] = Buffer.byteLength(bodyData);
     }
 
+    // Route through a rotating proxy if one is configured and enabled
+    if (this.proxyManager && this.proxyManager.isEnabled()) {
+      const picked = this.proxyManager.pick();
+      if (picked) {
+        options.agent = picked.agent;
+        options._proxyMasked = picked.maskedUrl;
+        console.log(`[OPENAI] Routing request via proxy ${picked.maskedUrl}`);
+      }
+    }
+
     return options;
   }
 
@@ -148,7 +159,8 @@ class OpenAIClient {
           resolve({
             statusCode: res.statusCode,
             headers: res.headers,
-            data: data
+            data: data,
+            proxyUsed: options._proxyMasked || null
           });
         });
       });
@@ -177,7 +189,8 @@ class OpenAIClient {
         resolve({
           statusCode: res.statusCode,
           headers: res.headers,
-          stream: res
+          stream: res,
+          proxyUsed: options._proxyMasked || null
         });
       });
 
