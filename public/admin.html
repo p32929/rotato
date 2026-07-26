@@ -4,6 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>API Key Rotator - Admin Panel</title>
+    <!-- Design system fonts (C1) — Inter for UI, JetBrains Mono for code. Falls back to system fonts offline. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         :root {
@@ -37,6 +41,93 @@
           --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
           --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
           --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+
+          /* ============================================================
+             DESIGN SYSTEM TOKENS
+             Colors above are unchanged. Everything below is the shared
+             token layer — always reference these, never hard-code values.
+             ============================================================ */
+
+          /* Typography */
+          --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+          --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+          --text-2xs: 0.6875rem;  /* 11px */
+          --text-xs:  0.75rem;    /* 12px */
+          --text-sm:  0.875rem;   /* 14px */
+          --text-base:1rem;       /* 16px */
+          --text-lg:  1.125rem;   /* 18px */
+          --text-xl:  1.25rem;    /* 20px */
+          --text-2xl: 1.5rem;     /* 24px */
+          --fw-normal: 400;
+          --fw-medium: 500;
+          --fw-semibold: 600;
+          --fw-bold: 700;
+          --leading-tight: 1.25;
+          --leading-normal: 1.5;
+          --leading-relaxed: 1.625;
+          --tracking-tight: -0.01em;
+          --tracking-wide: 0.02em;
+
+          /* Spacing scale (4px base) */
+          --space-0: 0;        --space-1: 0.25rem;  --space-2: 0.5rem;
+          --space-3: 0.75rem;  --space-4: 1rem;     --space-5: 1.25rem;
+          --space-6: 1.5rem;   --space-8: 2rem;     --space-10: 2.5rem;
+          --space-12: 3rem;    --space-16: 4rem;
+
+          /* Radii — Geist-tight */
+          --radius-sm: 0.25rem;   /* 4px  */
+          --radius-md: 0.375rem;  /* 6px  */
+          --radius-lg: 0.5rem;    /* 8px  */
+          --radius-xl: 0.75rem;   /* 12px */
+          --radius-2xl: 1rem;
+          --radius-full: 9999px;
+
+          /* Motion */
+          --ease: cubic-bezier(0.4, 0, 0.2, 1);
+          --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+          --transition-fast: 150ms var(--ease);
+          --transition-base: 200ms var(--ease);
+          --transition-slow: 300ms var(--ease);
+
+          /* Z-index scale */
+          --z-base: 1;
+          --z-sticky-nav: 99;
+          --z-sticky-header: 100;
+          --z-modal: 110;
+          --z-dropdown: 200;
+          --z-toast: 300;
+
+          /* Layout */
+          --container-max: 90rem;   /* widened from 80rem (max-w-7xl) — B1 */
+          --container-pad: 1rem;
+          --dialog-max: 72rem;      /* wider dialogs — B2 */
+
+          /* Semantic subtle fills (hue + alpha; work on both themes) */
+          --success-subtle: rgba(34, 197, 94, 0.14);
+          --success-border: rgba(34, 197, 94, 0.32);
+          --warning-subtle: rgba(245, 158, 11, 0.14);
+          --warning-border: rgba(245, 158, 11, 0.32);
+          --info-subtle: rgba(59, 130, 246, 0.14);
+          --info-border: rgba(59, 130, 246, 0.32);
+          --destructive-subtle: rgba(255, 38, 38, 0.12);
+          --destructive-border: rgba(255, 38, 38, 0.30);
+
+          /* Density (row height for tables) — overridden by [data-density] */
+          --row-py: 0.375rem;
+
+          /* Provider accent palette — assigned deterministically in JS (A1/A3) */
+          --provider-1:  #3b82f6;  /* blue    */
+          --provider-2:  #22c55e;  /* green   */
+          --provider-3:  #f59e0b;  /* amber   */
+          --provider-4:  #a855f7;  /* purple  */
+          --provider-5:  #ec4899;  /* pink    */
+          --provider-6:  #06b6d4;  /* cyan    */
+          --provider-7:  #ef4444;  /* red     */
+          --provider-8:  #14b8a6;  /* teal    */
+          --provider-9:  #f97316;  /* orange  */
+          --provider-10: #8b5cf6;  /* violet  */
+          --provider-11: #eab308;  /* yellow  */
+          --provider-12: #64748b;  /* slate   */
         }
 
         .dark {
@@ -119,6 +210,7 @@
             bottom: 2px;
         }
         input:checked + .toggle-slider {
+            /* Always green when on (provider color is used only for the name dot / pills) */
             background-color: var(--success);
             border-color: var(--success);
         }
@@ -133,12 +225,19 @@
         body {
             background-color: var(--background);
             color: var(--foreground);
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-            line-height: 1.5;
+            font-family: var(--font-sans);
+            font-size: var(--text-sm);
+            line-height: var(--leading-normal);
+            letter-spacing: var(--tracking-tight);
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
             margin: 0;
             padding: 0;
-            transition: background-color 0.3s ease, color 0.3s ease;
+            transition: background-color var(--transition-slow), color var(--transition-slow);
         }
+        code, pre, .font-mono, .mono { font-family: var(--font-mono); }
+        /* Tabular numerals for latency/counts alignment */
+        .tabular-nums { font-variant-numeric: tabular-nums; }
         
         .section {
             background-color: var(--card);
@@ -334,12 +433,246 @@
         
         /* Animations */
         @keyframes spin {
-            from {
-                transform: rotate(0deg);
-            }
-            to {
-                transform: rotate(360deg);
-            }
+            from { transform: rotate(0deg); }
+            to   { transform: rotate(360deg); }
+        }
+        @keyframes ds-shimmer {
+            0%   { background-position: -400px 0; }
+            100% { background-position: 400px 0; }
+        }
+        @keyframes ds-fade-in {
+            from { opacity: 0; }
+            to   { opacity: 1; }
+        }
+        @keyframes ds-scale-in {
+            from { opacity: 0; transform: translateY(6px) scale(0.98); }
+            to   { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        @keyframes ds-toast-in {
+            from { opacity: 0; transform: translateX(16px); }
+            to   { opacity: 1; transform: translateX(0); }
+        }
+
+        /* ============================================================
+           DESIGN SYSTEM — COMPONENT & UTILITY LAYER
+           All rules below consume the tokens defined in :root.
+           ============================================================ */
+
+        /* Layout container (B1) */
+        .app-container {
+            max-width: var(--container-max);
+            margin-inline: auto;
+            padding-inline: var(--container-pad);
+            width: 100%;
+        }
+        @media (min-width: 640px)  { .app-container { padding-inline: 1.5rem; } }
+        @media (min-width: 1024px) { .app-container { padding-inline: 2rem; } }
+
+        /* Card / section — flat, border-only (Geist) */
+        .section {
+            background-color: var(--card);
+            color: var(--foreground);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            padding: var(--space-6);
+            margin-bottom: var(--space-5);
+        }
+        /* Page heading block — no divider, just spacing (Geist) */
+        .section-header {
+            padding-bottom: 0;
+            margin-bottom: var(--space-6);
+        }
+
+        /* Buttons — tokenized, with sizes, focus ring, transitions (F4/F5/I2) */
+        .btn {
+            border: none;
+            border-radius: var(--radius-md);
+            font-weight: var(--fw-medium);
+            font-size: var(--text-sm);
+            line-height: 1;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: var(--space-2);
+            transition: background-color var(--transition-fast), color var(--transition-fast),
+                        opacity var(--transition-fast), box-shadow var(--transition-fast),
+                        transform var(--transition-fast);
+            user-select: none;
+        }
+        .btn:active { transform: translateY(0.5px) scale(0.99); }
+        .btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--background), 0 0 0 4px var(--ring); }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; pointer-events: none; }
+        .btn-sm { font-size: var(--text-xs); padding: var(--space-1) var(--space-3); border-radius: var(--radius-sm); }
+        .btn-md { font-size: var(--text-sm); padding: var(--space-2) var(--space-4); }
+        .btn-lg { font-size: var(--text-base); padding: var(--space-3) var(--space-5); }
+        .btn-primary     { background-color: var(--primary); color: var(--primary-foreground); }
+        .btn-primary:hover { opacity: 0.9; }
+        .btn-secondary   { background-color: var(--secondary); color: var(--secondary-foreground); border: 1px solid var(--border); }
+        .btn-secondary:hover { background-color: var(--accent); }
+        /* Subtle destructive (Geist) — ghost red for inline deletes / sign out */
+        .btn-destructive { background-color: transparent; color: var(--destructive); border: 1px solid var(--destructive-border); }
+        .btn-destructive:hover { background-color: var(--destructive-subtle); opacity: 1; }
+        /* Solid destructive — for the final confirm action in a dialog */
+        .btn-destructive-solid { background-color: var(--destructive); color: var(--destructive-foreground); }
+        .btn-destructive-solid:hover { opacity: 0.9; }
+        .btn-success { background-color: var(--success); color: var(--success-foreground); }
+        .btn-warning { background-color: var(--warning); color: var(--warning-foreground); }
+        .btn-info    { background-color: var(--info); color: var(--info-foreground); }
+        .btn-ghost   { background-color: transparent; color: var(--muted-foreground); }
+        .btn-ghost:hover { background-color: var(--accent); color: var(--foreground); }
+
+        /* Inputs */
+        .input-field {
+            background-color: var(--input);
+            border: 1px solid var(--border);
+            color: var(--foreground);
+            border-radius: var(--radius-md);
+            font-family: inherit;
+            font-size: var(--text-sm);
+            transition: border-color var(--transition-fast), box-shadow var(--transition-fast), background-color var(--transition-fast);
+        }
+        .input-field:focus {
+            outline: none;
+            border-color: var(--ring);
+            background-color: var(--background);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 25%, transparent);
+        }
+        .input-field::placeholder { color: var(--muted-foreground); opacity: 0.7; }
+
+        /* Badges (semantic) — G1/D-series */
+        .badge {
+            display: inline-flex; align-items: center; gap: var(--space-1);
+            padding: 0.125rem var(--space-2);
+            border-radius: var(--radius-full);
+            font-size: var(--text-2xs); font-weight: var(--fw-semibold);
+            line-height: 1.4; border: 1px solid transparent; white-space: nowrap;
+        }
+        .badge-neutral { background: var(--muted); color: var(--muted-foreground); }
+        .badge-success { background: var(--success-subtle); color: #16a34a; border-color: var(--success-border); }
+        .badge-warning { background: var(--warning-subtle); color: #d97706; border-color: var(--warning-border); }
+        .badge-error   { background: var(--destructive-subtle); color: var(--destructive); border-color: var(--destructive-border); }
+        .badge-info    { background: var(--info-subtle); color: #2563eb; border-color: var(--info-border); }
+        .dark .badge-success { color: #4ade80; }
+        .dark .badge-warning { color: #fbbf24; }
+        .dark .badge-error   { color: #f87171; }
+        .dark .badge-info    { color: #60a5fa; }
+
+        /* Meta chip (dialog / logs) */
+        .chip {
+            display: inline-flex; align-items: center; gap: var(--space-1);
+            padding: 0.125rem var(--space-2); border-radius: var(--radius-sm);
+            font-size: var(--text-2xs); background: var(--muted); color: var(--muted-foreground);
+        }
+        .chip .chip-k { opacity: 0.6; }
+        .chip .chip-v { font-weight: var(--fw-medium); font-family: var(--font-mono); }
+
+        /* Provider identity dot / pill / avatar (A1/A3) — color set inline via --pc */
+        .provider-dot {
+            width: 0.5rem; height: 0.5rem; border-radius: var(--radius-full);
+            background: var(--pc, var(--muted-foreground)); flex-shrink: 0; display: inline-block;
+        }
+        /* Identity dot with a soft halo, sits after the provider name */
+        .provider-dot-lg {
+            width: 0.625rem; height: 0.625rem; border-radius: var(--radius-full); flex-shrink: 0;
+            background: var(--pc, var(--muted-foreground));
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--pc) 22%, transparent);
+        }
+        .provider-pill {
+            display: inline-flex; align-items: center; gap: var(--space-2);
+            padding: 0.125rem var(--space-2); border-radius: var(--radius-full);
+            font-size: var(--text-2xs); font-weight: var(--fw-medium);
+            background: color-mix(in srgb, var(--pc) 14%, transparent);
+            color: var(--pc); border: 1px solid color-mix(in srgb, var(--pc) 30%, transparent);
+        }
+
+        /* Segmented control (dialog tabs, density toggle) */
+        .seg { display: inline-flex; padding: 0.125rem; gap: 0.125rem; background: var(--muted); border-radius: var(--radius-md); }
+        .seg-item {
+            padding: var(--space-1) var(--space-3); border-radius: var(--radius-sm);
+            font-size: var(--text-xs); font-weight: var(--fw-medium); color: var(--muted-foreground);
+            cursor: pointer; transition: background-color var(--transition-fast), color var(--transition-fast); border: none; background: transparent;
+        }
+        .seg-item:hover:not(.active):not(:disabled) { color: var(--foreground); }
+        .seg-item.active { background: var(--card); color: var(--foreground); box-shadow: var(--shadow-sm); }
+        .seg-item:disabled { opacity: 0.4; cursor: not-allowed; }
+
+        /* Skeleton loader (F2) */
+        .skeleton {
+            background: linear-gradient(90deg, var(--muted) 25%, color-mix(in srgb, var(--muted) 60%, var(--card)) 37%, var(--muted) 63%);
+            background-size: 800px 100%; animation: ds-shimmer 1.4s infinite linear; border-radius: var(--radius-sm);
+        }
+
+        /* Data table (D-series) */
+        .ds-table { width: 100%; border-collapse: collapse; font-size: var(--text-xs); }
+        .ds-table thead th {
+            position: sticky; top: 0; z-index: 2; background: var(--muted); color: var(--muted-foreground);
+            text-align: left; font-weight: var(--fw-medium); padding: var(--space-2) var(--space-3); white-space: nowrap; user-select: none;
+        }
+        .ds-table thead th.sortable { cursor: pointer; }
+        .ds-table thead th.sortable:hover { color: var(--foreground); }
+        .ds-table tbody td { padding: var(--row-py) var(--space-3); vertical-align: top; }
+        .ds-table tbody tr { border-top: 1px solid var(--border); transition: background-color var(--transition-fast); }
+        .ds-table tbody tr:hover { background: color-mix(in srgb, var(--muted) 55%, transparent); }
+        .ds-table tbody tr.selected { background: color-mix(in srgb, var(--ring) 12%, transparent); }
+        [data-density="compact"]  { --row-py: 0.25rem; }
+        [data-density="comfortable"] { --row-py: 0.625rem; }
+
+        /* Latency bar (D2) */
+        .lat-wrap { display: inline-flex; align-items: center; gap: var(--space-2); }
+        .lat-track { width: 44px; height: 4px; border-radius: var(--radius-full); background: var(--muted); overflow: hidden; }
+        .lat-fill { height: 100%; border-radius: var(--radius-full); }
+
+        /* Focus-visible ring for interactive elements (I2) */
+        a:focus-visible, button:focus-visible, [tabindex]:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+            outline: none; box-shadow: 0 0 0 2px var(--background), 0 0 0 4px var(--ring);
+            border-radius: var(--radius-sm);
+        }
+
+        /* Themed scrollbars */
+        .ds-scroll::-webkit-scrollbar { width: 10px; height: 10px; }
+        .ds-scroll::-webkit-scrollbar-track { background: transparent; }
+        .ds-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: var(--radius-full); border: 2px solid var(--card); }
+        .ds-scroll::-webkit-scrollbar-thumb:hover { background: var(--muted-foreground); }
+
+        /* Dialog helpers (B2/F4) */
+        .ds-dialog-panel { animation: ds-scale-in 180ms var(--ease-out); }
+        .ds-overlay { animation: ds-fade-in 140ms var(--ease); }
+
+        /* Response viewer code panes with line numbers (E4) + tree (E1) */
+        .rv-code {
+            counter-reset: rvln;
+            font-family: var(--font-mono);
+            font-size: 13px; line-height: 1.55;
+            color: #d1d5db; padding: var(--space-3) 0;
+        }
+        .rv-line { display: grid; grid-template-columns: 3.5em 1fr; }
+        .rv-line::before {
+            counter-increment: rvln; content: counter(rvln);
+            color: #4b5563; text-align: right; padding-right: 1rem; user-select: none;
+            position: sticky; left: 0; background: #0d1117;
+        }
+        .rv-lc { white-space: pre; padding-right: 1rem; }
+        .rv-code.wrap .rv-lc { white-space: pre-wrap; word-break: break-all; }
+        /* JSON tree (E1) */
+        .rv-tree { font-family: var(--font-mono); font-size: 13px; line-height: 1.6; color: #d1d5db; padding: var(--space-3) var(--space-4); }
+        .rv-tree details { padding-left: 1.1em; }
+        .rv-tree > details { padding-left: 0; }
+        .rv-tree summary { cursor: pointer; list-style: none; margin-left: -1.1em; padding-left: 1.1em; position: relative; }
+        .rv-tree > summary, .rv-tree > details > summary { }
+        .rv-tree summary::-webkit-details-marker { display: none; }
+        .rv-tree summary::before { content: '▶'; position: absolute; left: 0; color: #6b7280; font-size: 9px; top: 0.35em; transition: transform var(--transition-fast); }
+        .rv-tree details[open] > summary::before { transform: rotate(90deg); }
+        .rv-tree .jk { color: #7dd3fc; }   /* key   */
+        .rv-tree .js { color: #fcd34d; }   /* string*/
+        .rv-tree .jn { color: #6ee7b7; }   /* number*/
+        .rv-tree .jb { color: #c4b5fd; }   /* bool  */
+        .rv-tree .ju { color: #fca5a5; }   /* null  */
+        .rv-tree .jc { color: #6b7280; }   /* count / punctuation */
+
+        /* Reduced motion (I2) */
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
         }
     </style>
     <script>
@@ -351,14 +684,24 @@
                         foreground: 'var(--foreground)',
                         card: 'var(--card)',
                         'card-foreground': 'var(--card-foreground)',
+                        popover: 'var(--popover)',
+                        'popover-foreground': 'var(--popover-foreground)',
                         primary: 'var(--primary)',
                         'primary-foreground': 'var(--primary-foreground)',
                         secondary: 'var(--secondary)',
                         'secondary-foreground': 'var(--secondary-foreground)',
                         muted: 'var(--muted)',
                         'muted-foreground': 'var(--muted-foreground)',
+                        accent: 'var(--accent)',
+                        'accent-foreground': 'var(--accent-foreground)',
                         destructive: 'var(--destructive)',
                         'destructive-foreground': 'var(--destructive-foreground)',
+                        success: 'var(--success)',
+                        'success-foreground': 'var(--success-foreground)',
+                        warning: 'var(--warning)',
+                        'warning-foreground': 'var(--warning-foreground)',
+                        info: 'var(--info)',
+                        'info-foreground': 'var(--info-foreground)',
                         border: 'var(--border)',
                         input: 'var(--input)',
                         ring: 'var(--ring)',
@@ -367,15 +710,32 @@
                         sans: 'var(--font-sans)',
                         mono: 'var(--font-mono)',
                     },
+                    fontSize: {
+                        '2xs': 'var(--text-2xs)',
+                    },
+                    maxWidth: {
+                        container: 'var(--container-max)',
+                        dialog: 'var(--dialog-max)',
+                    },
                     borderRadius: {
-                        lg: 'var(--radius)',
-                        md: 'calc(var(--radius) - 2px)',
-                        sm: 'calc(var(--radius) - 4px)',
+                        sm: 'var(--radius-sm)',
+                        md: 'var(--radius-md)',
+                        lg: 'var(--radius-lg)',
+                        xl: 'var(--radius-xl)',
+                        '2xl': 'var(--radius-2xl)',
                     },
                     boxShadow: {
                         sm: 'var(--shadow-sm)',
                         md: 'var(--shadow-md)',
                         lg: 'var(--shadow-lg)',
+                        xl: 'var(--shadow-xl)',
+                    },
+                    transitionTimingFunction: {
+                        'ds': 'cubic-bezier(0.4, 0, 0.2, 1)',
+                        'ds-out': 'cubic-bezier(0.16, 1, 0.3, 1)',
+                    },
+                    zIndex: {
+                        'sticky-nav': '99', 'sticky-header': '100', 'modal': '110', 'dropdown': '200', 'toast': '300',
                     }
                 }
             }
@@ -441,7 +801,7 @@
     <div id="adminPanel" class="hidden min-h-screen">
         <!-- Header -->
         <header class="header-bg sticky-header">
-            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="app-container">
                 <div class="flex justify-between items-center py-3">
                     <div class="flex items-center space-x-3">
                         <div class="h-7 w-7 bg-primary text-primary-foreground rounded-lg flex items-center justify-center">
@@ -455,15 +815,17 @@
                         </div>
                     </div>
                     <div class="flex items-center space-x-3">
-                        <!-- Dark Mode Toggle -->
-                        <div class="flex items-center space-x-1.5">
-                            <svg class="w-3 h-3 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
-                            </svg>
-                            <div class="theme-toggle" id="themeToggle" onclick="toggleTheme()"></div>
-                            <svg class="w-3 h-3 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
-                            </svg>
+                        <!-- Theme: Light / Dark / Auto (G2) -->
+                        <div class="seg" id="themeSeg" role="group" aria-label="Theme">
+                            <button type="button" class="seg-item" data-theme-opt="light" onclick="setTheme('light')" title="Light" aria-label="Light theme">
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
+                            </button>
+                            <button type="button" class="seg-item" data-theme-opt="dark" onclick="setTheme('dark')" title="Dark" aria-label="Dark theme">
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/></svg>
+                            </button>
+                            <button type="button" class="seg-item" data-theme-opt="auto" onclick="setTheme('auto')" title="System" aria-label="System theme">
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+                            </button>
                         </div>
                         <button 
                             onclick="logout()" 
@@ -481,7 +843,7 @@
 
         <!-- Navigation Tabs -->
         <div id="navigationTabs" class="header-bg border-b border-border sticky-nav-tabs">
-            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="app-container">
                 <div class="flex items-center justify-between">
                     <nav class="flex space-x-6">
                         <button 
@@ -531,12 +893,15 @@
                     <div id="headerNotifications" class="py-2 ml-6 flex-1 max-w-2xl overflow-hidden relative">
                         <!-- Placeholder for positioning calculations -->
                     </div>
+
+                    <!-- Status bar (J2) — live server/provider/proxy status -->
+                    <div id="statusBar" class="hidden md:flex items-center gap-3 text-2xs text-muted-foreground flex-shrink-0 pl-4"></div>
                 </div>
             </div>
         </div>
 
         <!-- Main Content -->
-        <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 content-with-sticky-header">
+        <main class="app-container content-with-sticky-header">
             <!-- Environment Tab -->
             <div id="environment" class="tab-content">
                 <div class="section-header">
@@ -666,6 +1031,9 @@
                     <p class="text-muted-foreground text-xs mt-1">Monitor OpenAI and Gemini API requests, keys, and the proxy each request used</p>
                 </div>
 
+                <!-- Stats bar (D6) -->
+                <div id="logStats" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-4"></div>
+
                 <div class="section">
                     <!-- Toolbar: search + filters + actions -->
                     <div class="flex flex-wrap items-center gap-2 mb-3">
@@ -673,31 +1041,44 @@
                             <svg class="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
                             </svg>
-                            <input id="logSearch" type="text" oninput="renderLogs()" placeholder="Search endpoint, key, proxy, status…" class="input-field w-full pl-8 pr-2 py-1.5 text-xs rounded">
+                            <input id="logSearch" type="text" oninput="renderLogs()" placeholder="Search endpoint, key, proxy, status…" class="input-field w-full pl-8 pr-2 py-1.5 text-xs rounded-md">
                         </div>
-                        <select id="logProviderFilter" onchange="renderLogs()" class="input-field px-2 py-1.5 text-xs rounded">
+                        <select id="logProviderFilter" onchange="renderLogs()" class="input-field px-2 py-1.5 text-xs rounded-md">
                             <option value="">All providers</option>
                         </select>
-                        <select id="logStatusFilter" onchange="renderLogs()" class="input-field px-2 py-1.5 text-xs rounded">
+                        <select id="logStatusFilter" onchange="renderLogs()" class="input-field px-2 py-1.5 text-xs rounded-md">
                             <option value="">All statuses</option>
                             <option value="success">✓ Success (2xx)</option>
                             <option value="redirect">Redirect (3xx)</option>
                             <option value="clienterror">Client error (4xx)</option>
                             <option value="servererror">Server error (5xx)</option>
                         </select>
-                        <select id="logProxyFilter" onchange="renderLogs()" class="input-field px-2 py-1.5 text-xs rounded">
+                        <select id="logProxyFilter" onchange="renderLogs()" class="input-field px-2 py-1.5 text-xs rounded-md">
                             <option value="">Any routing</option>
                             <option value="proxy">Via proxy</option>
                             <option value="direct">Direct</option>
                         </select>
+                        <!-- Density toggle (B3) -->
+                        <div class="seg" role="group" aria-label="Row density">
+                            <button type="button" class="seg-item" data-density-opt="compact" onclick="setLogDensity('compact')" title="Compact rows">Compact</button>
+                            <button type="button" class="seg-item active" data-density-opt="cozy" onclick="setLogDensity('cozy')" title="Cozy rows">Cozy</button>
+                        </div>
                         <label class="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none px-1" title="Auto-refresh every 5s">
                             <input type="checkbox" id="logAutoRefresh" onchange="toggleLogAutoRefresh()" class="w-3.5 h-3.5"> Live
                         </label>
-                        <button onclick="handleRefreshLogs(this)" class="btn btn-secondary px-3 py-1.5 text-xs font-medium flex items-center gap-1.5" title="Refresh logs">
+                        <button onclick="handleRefreshLogs(this)" class="btn btn-secondary btn-sm" title="Refresh logs">
                             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
                             </svg>
                             Reload
+                        </button>
+                        <button onclick="exportLogs()" class="btn btn-secondary btn-sm" title="Export visible logs as JSON">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                            Export
+                        </button>
+                        <button onclick="clearLogs(this)" class="btn btn-ghost btn-sm text-destructive" title="Clear all logs">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                            Clear
                         </button>
                     </div>
 
@@ -707,22 +1088,22 @@
                     </div>
 
                     <!-- Table -->
-                    <div class="border border-border rounded-md overflow-hidden">
-                        <div class="overflow-x-auto max-h-[70vh] overflow-y-auto">
-                            <table class="w-full text-xs border-collapse">
-                                <thead class="bg-muted sticky top-0 z-10">
-                                    <tr class="text-left text-muted-foreground">
-                                        <th class="font-medium px-2.5 py-2 whitespace-nowrap">Time</th>
-                                        <th class="font-medium px-2.5 py-2">Request</th>
-                                        <th class="font-medium px-2.5 py-2 whitespace-nowrap">Provider</th>
-                                        <th class="font-medium px-2.5 py-2 whitespace-nowrap">Status</th>
-                                        <th class="font-medium px-2.5 py-2 whitespace-nowrap text-right">Latency</th>
-                                        <th class="font-medium px-2.5 py-2 whitespace-nowrap">Key</th>
-                                        <th class="font-medium px-2.5 py-2 whitespace-nowrap">Proxy</th>
-                                        <th class="font-medium px-2.5 py-2"></th>
+                    <div class="border border-border rounded-lg overflow-hidden">
+                        <div class="ds-scroll overflow-x-auto max-h-[70vh] overflow-y-auto" data-density="cozy" id="logsTableScroll">
+                            <table class="ds-table">
+                                <thead>
+                                    <tr>
+                                        <th class="sortable" onclick="setLogSort('time')" data-sort="time">Time <span class="sort-ind"></span></th>
+                                        <th>Request</th>
+                                        <th class="sortable" onclick="setLogSort('provider')" data-sort="provider">Provider <span class="sort-ind"></span></th>
+                                        <th class="sortable" onclick="setLogSort('status')" data-sort="status">Status <span class="sort-ind"></span></th>
+                                        <th class="sortable text-right" onclick="setLogSort('latency')" data-sort="latency">Latency <span class="sort-ind"></span></th>
+                                        <th>Key</th>
+                                        <th>Proxy</th>
+                                        <th></th>
                                     </tr>
                                 </thead>
-                                <tbody id="logsTableBody" class="divide-y divide-border"></tbody>
+                                <tbody id="logsTableBody"></tbody>
                             </table>
                         </div>
                         <div id="logsEmpty" class="hidden p-8 text-center text-xs text-muted-foreground">No logs available yet.</div>
@@ -785,9 +1166,9 @@
                     <p class="text-muted-foreground text-xs mt-1">Key rotation behavior and Telegram bot configuration</p>
                 </div>
 
-                <div class="space-y-4">
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
                     <!-- Key Rotation Section -->
-                    <div class="section">
+                    <div class="section" style="margin:0">
                         <h3 class="text-sm font-medium text-foreground mb-3 flex items-center gap-2">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
@@ -809,7 +1190,7 @@
                     </div>
 
                     <!-- Telegram Bot Section -->
-                    <div class="section">
+                    <div class="section" style="margin:0">
                         <h3 class="text-sm font-medium text-foreground mb-3 flex items-center gap-2">
                             <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
                                 <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.74-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .38z"/>
@@ -850,7 +1231,7 @@
                     </div>
 
                     <!-- Save (persists both Key Rotation + Telegram settings) -->
-                    <div class="flex items-center space-x-2">
+                    <div class="flex items-center space-x-2 lg:col-span-2">
                         <button onclick="saveTelegramSettings()" class="btn btn-primary px-3 py-1.5 text-xs font-medium">Save Settings</button>
                         <button onclick="loadTelegramSettings()" class="btn btn-secondary px-3 py-1.5 text-xs font-medium">Reload</button>
                     </div>
@@ -860,7 +1241,7 @@
 
         <!-- Footer -->
         <footer class="mt-12 py-6 border-t border-border">
-            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="app-container">
                 <div class="flex items-center justify-center text-sm text-muted-foreground">
                     <a href="https://github.com/p32929/openai-gemini-api-key-rotator" target="_blank" rel="noopener noreferrer" class="hover:text-primary transition-colors">
                         Star & Fork on GitHub
@@ -921,9 +1302,9 @@
                 >
                     Cancel
                 </button>
-                <button 
-                    onclick="confirmDelete()" 
-                    class="btn btn-destructive px-4 py-2 text-sm font-medium"
+                <button
+                    onclick="confirmDelete()"
+                    class="btn btn-destructive-solid px-4 py-2 text-sm font-medium"
                 >
                     Delete
                 </button>
@@ -932,8 +1313,8 @@
     </div>
 
     <!-- Response Viewer Dialog -->
-    <div id="responseDialog" class="hidden fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-[110]" onclick="if(event.target===this)closeResponseDialog()">
-        <div class="bg-card border border-border rounded-xl w-full max-w-4xl h-[85vh] flex flex-col shadow-2xl overflow-hidden">
+    <div id="responseDialog" class="ds-overlay hidden fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-modal" onclick="if(event.target===this)closeResponseDialog()">
+        <div class="ds-dialog-panel bg-card border border-border rounded-xl w-full max-w-dialog h-[88vh] flex flex-col shadow-xl overflow-hidden">
             <!-- Header: status + method + endpoint + meta chips -->
             <div class="flex items-start justify-between gap-3 px-4 py-3 border-b border-border flex-shrink-0">
                 <div class="min-w-0 flex-1">
@@ -952,17 +1333,31 @@
             </div>
 
             <!-- Toolbar: segmented tabs + actions -->
-            <div class="flex items-center justify-between gap-2 px-4 py-2 border-b border-border flex-shrink-0 bg-muted/30">
-                <div class="inline-flex rounded-md border border-border p-0.5 bg-background" id="requestResponseTabs">
-                    <button id="responseTab" onclick="switchResponseTab('response')" class="px-3 py-1 rounded text-xs font-medium transition-colors">Response</button>
-                    <button id="requestTab" onclick="switchResponseTab('request')" class="px-3 py-1 rounded text-xs font-medium transition-colors" disabled>Request</button>
+            <div class="flex items-center justify-between gap-2 px-4 py-2 border-b border-border flex-shrink-0 bg-muted/30 flex-wrap">
+                <div class="flex items-center gap-2">
+                    <div class="seg" id="requestResponseTabs" role="group" aria-label="Payload">
+                        <button id="responseTab" class="seg-item active" onclick="switchResponseTab('response')">Response</button>
+                        <button id="requestTab" class="seg-item" onclick="switchResponseTab('request')" disabled>Request</button>
+                    </div>
+                    <div class="seg" role="group" aria-label="View mode">
+                        <button id="rvViewPretty" class="seg-item active" onclick="setRvView('pretty')" title="Pretty JSON with line numbers">Pretty</button>
+                        <button id="rvViewTree" class="seg-item" onclick="setRvView('tree')" title="Collapsible JSON tree">Tree</button>
+                    </div>
                 </div>
                 <div class="flex items-center gap-1.5">
-                    <button onclick="toggleResponseWrap()" id="rvWrapBtn" class="btn btn-secondary px-2.5 py-1 text-xs font-medium flex items-center gap-1" title="Toggle line wrapping">
+                    <button onclick="toggleResponseWrap()" id="rvWrapBtn" class="btn btn-secondary btn-sm" title="Toggle line wrapping">
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h13a3 3 0 010 6h-3m0 0l2-2m-2 2l2 2M4 18h4"/></svg>
                         Wrap
                     </button>
-                    <button onclick="copyResponseView(this)" id="rvCopyBtn" class="btn btn-secondary px-2.5 py-1 text-xs font-medium flex items-center gap-1" title="Copy visible content">
+                    <button onclick="copyResponseCurl()" class="btn btn-secondary btn-sm" title="Copy this request as a cURL command">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M4 5h16a1 1 0 011 1v12a1 1 0 01-1 1H4a1 1 0 01-1-1V6a1 1 0 011-1z"/></svg>
+                        cURL
+                    </button>
+                    <button onclick="downloadResponse()" class="btn btn-secondary btn-sm" title="Download response body">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                        Save
+                    </button>
+                    <button onclick="copyResponseView(this)" id="rvCopyBtn" class="btn btn-secondary btn-sm" title="Copy visible content">
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
                         Copy
                     </button>
@@ -970,9 +1365,9 @@
             </div>
 
             <!-- Body -->
-            <div class="flex-1 min-h-0 overflow-auto" style="background:#0d1117;">
-                <pre id="responseContent" class="p-4 text-[13px] leading-relaxed font-mono whitespace-pre text-gray-200 min-w-full"></pre>
-                <pre id="requestContent" class="p-4 text-[13px] leading-relaxed font-mono whitespace-pre text-gray-200 min-w-full hidden"></pre>
+            <div class="flex-1 min-h-0 overflow-auto ds-scroll" style="background:#0d1117;">
+                <div id="responseContent" class="rv-code"></div>
+                <div id="requestContent" class="rv-code hidden"></div>
             </div>
         </div>
     </div>
@@ -1261,34 +1656,28 @@
         }
         
         // Dark mode functionality
-        function toggleTheme() {
-            const body = document.getElementById('mainBody');
-            const themeToggle = document.getElementById('themeToggle');
-            
-            if (body.classList.contains('dark')) {
-                body.classList.remove('dark');
-                themeToggle.classList.remove('dark');
-                localStorage.setItem('theme', 'light');
-            } else {
-                body.classList.add('dark');
-                themeToggle.classList.add('dark');
-                localStorage.setItem('theme', 'dark');
-            }
+        // Theme: 'light' | 'dark' | 'auto' (G2)
+        const _sysDark = window.matchMedia('(prefers-color-scheme: dark)');
+        function _applyTheme(mode) {
+            const dark = mode === 'dark' || (mode === 'auto' && _sysDark.matches);
+            document.getElementById('mainBody').classList.toggle('dark', dark);
+            document.querySelectorAll('#themeSeg [data-theme-opt]').forEach(b =>
+                b.classList.toggle('active', b.dataset.themeOpt === mode));
         }
-        
-        // Initialize theme from localStorage
+        function setTheme(mode) {
+            localStorage.setItem('theme', mode);
+            _applyTheme(mode);
+        }
+        function currentThemeMode() {
+            const saved = localStorage.getItem('theme');
+            return (saved === 'light' || saved === 'dark' || saved === 'auto') ? saved : 'auto';
+        }
         function initializeTheme() {
-            const savedTheme = localStorage.getItem('theme');
-            const body = document.getElementById('mainBody');
-            const themeToggle = document.getElementById('themeToggle');
-            
-            // Default to dark mode if no preference is saved
-            if (savedTheme === 'dark' || (!savedTheme && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
-                body.classList.add('dark');
-                if (themeToggle) {
-                    themeToggle.classList.add('dark');
-                }
-            }
+            _applyTheme(currentThemeMode());
+            // React to OS theme changes while in Auto mode
+            _sysDark.addEventListener('change', () => {
+                if (currentThemeMode() === 'auto') _applyTheme('auto');
+            });
         }
         
         // Login functionality
@@ -1309,6 +1698,7 @@
                     document.getElementById('loginForm').classList.add('hidden');
                     document.getElementById('adminPanel').classList.remove('hidden');
                     loadEnvVars();
+                    startStatusBar();
                     // Fix header positioning after panel is shown
                     setTimeout(adjustStickyHeaderPositioning, 100);
                 } else if (response.status === 429) {
@@ -1419,6 +1809,9 @@
             renderProviders();
         }
 
+        // Remembers provider display order for the current page session (see sorting below).
+        // Null on a fresh load -> providers get sorted disabled-to-bottom then.
+        let _providerOrder = null;
         function renderProviders() {
             const providersContainer = document.getElementById('providersContainer');
             providersContainer.innerHTML = '';
@@ -1568,11 +1961,32 @@
                 }
             });
 
-            // Display each provider (disabled providers at the end)
-            const sortedProviders = Object.values(providers).sort((a, b) => (a.disabled ? 1 : 0) - (b.disabled ? 1 : 0));
+            // Ordering: disabled providers sink to the bottom, but ONLY on a fresh
+            // page load. Within a session we preserve the current on-screen order,
+            // so toggling a provider off leaves it in place until the next load.
+            const pkey = (p) => `${p.apiType}_${p.name}`;
+            const all = Object.values(providers);
+            let sortedProviders;
+            if (_providerOrder) {
+                const pos = new Map(_providerOrder.map((k, i) => [k, i]));
+                sortedProviders = all.slice().sort((a, b) => {
+                    const ia = pos.has(pkey(a)) ? pos.get(pkey(a)) : Infinity;
+                    const ib = pos.has(pkey(b)) ? pos.get(pkey(b)) : Infinity;
+                    if (ia !== ib) return ia - ib;                         // keep existing order
+                    const d = (a.disabled ? 1 : 0) - (b.disabled ? 1 : 0); // new ones: disabled last
+                    return d !== 0 ? d : pkey(a).localeCompare(pkey(b));
+                });
+            } else {
+                sortedProviders = all.slice().sort((a, b) => (a.disabled ? 1 : 0) - (b.disabled ? 1 : 0));
+            }
+            _providerOrder = sortedProviders.map(pkey);
             sortedProviders.forEach((provider, index) => {
                 const providerDiv = document.createElement('div');
                 providerDiv.className = 'key-row';
+                // Provider identity color (A1) — set --pc on the card so the name dot
+                // AND this provider's toggle switches use its color as the accent.
+                const _pColor = providerColor(provider.name);
+                providerDiv.style.setProperty('--pc', _pColor);
 
                 // Determine initial button state for access key
                 let accessKeyButtonHtml, accessKeyAction, accessKeyClass, accessKeyStyle, accessKeyTitle;
@@ -1634,8 +2048,12 @@
                                     <span class="toggle-slider"></span>
                                 </label>
                                 <div id="provider-name-${provider.apiType}-${provider.name}">
-                                    <h4 class="text-sm font-medium text-foreground">${provider.name}${isProviderDisabled ? ' <span class="text-xs text-destructive font-normal">(disabled)</span>' : ''}</h4>
-                                    <p class="text-xs text-muted-foreground">${provider.apiType.toUpperCase()} Compatible • ${enabledKeyCount}/${totalKeyCount} keys active</p>
+                                    <h4 class="text-base font-semibold text-foreground leading-tight flex items-center gap-2">
+                                        <span>${provider.name}</span>
+                                        <span class="provider-dot-lg" style="--pc:${_pColor}" title="${escapeHtml(provider.name)}"></span>
+                                        ${isProviderDisabled ? '<span class="text-xs text-destructive font-normal">(disabled)</span>' : ''}
+                                    </h4>
+                                    <p class="text-xs text-muted-foreground mt-0.5">${provider.apiType.toUpperCase()} Compatible • ${enabledKeyCount}/${totalKeyCount} keys active</p>
                                 </div>
                             </div>
                             <div class="flex items-center space-x-2">
@@ -3521,7 +3939,21 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             };
         }
 
+        function logSkeletonRows(n = 6) {
+            const body = document.getElementById('logsTableBody');
+            if (!body) return;
+            const cell = (w) => `<td><span class="skeleton block h-3.5" style="width:${w}"></span></td>`;
+            body.innerHTML = Array.from({ length: n }, () =>
+                `<tr>${cell('60px')}${cell('180px')}${cell('70px')}${cell('40px')}${cell('80px')}${cell('90px')}${cell('60px')}${cell('30px')}</tr>`
+            ).join('');
+            document.getElementById('logsEmpty')?.classList.add('hidden');
+        }
+
         async function refreshLogs() {
+            // Show skeletons only on the very first load
+            if (_logsCache.length === 0 && document.getElementById('logsTableBody') && !document.getElementById('logsTableBody').children.length) {
+                logSkeletonRows();
+            }
             try {
                 const response = await fetch('/admin/api/logs');
                 const data = await response.json();
@@ -3569,18 +4001,45 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             return true;
         }
 
+        // Sort + density state (D1/B3)
+        let _logSort = { key: 'time', dir: 'desc' };
+
         function statusBadge(status) {
-            if (status == null) return '<span class="inline-block px-1.5 py-0.5 rounded bg-muted text-muted-foreground">—</span>';
-            let cls = 'bg-green-500/15 text-green-400 border-green-500/30';
-            if (status >= 500) cls = 'bg-red-500/15 text-red-400 border-red-500/30';
-            else if (status >= 400) cls = 'bg-orange-500/15 text-orange-400 border-orange-500/30';
-            else if (status >= 300) cls = 'bg-yellow-500/15 text-yellow-400 border-yellow-500/30';
-            return `<span class="inline-block px-1.5 py-0.5 rounded border font-medium ${cls}">${status}</span>`;
+            if (status == null) return '<span class="badge badge-neutral">—</span>';
+            let cls = 'badge-success';
+            if (status >= 500) cls = 'badge-error';
+            else if (status >= 400) cls = 'badge-warning';
+            else if (status >= 300) cls = 'badge-info';
+            return `<span class="badge ${cls}">${status}</span>`;
+        }
+
+        // Relative timestamp (D3) — "12s ago", absolute on hover
+        function relativeTime(ts) {
+            if (!ts) return { text: '—', title: '' };
+            const d = new Date(ts), now = Date.now(), diff = Math.floor((now - d.getTime()) / 1000);
+            let text;
+            if (diff < 5) text = 'just now';
+            else if (diff < 60) text = diff + 's ago';
+            else if (diff < 3600) text = Math.floor(diff / 60) + 'm ago';
+            else if (diff < 86400) text = Math.floor(diff / 3600) + 'h ago';
+            else text = Math.floor(diff / 86400) + 'd ago';
+            return { text, title: d.toLocaleString() };
+        }
+
+        // Latency mini-bar (D2) — width scaled to the slowest visible request, color by absolute speed
+        let _logLatMax = 1;
+        function latencyCell(ms) {
+            if (ms == null) return '<span class="text-muted-foreground">—</span>';
+            const pct = Math.max(8, Math.min(100, (ms / _logLatMax) * 100));
+            let color = 'var(--success)';
+            if (ms >= 3000) color = 'var(--destructive)';
+            else if (ms >= 1000) color = 'var(--warning)';
+            return `<span class="lat-wrap"><span class="lat-track"><span class="lat-fill" style="width:${pct}%;background:${color}"></span></span><span class="tabular-nums text-muted-foreground">${ms}ms</span></span>`;
         }
 
         function logRowHtml(log) {
-            const time = log.timestamp ? new Date(log.timestamp).toLocaleTimeString() : '—';
-            const timeTitle = log.timestamp ? new Date(log.timestamp).toLocaleString() : '';
+            const rt = relativeTime(log.timestamp);
+            const pColor = log.provider ? providerColor(log.provider) : 'transparent';
 
             // Request cell: method chip + endpoint
             let requestCell;
@@ -3588,30 +4047,24 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 requestCell = `<span class="text-muted-foreground break-all">${escapeHtml(log.endpoint)}</span>`;
             } else {
                 const method = log.method
-                    ? `<span class="inline-block px-1.5 py-0.5 rounded bg-muted text-foreground font-medium mr-1.5">${escapeHtml(log.method)}</span>` : '';
+                    ? `<span class="chip mr-1.5"><span class="chip-v">${escapeHtml(log.method)}</span></span>` : '';
                 requestCell = `${method}<span class="font-mono text-foreground align-middle inline-block max-w-[320px] truncate" title="${escapeHtml(log.endpoint)}">${escapeHtml(log.endpoint || '—')}</span>`;
             }
 
-            const provider = log.provider
-                ? `<span class="text-cyan-400">${escapeHtml(log.provider)}</span>` : '<span class="text-muted-foreground">—</span>';
-
-            const latency = log.responseTime != null
-                ? `<span class="text-muted-foreground tabular-nums">${log.responseTime}ms</span>` : '<span class="text-muted-foreground">—</span>';
-
-            // Key cell: successful key + failed-key count chip
+            // Key cell
             let keyCell = '<span class="text-muted-foreground">—</span>';
             if (log.keyUsed) {
-                keyCell = `<span class="font-mono text-green-400" title="Key used">${escapeHtml(log.keyUsed)}</span>`;
+                keyCell = `<span class="font-mono" style="color:var(--success)" title="Key used">${escapeHtml(log.keyUsed)}</span>`;
             }
             if (log.failedKeys && log.failedKeys.length > 0) {
                 const failedList = log.failedKeys.map(fk => `${fk.key} (${fk.status || 'err'})`).join(', ');
-                keyCell += ` <span class="inline-block px-1 py-0.5 rounded bg-orange-500/15 text-orange-400 text-[10px]" title="Rotated past: ${escapeHtml(failedList)}">↻${log.failedKeys.length}</span>`;
+                keyCell += ` <span class="badge badge-warning" title="Rotated past: ${escapeHtml(failedList)}">↻${log.failedKeys.length}</span>`;
             }
 
-            // Proxy cell: which proxy routed this request (or Direct)
+            // Proxy cell
             let proxyCell;
             if (log.proxyUsed) {
-                proxyCell = `<span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-300 border border-purple-500/30 font-mono max-w-[200px] truncate" title="${escapeHtml(log.proxyUsed)}">
+                proxyCell = `<span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md font-mono max-w-[200px] truncate" style="background:color-mix(in srgb, var(--provider-10) 14%, transparent);color:var(--provider-10);border:1px solid color-mix(in srgb,var(--provider-10) 30%,transparent)" title="${escapeHtml(log.proxyUsed)}">
                     <svg class="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
                     <span class="truncate">${escapeHtml(log.proxyUsed)}</span></span>`;
             } else {
@@ -3619,33 +4072,32 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             }
 
             const errorRow = log.error
-                ? `<div class="text-red-400 text-[11px] mt-0.5 break-all" title="${escapeHtml(log.error)}">${escapeHtml(log.error)}</div>` : '';
+                ? `<div class="text-[11px] mt-0.5 break-all" style="color:var(--destructive)" title="${escapeHtml(log.error)}">${escapeHtml(log.error)}</div>` : '';
 
-            const detailsBtn = (log.requestId && log.requestId !== 'unknown' && log.requestId !== 'legacy')
-                ? `<button onclick="viewResponse('${escapeHtml(log.requestId)}')" class="text-blue-400 hover:text-blue-300 underline cursor-pointer whitespace-nowrap">View</button>`
+            const canView = (log.requestId && log.requestId !== 'unknown' && log.requestId !== 'legacy');
+            const detailsBtn = canView
+                ? `<button onclick="event.stopPropagation();viewResponse('${escapeHtml(log.requestId)}')" class="text-xs underline cursor-pointer whitespace-nowrap" style="color:var(--info)">View</button>`
                 : '';
+            const rowClick = canView ? `onclick="viewResponse('${escapeHtml(log.requestId)}')" style="cursor:pointer"` : '';
 
-            return `<tr class="hover:bg-muted/40 align-top">
-                <td class="px-2.5 py-1.5 whitespace-nowrap text-muted-foreground tabular-nums" title="${escapeHtml(timeTitle)}">${escapeHtml(time)}</td>
-                <td class="px-2.5 py-1.5">${requestCell}${errorRow}</td>
-                <td class="px-2.5 py-1.5 whitespace-nowrap">${provider}</td>
-                <td class="px-2.5 py-1.5 whitespace-nowrap">${statusBadge(log.status)}</td>
-                <td class="px-2.5 py-1.5 whitespace-nowrap text-right">${latency}</td>
-                <td class="px-2.5 py-1.5 whitespace-nowrap">${keyCell}</td>
-                <td class="px-2.5 py-1.5 whitespace-nowrap">${proxyCell}</td>
-                <td class="px-2.5 py-1.5 whitespace-nowrap text-right">${detailsBtn}</td>
+            return `<tr ${rowClick}>
+                <td class="whitespace-nowrap text-muted-foreground tabular-nums" title="${escapeHtml(rt.title)}">${escapeHtml(rt.text)}</td>
+                <td>${requestCell}${errorRow}</td>
+                <td class="whitespace-nowrap">${providerPill(log.provider)}</td>
+                <td class="whitespace-nowrap">${statusBadge(log.status)}</td>
+                <td class="whitespace-nowrap text-right">${latencyCell(log.responseTime)}</td>
+                <td class="whitespace-nowrap">${keyCell}</td>
+                <td class="whitespace-nowrap">${proxyCell}</td>
+                <td class="whitespace-nowrap text-right">${detailsBtn}</td>
             </tr>`;
         }
 
-        function renderLogs() {
-            const body = document.getElementById('logsTableBody');
-            if (!body) return;
+        function _filteredLogs() {
             const q = (document.getElementById('logSearch')?.value || '').toLowerCase().trim();
             const provFilter = document.getElementById('logProviderFilter')?.value || '';
             const statFilter = document.getElementById('logStatusFilter')?.value || '';
             const proxyFilter = document.getElementById('logProxyFilter')?.value || '';
-
-            const rows = [];
+            const out = [];
             for (const raw of _logsCache) {
                 const log = normalizeLog(raw);
                 if (provFilter && log.provider !== provFilter) continue;
@@ -3653,30 +4105,134 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 if (proxyFilter === 'proxy' && !log.proxyUsed) continue;
                 if (proxyFilter === 'direct' && log.proxyUsed) continue;
                 if (q) {
-                    const hay = [
-                        log.endpoint, log.method, log.provider, log.status, log.keyUsed,
-                        log.proxyUsed, log.error, (log.failedKeys || []).map(f => f.key).join(' ')
-                    ].join(' ').toLowerCase();
+                    const hay = [log.endpoint, log.method, log.provider, log.status, log.keyUsed,
+                        log.proxyUsed, log.error, (log.failedKeys || []).map(f => f.key).join(' ')].join(' ').toLowerCase();
                     if (!hay.includes(q)) continue;
                 }
-                rows.push(logRowHtml(log));
+                out.push(log);
             }
+            // Sort (D1)
+            const { key, dir } = _logSort, mul = dir === 'asc' ? 1 : -1;
+            out.sort((a, b) => {
+                let av, bv;
+                if (key === 'time') { av = a.timestamp ? new Date(a.timestamp).getTime() : 0; bv = b.timestamp ? new Date(b.timestamp).getTime() : 0; }
+                else if (key === 'status') { av = a.status || 0; bv = b.status || 0; }
+                else if (key === 'latency') { av = a.responseTime || 0; bv = b.responseTime || 0; }
+                else if (key === 'provider') { av = a.provider || ''; bv = b.provider || ''; return av.localeCompare(bv) * mul; }
+                return (av - bv) * mul;
+            });
+            return out;
+        }
 
-            body.innerHTML = rows.join('');
+        function renderLogs() {
+            const body = document.getElementById('logsTableBody');
+            if (!body) return;
+            const logs = _filteredLogs();
+            _logLatMax = Math.max(1, ...logs.map(l => l.responseTime || 0));
+            body.innerHTML = logs.map(logRowHtml).join('');
+
             const empty = document.getElementById('logsEmpty');
             if (empty) {
-                empty.classList.toggle('hidden', rows.length > 0);
-                if (rows.length === 0) {
-                    empty.textContent = _logsCache.length === 0
-                        ? 'No logs available yet. Make an API request to see it here.'
-                        : 'No logs match the current filters.';
+                empty.classList.toggle('hidden', logs.length > 0);
+                if (logs.length === 0) {
+                    const isFiltered = _logsCache.length > 0;
+                    empty.innerHTML = `
+                        <div class="flex flex-col items-center gap-2 py-4">
+                            <div class="h-10 w-10 rounded-full bg-muted flex items-center justify-center text-muted-foreground">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 17v-6a2 2 0 012-2h2a2 2 0 012 2v6m-6 0a2 2 0 002 2h2a2 2 0 002-2M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                            </div>
+                            <div class="text-sm font-medium text-foreground">${isFiltered ? 'No matching requests' : 'No requests yet'}</div>
+                            <div class="text-2xs text-muted-foreground">${isFiltered ? 'Try clearing the filters or search.' : 'Send an API request through the rotator and it will appear here.'}</div>
+                        </div>`;
                 }
             }
             const count = document.getElementById('logCount');
             if (count) {
-                const filtered = rows.length !== _logsCache.length ? `${rows.length} shown · ` : '';
+                const filtered = logs.length !== _logsCache.length ? `${logs.length} shown · ` : '';
                 count.textContent = `${filtered}${_logsCache.length} request${_logsCache.length === 1 ? '' : 's'}`;
             }
+            updateSortIndicators();
+            renderLogStats();
+        }
+
+        // Stats bar (D6)
+        function renderLogStats() {
+            const el = document.getElementById('logStats');
+            if (!el) return;
+            const logs = _logsCache.map(normalizeLog);
+            const total = logs.length;
+            const withStatus = logs.filter(l => l.status != null);
+            const ok = withStatus.filter(l => l.status >= 200 && l.status < 400).length;
+            const errors = withStatus.filter(l => l.status >= 400).length;
+            const successRate = withStatus.length ? Math.round((ok / withStatus.length) * 100) : null;
+            const lats = logs.map(l => l.responseTime).filter(v => v != null);
+            const avgLat = lats.length ? Math.round(lats.reduce((a, b) => a + b, 0) / lats.length) : null;
+            const viaProxy = logs.filter(l => l.proxyUsed).length;
+
+            const card = (label, value, sub, tone) => `
+                <div class="section" style="margin:0;padding:var(--space-3) var(--space-4)">
+                    <div class="text-2xs uppercase tracking-wide text-muted-foreground">${label}</div>
+                    <div class="text-xl font-semibold ${tone || 'text-foreground'} tabular-nums mt-0.5">${value}</div>
+                    ${sub ? `<div class="text-2xs text-muted-foreground mt-0.5">${sub}</div>` : ''}
+                </div>`;
+            el.innerHTML =
+                card('Total', total, 'requests') +
+                card('Success rate', successRate == null ? '—' : successRate + '%', `${ok} ok`, successRate != null && successRate < 80 ? 'text-warning' : 'text-success') +
+                card('Errors', errors, errors ? '4xx / 5xx' : 'none', errors ? 'text-destructive' : 'text-foreground') +
+                card('Avg latency', avgLat == null ? '—' : avgLat + 'ms', lats.length + ' timed', avgLat != null && avgLat > 2000 ? 'text-warning' : 'text-foreground') +
+                card('Via proxy', viaProxy, `${total - viaProxy} direct`, 'text-foreground');
+        }
+
+        function updateSortIndicators() {
+            document.querySelectorAll('#logs th.sortable').forEach(th => {
+                const ind = th.querySelector('.sort-ind');
+                if (!ind) return;
+                ind.textContent = th.dataset.sort === _logSort.key ? (_logSort.dir === 'asc' ? '▲' : '▼') : '';
+            });
+        }
+
+        function setLogSort(key) {
+            if (_logSort.key === key) _logSort.dir = _logSort.dir === 'asc' ? 'desc' : 'asc';
+            else _logSort = { key, dir: key === 'time' ? 'desc' : 'asc' };
+            renderLogs();
+        }
+
+        function setLogDensity(mode) {
+            const scroll = document.getElementById('logsTableScroll');
+            if (scroll) scroll.setAttribute('data-density', mode === 'compact' ? 'compact' : 'cozy');
+            document.querySelectorAll('[data-density-opt]').forEach(b =>
+                b.classList.toggle('active', b.dataset.densityOpt === mode));
+            try { localStorage.setItem('logDensity', mode); } catch (e) {}
+        }
+
+        async function clearLogs(btn) {
+            if (!confirm('Clear all logs and stored responses? This cannot be undone.')) return;
+            const orig = btn ? btn.innerHTML : '';
+            if (btn) { btn.disabled = true; }
+            try {
+                const r = await fetch('/admin/api/logs/clear', { method: 'POST' });
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                _logsCache = [];
+                populateLogProviderFilter();
+                renderLogs();
+                showSuccessToast('Logs cleared');
+            } catch (e) {
+                showErrorToast('Failed to clear logs: ' + e.message);
+            } finally {
+                if (btn) { btn.disabled = false; btn.innerHTML = orig; }
+            }
+        }
+
+        function exportLogs() {
+            const logs = _filteredLogs();
+            if (!logs.length) { showErrorToast('No logs to export'); return; }
+            const blob = new Blob([JSON.stringify(logs, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = `rotato-logs-${logs.length}.json`;
+            document.body.appendChild(a); a.click(); a.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+            showSuccessToast(`Exported ${logs.length} log entries`);
         }
 
         function toggleLogAutoRefresh() {
@@ -3689,14 +4245,12 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
         }
 
         // --- Response viewer state ---
-        let _rvResponseRaw = '';   // raw (pretty-printed) text for copy
-        let _rvRequestRaw = '';
+        let _rvData = null, _rvId = null;
+        let _rvRawResp = '', _rvRawReq = '';       // original payloads
+        let _rvPrettyResp = '', _rvPrettyReq = '';  // pretty-printed (for copy)
         let _rvActive = 'response';
-
-        // Segmented-tab styling
-        const RV_TAB_ACTIVE = 'px-3 py-1 rounded text-xs font-medium transition-colors bg-primary text-primary-foreground';
-        const RV_TAB_INACTIVE = 'px-3 py-1 rounded text-xs font-medium transition-colors text-muted-foreground hover:text-foreground';
-        const RV_TAB_DISABLED = 'px-3 py-1 rounded text-xs font-medium text-muted-foreground/40 cursor-not-allowed';
+        let _rvView = 'pretty';                      // 'pretty' | 'tree'
+        let _rvWrap = false;
 
         // Lightweight JSON syntax highlighter (keys / strings / numbers / booleans / null)
         function highlightJson(jsonString) {
@@ -3710,18 +4264,57 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             });
         }
 
-        // Pretty-print + highlight into a <pre>, returning the raw pretty text
-        function renderIntoPre(preEl, raw) {
+        // Pretty-print a raw string if it's JSON, else return as-is
+        function tryPretty(raw) {
             const text = (raw == null) ? '' : String(raw);
-            let pretty;
-            try {
-                pretty = JSON.stringify(JSON.parse(text), null, 2);
-                preEl.innerHTML = highlightJson(pretty);
-            } catch (e) {
-                pretty = text;
-                preEl.textContent = pretty; // not JSON — plain text, no highlight
-            }
+            try { return JSON.stringify(JSON.parse(text), null, 2); } catch (e) { return text; }
+        }
+
+        // Render pretty JSON (or text) with line numbers (E4) into a .rv-code container
+        function renderCode(el, raw) {
+            const text = (raw == null) ? '' : String(raw);
+            let pretty, isJson = false;
+            try { pretty = JSON.stringify(JSON.parse(text), null, 2); isJson = true; } catch (e) { pretty = text; }
+            const html = isJson ? highlightJson(pretty) : escapeHtml(pretty);
+            el.innerHTML = html.split('\n')
+                .map(l => `<div class="rv-line"><span class="rv-lc">${l === '' ? '&#8203;' : l}</span></div>`)
+                .join('');
             return pretty;
+        }
+
+        // JSON tree (E1) — native <details> for collapse
+        function _treeLeaf(key, valueHtml) {
+            const k = key != null ? `<span class="jk">${escapeHtml(key)}</span><span class="jc">: </span>` : '';
+            return `<div style="padding-left:1.1em">${k}${valueHtml}</div>`;
+        }
+        function jsonToTree(value, key) {
+            if (value === null) return _treeLeaf(key, '<span class="ju">null</span>');
+            if (Array.isArray(value)) {
+                if (!value.length) return _treeLeaf(key, '<span class="jc">[ ]</span>');
+                const kids = value.map((v, i) => jsonToTree(v, String(i))).join('');
+                const label = key != null ? `<span class="jk">${escapeHtml(key)}</span><span class="jc">: </span>` : '';
+                return `<details open><summary>${label}<span class="jc">Array[${value.length}]</span></summary>${kids}</details>`;
+            }
+            if (typeof value === 'object') {
+                const keys = Object.keys(value);
+                if (!keys.length) return _treeLeaf(key, '<span class="jc">{ }</span>');
+                const kids = keys.map(k => jsonToTree(value[k], k)).join('');
+                const label = key != null ? `<span class="jk">${escapeHtml(key)}</span><span class="jc">: </span>` : '';
+                return `<details open><summary>${label}<span class="jc">Object{${keys.length}}</span></summary>${kids}</details>`;
+            }
+            let vh;
+            if (typeof value === 'string') vh = `<span class="js">"${escapeHtml(value)}"</span>`;
+            else if (typeof value === 'number') vh = `<span class="jn">${value}</span>`;
+            else if (typeof value === 'boolean') vh = `<span class="jb">${value}</span>`;
+            else vh = escapeHtml(String(value));
+            return _treeLeaf(key, vh);
+        }
+        function renderTree(el, raw) {
+            try {
+                const v = JSON.parse(raw);
+                el.innerHTML = `<div class="rv-tree">${jsonToTree(v, null)}</div>`;
+                return true;
+            } catch (e) { return false; }
         }
 
         function rvStatusBadge(status, statusText) {
@@ -3774,7 +4367,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 // Meta chips
                 const size = bytesHuman(data.responseData ? new Blob([data.responseData]).size : null);
                 const chips = [];
-                if (data.provider) chips.push(rvChip('provider', data.provider, 'cyan'));
+                if (data.provider) chips.push(providerPill(data.provider));
                 if (data.apiType) chips.push(rvChip('type', data.apiType, 'default'));
                 if (data.streaming) chips.push(`<span class="inline-block px-1.5 py-0.5 rounded text-[11px] bg-blue-500/15 text-blue-300">streaming</span>`);
                 if (data.contentType) chips.push(rvChip('content-type', data.contentType, 'default'));
@@ -3786,22 +4379,19 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 else chips.push(`<span class="inline-block px-1.5 py-0.5 rounded text-[11px] bg-muted text-muted-foreground">direct</span>`);
                 document.getElementById('rvMeta').innerHTML = chips.join('');
 
-                // Body panes
-                _rvResponseRaw = renderIntoPre(document.getElementById('responseContent'), data.responseData);
+                // Store raw payloads + pretty forms for view rendering / copy
+                _rvData = data;
+                _rvId = testId;
+                _rvRawResp = data.responseData != null ? String(data.responseData) : '';
+                _rvRawReq = (data.requestBody && String(data.requestBody).trim()) ? String(data.requestBody) : '';
+                _rvPrettyResp = tryPretty(_rvRawResp);
+                _rvPrettyReq = tryPretty(_rvRawReq);
 
                 const requestTab = document.getElementById('requestTab');
-                const requestContent = document.getElementById('requestContent');
-                if (data.requestBody && String(data.requestBody).trim()) {
-                    requestTab.disabled = false;
-                    requestTab.title = '';
-                    _rvRequestRaw = renderIntoPre(requestContent, data.requestBody);
-                } else {
-                    requestTab.disabled = true;
-                    requestTab.title = 'No request body for this request';
-                    _rvRequestRaw = '';
-                    requestContent.textContent = 'No request body data available for this request.';
-                }
+                if (_rvRawReq) { requestTab.disabled = false; requestTab.title = ''; }
+                else { requestTab.disabled = true; requestTab.title = 'No request body for this request'; }
 
+                setRvView(_rvView);   // renders both panes + syncs the Pretty/Tree toggle
                 switchResponseTab('response');
                 document.getElementById('responseDialog').classList.remove('hidden');
             } catch (error) {
@@ -3809,37 +4399,76 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             }
         }
 
-        function switchResponseTab(tab) {
-            const responseTab = document.getElementById('responseTab');
-            const requestTab = document.getElementById('requestTab');
-            const responseContent = document.getElementById('responseContent');
-            const requestContent = document.getElementById('requestContent');
+        // Render both panes according to the current view mode (pretty/tree)
+        function applyRvView() {
+            const respEl = document.getElementById('responseContent');
+            const reqEl = document.getElementById('requestContent');
+            if (_rvView === 'tree') {
+                if (!renderTree(respEl, _rvRawResp)) renderCode(respEl, _rvRawResp);
+                if (_rvRawReq) { if (!renderTree(reqEl, _rvRawReq)) renderCode(reqEl, _rvRawReq); }
+                else reqEl.innerHTML = '<div class="rv-tree jc">No request body.</div>';
+            } else {
+                renderCode(respEl, _rvRawResp);
+                if (_rvRawReq) renderCode(reqEl, _rvRawReq);
+                else reqEl.innerHTML = '<div class="rv-line"><span class="rv-lc">No request body data available for this request.</span></div>';
+            }
+            applyWrap();
+        }
 
+        function setRvView(mode) {
+            _rvView = mode;
+            document.getElementById('rvViewPretty').classList.toggle('active', mode === 'pretty');
+            document.getElementById('rvViewTree').classList.toggle('active', mode === 'tree');
+            applyRvView();
+        }
+
+        function switchResponseTab(tab) {
+            const requestTab = document.getElementById('requestTab');
             if (tab === 'request' && requestTab.disabled) return;
             _rvActive = tab;
-
-            responseTab.className = tab === 'response' ? RV_TAB_ACTIVE : RV_TAB_INACTIVE;
-            requestTab.className = requestTab.disabled ? RV_TAB_DISABLED : (tab === 'request' ? RV_TAB_ACTIVE : RV_TAB_INACTIVE);
-
-            responseContent.classList.toggle('hidden', tab !== 'response');
-            requestContent.classList.toggle('hidden', tab !== 'request');
+            document.getElementById('responseTab').classList.toggle('active', tab === 'response');
+            requestTab.classList.toggle('active', tab === 'request');
+            document.getElementById('responseContent').classList.toggle('hidden', tab !== 'response');
+            document.getElementById('requestContent').classList.toggle('hidden', tab !== 'request');
         }
 
-        function toggleResponseWrap() {
+        function applyWrap() {
             const btn = document.getElementById('rvWrapBtn');
-            const on = document.getElementById('responseContent').classList.toggle('whitespace-pre-wrap');
-            document.getElementById('responseContent').classList.toggle('whitespace-pre', !on);
-            document.getElementById('requestContent').classList.toggle('whitespace-pre-wrap', on);
-            document.getElementById('requestContent').classList.toggle('whitespace-pre', !on);
-            document.getElementById('responseContent').classList.toggle('break-all', on);
-            document.getElementById('requestContent').classList.toggle('break-all', on);
-            btn.classList.toggle('btn-primary', on);
-            btn.classList.toggle('btn-secondary', !on);
+            document.getElementById('responseContent').classList.toggle('wrap', _rvWrap);
+            document.getElementById('requestContent').classList.toggle('wrap', _rvWrap);
+            btn.classList.toggle('btn-primary', _rvWrap);
+            btn.classList.toggle('btn-secondary', !_rvWrap);
+        }
+        function toggleResponseWrap() { _rvWrap = !_rvWrap; applyWrap(); }
+
+        function copyResponseView() {
+            const raw = _rvActive === 'request' ? _rvPrettyReq : _rvPrettyResp;
+            copyToClipboard(raw, `${_rvActive === 'request' ? 'Request' : 'Response'} copied to clipboard!`);
         }
 
-        function copyResponseView(btn) {
-            const raw = _rvActive === 'request' ? _rvRequestRaw : _rvResponseRaw;
-            copyToClipboard(raw, `${_rvActive === 'request' ? 'Request' : 'Response'} copied to clipboard!`);
+        // Copy this request as a runnable cURL against the rotator endpoint (E3)
+        function copyResponseCurl() {
+            const d = _rvData; if (!d) return;
+            const ep = (d.endpoint && d.endpoint.startsWith('/')) ? d.endpoint : '/' + (d.endpoint || '');
+            const url = `${location.origin}/${d.provider || 'PROVIDER'}${ep}`;
+            const isGemini = (d.apiType || '').toLowerCase().includes('gemini');
+            const parts = [`curl -X ${d.method || 'GET'} "${url}"`, `  -H "Content-Type: application/json"`];
+            parts.push(isGemini ? `  -H "x-goog-api-key: $ACCESS_KEY"` : `  -H "Authorization: Bearer $ACCESS_KEY"`);
+            if (_rvRawReq) parts.push(`  -d '${_rvRawReq.replace(/'/g, "'\\''")}'`);
+            copyToClipboard(parts.join(' \\\n'), 'cURL command copied to clipboard!');
+        }
+
+        // Download the response body (E3)
+        function downloadResponse() {
+            const d = _rvData; if (!d) return;
+            const isJson = (() => { try { JSON.parse(_rvRawResp); return true; } catch (e) { return false; } })();
+            const blob = new Blob([_rvRawResp], { type: d.contentType || (isJson ? 'application/json' : 'text/plain') });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = `response-${_rvId || 'data'}.${isJson ? 'json' : 'txt'}`;
+            document.body.appendChild(a); a.click(); a.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+            showSuccessToast('Response downloaded');
         }
 
         function closeResponseDialog() {
@@ -3877,6 +4506,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             
             // Load logs if logs tab is selected; pause auto-refresh polling elsewhere
             if (tabName === 'logs') {
+                try { setLogDensity(localStorage.getItem('logDensity') || 'cozy'); } catch (e) {}
                 refreshLogs();
                 if (document.getElementById('logAutoRefresh')?.checked && !_logAutoRefreshTimer) {
                     _logAutoRefreshTimer = setInterval(refreshLogs, 5000);
@@ -3940,6 +4570,33 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
 
         function escapeHtml(str) {
             return String(str).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        }
+
+        // --- Provider identity colors (A1/A3) ---
+        // The color is generated purely from the provider NAME via a hash, so every
+        // distinct name gets its own stable hue (not limited to a fixed palette).
+        // Used everywhere that provider's identity shows: name dot, logs pill + row
+        // accent, dialog chip, and its toggle switches (secondary/accent color).
+        const _providerColorCache = {};
+        function providerColor(name) {
+            const key = String(name || '').toLowerCase();
+            if (_providerColorCache[key]) return _providerColorCache[key];
+            // FNV-1a hash for good avalanche/spread across similar names
+            let h = 2166136261;
+            for (let i = 0; i < key.length; i++) { h ^= key.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+            const hue = h % 360;
+            // Muted, Geist-friendly tones — soft accents, never loud
+            const sat = 34 + (h % 12);           // 34–45%
+            const light = 56 + ((h >>> 8) % 8);  // 56–63%
+            const c = `hsl(${hue} ${sat}% ${light}%)`;
+            _providerColorCache[key] = c;
+            return c;
+        }
+        // Subtle provider indicator: small color dot + monochrome name (Geist)
+        function providerPill(name) {
+            if (!name || name === 'unknown') return '<span class="text-muted-foreground">—</span>';
+            const c = providerColor(name);
+            return `<span class="inline-flex items-center gap-1.5"><span class="provider-dot" style="--pc:${c}"></span><span class="text-foreground">${escapeHtml(name)}</span></span>`;
         }
 
         async function saveProxySettings(btn) {
@@ -4048,6 +4705,46 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
         });
         
         // Check authentication on page load
+        // Status bar (J2) — poll live server status
+        let _statusTimer = null;
+        function fmtUptime(ms) {
+            const s = Math.floor(ms / 1000);
+            const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
+            if (d) return `${d}d ${h}h`;
+            if (h) return `${h}h ${m}m`;
+            if (m) return `${m}m`;
+            return `${s}s`;
+        }
+        async function refreshStatusBar() {
+            const el = document.getElementById('statusBar');
+            if (!el) return;
+            try {
+                const r = await fetch('/admin/api/status');
+                if (!r.ok) return;
+                const s = await r.json();
+                const dot = (color) => `<span class="provider-dot" style="--pc:${color}"></span>`;
+                const item = (label, valueHtml) => `<span class="inline-flex items-center gap-1.5"><span class="opacity-60">${label}</span>${valueHtml}</span>`;
+                const sep = '<span class="opacity-30">•</span>';
+                const proxyHtml = s.proxyEnabled
+                    ? `${dot('var(--success)')}<span class="text-foreground">${s.proxyCount} proxy</span>`
+                    : `${dot('var(--muted-foreground)')}<span>direct</span>`;
+                el.innerHTML = [
+                    item('uptime', `<span class="text-foreground tabular-nums">${fmtUptime(s.uptimeMs)}</span>`),
+                    sep,
+                    item('providers', `<span class="text-foreground tabular-nums">${s.providersEnabled}/${s.providers}</span>`),
+                    sep,
+                    item('routing', proxyHtml),
+                    sep,
+                    item('requests', `<span class="text-foreground tabular-nums">${s.totalRequests}</span>`)
+                ].join(' ');
+            } catch (e) { /* ignore transient errors */ }
+        }
+        function startStatusBar() {
+            refreshStatusBar();
+            if (_statusTimer) clearInterval(_statusTimer);
+            _statusTimer = setInterval(refreshStatusBar, 15000);
+        }
+
         async function checkAuth() {
             // Always check rate limit status first
             await checkLoginRateLimit();
@@ -4060,6 +4757,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                     document.getElementById('loginForm').classList.add('hidden');
                     document.getElementById('adminPanel').classList.remove('hidden');
                     loadEnvVars();
+                    startStatusBar();
                     // Fix header positioning after panel is shown
                     setTimeout(adjustStickyHeaderPositioning, 100);
                 }
