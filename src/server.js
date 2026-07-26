@@ -17,6 +17,8 @@ class ProxyServer {
     this.adminSessionToken = null;
     this.logBuffer = []; // Store logs in RAM only (last 100 entries)
     this.responseStorage = new Map(); // Store response data for viewing
+    this.startTime = Date.now(); // For uptime in the status bar (J2)
+    this.totalApiRequests = 0;    // Cumulative API request counter (J2)
 
     // File logging - debounced write
     this.pendingLogEntries = [];
@@ -746,6 +748,10 @@ class ProxyServer {
       await this.handleTestApiKey(res, body);
     } else if (path === '/admin/api/logs' && req.method === 'GET') {
       await this.handleGetLogs(res);
+    } else if (path === '/admin/api/logs/clear' && req.method === 'POST') {
+      await this.handleClearLogs(res);
+    } else if (path === '/admin/api/status' && req.method === 'GET') {
+      await this.handleGetStatus(res);
     } else if (path.startsWith('/admin/api/response/') && req.method === 'GET') {
       await this.handleGetResponse(res, path);
     } else if (path === '/admin/api/reorder-keys' && req.method === 'POST') {
@@ -1116,6 +1122,41 @@ class ProxyServer {
   }
   
   
+  async handleGetStatus(res) {
+    try {
+      const providers = this.config.getProviders();
+      let total = 0, enabled = 0;
+      for (const [, cfg] of providers.entries()) { total++; if (!cfg.disabled) enabled++; }
+      const proxyUrls = this.config.getProxyUrls ? this.config.getProxyUrls() : [];
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        uptimeMs: Date.now() - this.startTime,
+        totalRequests: this.totalApiRequests,
+        providers: total,
+        providersEnabled: enabled,
+        proxyEnabled: this.config.isProxyEnabled ? this.config.isProxyEnabled() : false,
+        proxyCount: Array.isArray(proxyUrls) ? proxyUrls.length : 0,
+        telegramRunning: !!(this.telegramBot && this.telegramBot.isRunning && this.telegramBot.isRunning())
+      }));
+    } catch (error) {
+      this.sendError(res, 500, 'Failed to get status');
+    }
+  }
+
+  async handleClearLogs(res) {
+    try {
+      this.logBuffer = [];
+      this.pendingLogEntries = [];
+      this.responseStorage.clear();
+      // Best-effort truncate the on-disk log file
+      try { fs.writeFileSync(this.logFilePath, ''); } catch (e) { /* ignore */ }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true }));
+    } catch (error) {
+      this.sendError(res, 500, 'Failed to clear logs: ' + error.message);
+    }
+  }
+
   logApiRequest(requestId, method, endpoint, provider, status = null, responseTime = null, error = null, clientIp = null, keyInfo = null, proxyUsed = null) {
     const logEntry = {
       timestamp: new Date().toISOString(),
@@ -1131,7 +1172,9 @@ class ProxyServer {
       failedKeys: keyInfo ? keyInfo.failedKeys : [],
       proxyUsed: proxyUsed || null
     };
-    
+
+    this.totalApiRequests++;
+
     // Add to buffer (keep last 100 entries in RAM only)
     this.logBuffer.push(logEntry);
     if (this.logBuffer.length > 100) {
