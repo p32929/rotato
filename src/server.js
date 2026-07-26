@@ -918,7 +918,17 @@ class ProxyServer {
 
       // Preserve _DISABLED, TELEGRAM_, and DEFAULT_STATUS_CODES entries from current env if not in new vars
       for (const [key, value] of Object.entries(currentEnvVars)) {
-        if ((key.endsWith('_DISABLED') || key.startsWith('TELEGRAM_') || key.startsWith('PROXY_') || key === 'DEFAULT_STATUS_CODES' || key === 'KEEP_ALIVE_MINUTES') && !(key in finalEnvVars)) {
+        if (key in finalEnvVars) continue;
+
+        if (key.endsWith('_DISABLED')) {
+          // Only preserve a provider's disabled flag if that provider still exists
+          // (i.e. its API keys are present in the new payload). Otherwise a deleted
+          // provider's DISABLED flag would resurrect it as a keyless ghost on reload.
+          const apiKeysKey = key.replace(/_DISABLED$/, '_API_KEYS');
+          if (apiKeysKey in finalEnvVars) {
+            finalEnvVars[key] = value;
+          }
+        } else if (key.startsWith('TELEGRAM_') || key.startsWith('PROXY_') || key === 'DEFAULT_STATUS_CODES' || key === 'KEEP_ALIVE_MINUTES') {
           finalEnvVars[key] = value;
         }
       }
@@ -1633,7 +1643,9 @@ class ProxyServer {
           if (p.accessKey) envContent += `${p.apiType}_${p.providerName}_ACCESS_KEY=${p.accessKey}\n`;
           if (p.defaultModel) envContent += `${p.apiType}_${p.providerName}_DEFAULT_MODEL=${p.defaultModel}\n`;
           if (p.modelHistory) envContent += `${p.apiType}_${p.providerName}_MODEL_HISTORY=${p.modelHistory}\n`;
-          if (p.disabled && p.disabled === 'true') envContent += `${p.apiType}_${p.providerName}_DISABLED=true\n`;
+          // Only persist a disabled flag for a provider that actually has keys —
+          // an orphaned DISABLED flag would otherwise render as a keyless ghost provider.
+          if (p.disabled === 'true' && p.keys) envContent += `${p.apiType}_${p.providerName}_DISABLED=true\n`;
           envContent += '\n';
         }
       }
