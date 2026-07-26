@@ -1961,6 +1961,17 @@
                 }
             });
 
+            // Drop ghost providers: entries that carry no API keys, no base URL and
+            // no access key are just a stray _DISABLED flag left over from an old
+            // delete — they must never render as a real provider.
+            for (const k of Object.keys(providers)) {
+                const p = providers[k];
+                const hasKeys = Array.isArray(p.keys) && p.keys.length > 0;
+                if (!hasKeys && !p.baseUrl && !p.accessKey) {
+                    delete providers[k];
+                }
+            }
+
             // Ordering: disabled providers sink to the bottom, but ONLY on a fresh
             // page load. Within a session we preserve the current on-screen order,
             // so toggling a provider off leaves it in place until the next load.
