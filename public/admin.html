@@ -248,12 +248,6 @@
             margin-bottom: 1rem;
         }
         
-        .section-header {
-            border-bottom: 1px solid var(--border);
-            padding-bottom: 0.75rem;
-            margin-bottom: 1.5rem;
-        }
-        
         .input-group {
             background-color: var(--muted);
             border: 1px solid var(--border);
@@ -477,11 +471,15 @@
             padding: var(--space-6);
             margin-bottom: var(--space-5);
         }
-        /* Page heading block — no divider, just spacing (Geist) */
+        /* Page heading block — no divider, tight 16px gap to content (Geist) */
         .section-header {
+            border-bottom: none;
             padding-bottom: 0;
-            margin-bottom: var(--space-6);
+            margin-bottom: var(--space-4);
         }
+        /* Keep the title/subtitle pair tight: 4px apart, no leading bloat */
+        .section-header h2 { line-height: 1.2; }
+        .section-header p { line-height: 1.35; }
 
         /* Buttons — tokenized, with sizes, focus ring, transitions (F4/F5/I2) */
         .btn {
@@ -567,23 +565,10 @@
         .chip .chip-k { opacity: 0.6; }
         .chip .chip-v { font-weight: var(--fw-medium); font-family: var(--font-mono); }
 
-        /* Provider identity dot / pill / avatar (A1/A3) — color set inline via --pc */
+        /* Small status dot (proxy indicator in the status bar) — color set inline via --pc */
         .provider-dot {
             width: 0.5rem; height: 0.5rem; border-radius: var(--radius-full);
             background: var(--pc, var(--muted-foreground)); flex-shrink: 0; display: inline-block;
-        }
-        /* Identity dot with a soft halo, sits after the provider name */
-        .provider-dot-lg {
-            width: 0.625rem; height: 0.625rem; border-radius: var(--radius-full); flex-shrink: 0;
-            background: var(--pc, var(--muted-foreground));
-            box-shadow: 0 0 0 3px color-mix(in srgb, var(--pc) 22%, transparent);
-        }
-        .provider-pill {
-            display: inline-flex; align-items: center; gap: var(--space-2);
-            padding: 0.125rem var(--space-2); border-radius: var(--radius-full);
-            font-size: var(--text-2xs); font-weight: var(--fw-medium);
-            background: color-mix(in srgb, var(--pc) 14%, transparent);
-            color: var(--pc); border: 1px solid color-mix(in srgb, var(--pc) 30%, transparent);
         }
 
         /* Segmented control (dialog tabs, density toggle) */
@@ -1058,11 +1043,6 @@
                             <option value="proxy">Via proxy</option>
                             <option value="direct">Direct</option>
                         </select>
-                        <!-- Density toggle (B3) -->
-                        <div class="seg" role="group" aria-label="Row density">
-                            <button type="button" class="seg-item" data-density-opt="compact" onclick="setLogDensity('compact')" title="Compact rows">Compact</button>
-                            <button type="button" class="seg-item active" data-density-opt="cozy" onclick="setLogDensity('cozy')" title="Cozy rows">Cozy</button>
-                        </div>
                         <label class="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none px-1" title="Auto-refresh every 5s">
                             <input type="checkbox" id="logAutoRefresh" onchange="toggleLogAutoRefresh()" class="w-3.5 h-3.5"> Live
                         </label>
@@ -1144,6 +1124,21 @@
                         </div>
                     </div>
 
+                    <!-- Where to get free proxies -->
+                    <div class="section">
+                        <h3 class="text-sm font-medium text-foreground mb-1">Need proxies? Get them free</h3>
+                        <p class="text-muted-foreground text-xs mb-3">Grab a few from these public lists, paste them above (one per line), then hit <span class="text-foreground">Test All</span> to keep the ones that respond. Free proxies rotate and die often, so add several. These are third-party lists — not endorsements.</p>
+                        <div class="flex flex-wrap gap-2">
+                            <a href="https://free-proxy-list.net/" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">free-proxy-list.net</a>
+                            <a href="https://geonode.com/free-proxy-list" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">geonode.com</a>
+                            <a href="https://proxyscrape.com/free-proxy-list" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">proxyscrape.com</a>
+                            <a href="https://www.proxy-list.download/SOCKS5" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">proxy-list.download</a>
+                            <a href="https://spys.one/en/socks-proxy-list/" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">spys.one</a>
+                            <a href="https://github.com/TheSpeedX/PROXY-List" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">TheSpeedX/PROXY-List</a>
+                            <a href="https://github.com/monosans/proxy-list" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">monosans/proxy-list</a>
+                        </div>
+                    </div>
+
                     <!-- Configured proxies + per-proxy test -->
                     <div class="section">
                         <div class="flex items-center justify-between mb-3">
@@ -1166,7 +1161,7 @@
                     <p class="text-muted-foreground text-xs mt-1">Key rotation behavior and Telegram bot configuration</p>
                 </div>
 
-                <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+                <div class="grid grid-cols-1 gap-4 items-start">
                     <!-- Key Rotation Section -->
                     <div class="section" style="margin:0">
                         <h3 class="text-sm font-medium text-foreground mb-3 flex items-center gap-2">
@@ -1231,7 +1226,7 @@
                     </div>
 
                     <!-- Save (persists both Key Rotation + Telegram settings) -->
-                    <div class="flex items-center space-x-2 lg:col-span-2">
+                    <div class="flex items-center space-x-2">
                         <button onclick="saveTelegramSettings()" class="btn btn-primary px-3 py-1.5 text-xs font-medium">Save Settings</button>
                         <button onclick="loadTelegramSettings()" class="btn btn-secondary px-3 py-1.5 text-xs font-medium">Reload</button>
                     </div>
@@ -1994,10 +1989,6 @@
             sortedProviders.forEach((provider, index) => {
                 const providerDiv = document.createElement('div');
                 providerDiv.className = 'key-row';
-                // Provider identity color (A1) — set --pc on the card so the name dot
-                // AND this provider's toggle switches use its color as the accent.
-                const _pColor = providerColor(provider.name);
-                providerDiv.style.setProperty('--pc', _pColor);
 
                 // Determine initial button state for access key
                 let accessKeyButtonHtml, accessKeyAction, accessKeyClass, accessKeyStyle, accessKeyTitle;
@@ -2061,7 +2052,6 @@
                                 <div id="provider-name-${provider.apiType}-${provider.name}">
                                     <h4 class="text-base font-semibold text-foreground leading-tight flex items-center gap-2">
                                         <span>${provider.name}</span>
-                                        <span class="provider-dot-lg" style="--pc:${_pColor}" title="${escapeHtml(provider.name)}"></span>
                                         ${isProviderDisabled ? '<span class="text-xs text-destructive font-normal">(disabled)</span>' : ''}
                                     </h4>
                                     <p class="text-xs text-muted-foreground mt-0.5">${provider.apiType.toUpperCase()} Compatible • ${enabledKeyCount}/${totalKeyCount} keys active</p>
@@ -4050,7 +4040,6 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
 
         function logRowHtml(log) {
             const rt = relativeTime(log.timestamp);
-            const pColor = log.provider ? providerColor(log.provider) : 'transparent';
 
             // Request cell: method chip + endpoint
             let requestCell;
@@ -4206,14 +4195,6 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             if (_logSort.key === key) _logSort.dir = _logSort.dir === 'asc' ? 'desc' : 'asc';
             else _logSort = { key, dir: key === 'time' ? 'desc' : 'asc' };
             renderLogs();
-        }
-
-        function setLogDensity(mode) {
-            const scroll = document.getElementById('logsTableScroll');
-            if (scroll) scroll.setAttribute('data-density', mode === 'compact' ? 'compact' : 'cozy');
-            document.querySelectorAll('[data-density-opt]').forEach(b =>
-                b.classList.toggle('active', b.dataset.densityOpt === mode));
-            try { localStorage.setItem('logDensity', mode); } catch (e) {}
         }
 
         async function clearLogs(btn) {
@@ -4517,7 +4498,6 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             
             // Load logs if logs tab is selected; pause auto-refresh polling elsewhere
             if (tabName === 'logs') {
-                try { setLogDensity(localStorage.getItem('logDensity') || 'cozy'); } catch (e) {}
                 refreshLogs();
                 if (document.getElementById('logAutoRefresh')?.checked && !_logAutoRefreshTimer) {
                     _logAutoRefreshTimer = setInterval(refreshLogs, 5000);
@@ -4583,31 +4563,10 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             return String(str).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
         }
 
-        // --- Provider identity colors (A1/A3) ---
-        // The color is generated purely from the provider NAME via a hash, so every
-        // distinct name gets its own stable hue (not limited to a fixed palette).
-        // Used everywhere that provider's identity shows: name dot, logs pill + row
-        // accent, dialog chip, and its toggle switches (secondary/accent color).
-        const _providerColorCache = {};
-        function providerColor(name) {
-            const key = String(name || '').toLowerCase();
-            if (_providerColorCache[key]) return _providerColorCache[key];
-            // FNV-1a hash for good avalanche/spread across similar names
-            let h = 2166136261;
-            for (let i = 0; i < key.length; i++) { h ^= key.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
-            const hue = h % 360;
-            // Muted, Geist-friendly tones — soft accents, never loud
-            const sat = 34 + (h % 12);           // 34–45%
-            const light = 56 + ((h >>> 8) % 8);  // 56–63%
-            const c = `hsl(${hue} ${sat}% ${light}%)`;
-            _providerColorCache[key] = c;
-            return c;
-        }
-        // Subtle provider indicator: small color dot + monochrome name (Geist)
+        // Provider indicator: monochrome name only (no per-provider color)
         function providerPill(name) {
             if (!name || name === 'unknown') return '<span class="text-muted-foreground">—</span>';
-            const c = providerColor(name);
-            return `<span class="inline-flex items-center gap-1.5"><span class="provider-dot" style="--pc:${c}"></span><span class="text-foreground">${escapeHtml(name)}</span></span>`;
+            return `<span class="text-foreground">${escapeHtml(name)}</span>`;
         }
 
         async function saveProxySettings(btn) {

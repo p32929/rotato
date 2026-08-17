@@ -152,7 +152,6 @@ class TelegramBot {
     } catch (err) {
       this.consecutiveErrors++;
       const backoff = Math.min(1000 * Math.pow(2, this.consecutiveErrors - 1), this.maxBackoff);
-      console.log(`[TELEGRAM] Polling error (attempt ${this.consecutiveErrors}, retry in ${backoff}ms): ${err.message}`);
 
       if (this.polling) {
         this.pollTimeout = setTimeout(() => this.poll(), backoff);
