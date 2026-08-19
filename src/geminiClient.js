@@ -1,4 +1,4 @@
-const https = require('https');
+ const https = require('https');
 const { URL } = require('url');
 
 class GeminiClient {
@@ -155,7 +155,17 @@ class GeminiClient {
       ...headers
     };
 
-    if (useHeader) {
+    // Google's OpenAI-compatibility layer (paths like /openai/chat/completions,
+    // or a base URL that already points at .../v1beta/openai) does NOT accept
+    // the native `key` query param or `x-goog-api-key` header - it requires a
+    // standard `Authorization: Bearer <key>` header, same as OpenAI itself.
+    // Without this, requests routed to that surface fail with a missing/invalid
+    // authorization error even though a valid Gemini key was supplied.
+    if (this.isOpenAICompatiblePath(path) || this.isOpenAICompatiblePath(this.baseUrl)) {
+      if (!headers || !headers.authorization) {
+        finalHeaders['Authorization'] = `Bearer ${apiKey}`;
+      }
+    } else if (useHeader) {
       finalHeaders['x-goog-api-key'] = apiKey;
     } else {
       url.searchParams.append('key', apiKey);
@@ -254,6 +264,21 @@ class GeminiClient {
   maskApiKey(key) {
     if (!key || key.length < 8) return '***';
     return key.substring(0, 4) + '...' + key.substring(key.length - 4);
+  }
+
+  /**
+   * Detects whether a path or base URL targets Gemini's OpenAI-compatibility
+   * surface (e.g. "/openai/chat/completions", ".../v1beta/openai") rather
+   * than the native Gemini API (e.g. "/v1beta/models/gemini-pro:generateContent").
+   * That surface authenticates like OpenAI - via an Authorization: Bearer
+   * header - not via the `key` query param or `x-goog-api-key` header used
+   * by native Gemini endpoints.
+   * @param {string} value A path or URL to inspect
+   * @returns {boolean}
+   */
+  isOpenAICompatiblePath(value) {
+    if (!value) return false;
+    return /\/openai(\/|$)/i.test(value) || /\/chat\/completions(\?|$)/i.test(value);
   }
 }
 

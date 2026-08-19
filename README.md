@@ -114,7 +114,28 @@ curl -X POST "http://localhost:8990/gemini/models/gemini-2.5-flash:generateConte
   }'
 ```
 
-**Note**: Replace `your-access-key` with your provider's ACCESS_KEY if configured. If no ACCESS_KEY is set for the provider, you can omit the `[ACCESS_KEY:...]` parameter entirely.
+ **Note**: Replace `your-access-key` with your provider's ACCESS_KEY if configured. If no ACCESS_KEY is set for the provider, you can omit the `[ACCESS_KEY:...]` parameter entirely.
+
+### Calling Gemini's OpenAI-Compatible Endpoint
+
+Gemini also exposes an OpenAI-compatible surface at `/v1beta/openai/chat/completions`, which authenticates with an `Authorization: Bearer` header instead of the `key` query param / `x-goog-api-key` header used by native Gemini endpoints (e.g. `:generateContent`). A `gemini`-type provider automatically detects this and switches to `Authorization: Bearer` whenever the request path contains `/openai/` or `/chat/completions`, so you can hit it either through a native provider:
+
+```bash
+curl -X POST "http://localhost:8990/gemini/openai/chat/completions" \
+  -H "x-goog-api-key: [STATUS_CODES:429]" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gemini-2.5-flash",
+    "messages": [
+      { "role": "user", "content": "Hello! Please say hello back." 
+      }
+    ]
+  }'
+```
+
+or by pointing `GEMINI_<PROVIDER>_BASE_URL` at `https://generativelanguage.googleapis.com/v1beta/openai` and calling `/chat/completions` directly.
+
+## File Logging
 
 ## File Logging
 
