@@ -2109,18 +2109,36 @@
                                 <div>
                                     <label class="block text-xs text-muted-foreground mb-1.5 font-medium">Original Base URL</label>
                                     <div class="relative">
-                                        <div class="font-mono text-foreground bg-muted/30 border border-border px-3 py-2 pr-10 rounded text-xs">
-                                            ${provider.baseUrl || 'Using Default URL'}
-                                        </div>
-                                        <button
-                                            onclick="copyOriginalBaseUrl('${provider.baseUrl || ''}')"
-                                            class="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors p-1"
-                                            title="Copy original base URL"
+                                        <input
+                                            type="text"
+                                            id="baseUrl_${provider.apiType}_${provider.name}"
+                                            value="${provider.baseUrl || ''}"
+                                            data-original="${provider.baseUrl || ''}"
+                                            class="input-field w-full px-3 py-2 pr-16 text-xs rounded transition-colors font-mono"
+                                            placeholder="Using default URL"
+                                            onkeypress="if(event.key === 'Enter') saveBaseUrl('${provider.apiType}', '${provider.name}')"
                                         >
-                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
-                                            </svg>
-                                        </button>
+                                        <div class="absolute right-1 top-1/2 -translate-y-1/2 flex items-center">
+                                            <button
+                                                onclick="copyOriginalBaseUrl(document.getElementById('baseUrl_${provider.apiType}_${provider.name}').value)"
+                                                class="text-muted-foreground hover:text-foreground transition-colors p-1"
+                                                title="Copy base URL"
+                                            >
+                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+                                                </svg>
+                                            </button>
+                                            <button
+                                                id="saveBtn_baseUrl_${provider.apiType}_${provider.name}"
+                                                onclick="saveBaseUrl('${provider.apiType}', '${provider.name}')"
+                                                class="text-muted-foreground hover:text-foreground transition-colors p-1"
+                                                title="Verify the new URL with a key, then save"
+                                            >
+                                                <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                                                    <path d="M7 19V13H17V19H19V7.828L16.172 5H15V9H9V5H5V19H7ZM17 5V7H15V5H17ZM19 3L21 5V19C21 19.5304 20.7893 20.0391 20.4142 20.4142C20.0391 20.7893 19.5304 21 19 21H5C4.46957 21 3.96086 20.7893 3.58579 20.4142C3.21071 20.0391 3 19.5304 3 19V5C3 4.46957 3.21071 3.96086 3.58579 3.58579C3.96086 3.21071 4.46957 3 5 3H19Z"></path>
+                                                </svg>
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
                                 <div>
@@ -3206,6 +3224,72 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 }
             } catch (error) {
                 showErrorToast(`Failed to save access key: ${error.message}`);
+            }
+        }
+
+        // Change a provider's base URL — but only after verifying the NEW url works,
+        // by testing it with a random enabled key of this provider. Persist only on success.
+        async function saveBaseUrl(apiType, providerName) {
+            const inputId = `baseUrl_${apiType}_${providerName}`;
+            const input = document.getElementById(inputId);
+            if (!input) { showErrorToast('Base URL input not found'); return; }
+
+            let newBaseUrl = input.value.trim();
+            if (newBaseUrl.endsWith('/')) newBaseUrl = newBaseUrl.slice(0, -1);
+
+            const original = (input.getAttribute('data-original') || '').trim().replace(/\/$/, '');
+            if (newBaseUrl === original) { showInfoToast('Base URL unchanged'); return; }
+
+            // Pick a random ENABLED key for this provider (disabled keys are ~-prefixed).
+            const keysVar = `${apiType.toUpperCase()}_${providerName.toUpperCase()}_API_KEYS`;
+            const enabledKeys = (envVars[keysVar] || '')
+                .split(',').map(k => k.trim()).filter(k => k && !k.startsWith('~'));
+            if (enabledKeys.length === 0) {
+                showErrorToast(`Add at least one enabled API key first — a key is needed to verify the new base URL.`);
+                return;
+            }
+            const testKey = enabledKeys[Math.floor(Math.random() * enabledKeys.length)];
+
+            const saveBtn = document.getElementById(`saveBtn_baseUrl_${apiType}_${providerName}`);
+            if (saveBtn) { saveBtn.style.pointerEvents = 'none'; saveBtn.style.opacity = '0.5'; }
+            input.disabled = true;
+            showInfoToast(`Verifying new base URL for '${providerName}'…`);
+
+            const baseUrlVar = `${apiType.toUpperCase()}_${providerName.toUpperCase()}_BASE_URL`;
+            try {
+                // 1) Verify the new URL with a random enabled key
+                const testResp = await fetch('/admin/api/test', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ apiType, apiKey: testKey, baseUrl: newBaseUrl || null })
+                });
+                const testResult = await testResp.json();
+                if (!testResult.success) {
+                    showErrorToast(`New base URL rejected — key test failed: ${testResult.error || 'unknown error'}. Not saved.`);
+                    return;
+                }
+
+                // 2) Verified — persist it (empty clears to the provider default)
+                if (newBaseUrl) envVars[baseUrlVar] = newBaseUrl;
+                else delete envVars[baseUrlVar];
+
+                const saveResp = await fetch('/admin/api/env', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(envVars)
+                });
+                if (saveResp.ok) {
+                    input.setAttribute('data-original', newBaseUrl);
+                    showSuccessToast(`✅ Base URL verified and saved for '${providerName}'.`);
+                    renderEnvVars();
+                } else {
+                    showErrorToast('Base URL verified but failed to save.');
+                }
+            } catch (err) {
+                showErrorToast(`Failed to update base URL: ${err.message}`);
+            } finally {
+                if (saveBtn) { saveBtn.style.pointerEvents = ''; saveBtn.style.opacity = '1'; }
+                input.disabled = false;
             }
         }
 
