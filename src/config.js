@@ -155,7 +155,7 @@ class Config {
     // Parse {API_TYPE}_{PROVIDER}_API_KEYS, {API_TYPE}_{PROVIDER}_BASE_URL, and {API_TYPE}_{PROVIDER}_ACCESS_KEY format
     const providerConfigs = new Map();
 
-    const defaultConfig = () => ({ apiType: null, keys: [], allKeys: [], baseUrl: null, accessKey: null, defaultModel: null, disabled: false });
+    const defaultConfig = () => ({ apiType: null, keys: [], allKeys: [], baseUrl: null, accessKey: null, defaultModel: null, disabled: false, proxy: null });
 
     for (const [key, value] of Object.entries(envVars)) {
       if (key.endsWith('_API_KEYS') && value) {
@@ -209,6 +209,18 @@ class Config {
           }
 
           providerConfigs.get(provider).defaultModel = value.trim();
+        }
+      } else if (key.endsWith('_PROXY') && value) {
+        const parts = key.replace('_PROXY', '').split('_');
+        if (parts.length >= 1) {
+          const apiType = parts[0].toLowerCase();
+          const provider = parts.length === 1 ? apiType : parts.slice(1).join('_').toLowerCase();
+
+          if (!providerConfigs.has(provider)) {
+            providerConfigs.set(provider, defaultConfig());
+          }
+
+          providerConfigs.get(provider).proxy = (value.trim().toLowerCase() === 'true');
         }
       } else if (key.endsWith('_DISABLED') && value) {
         const parts = key.replace('_DISABLED', '').split('_');
@@ -276,27 +288,54 @@ class Config {
 
     this.proxyAutoFetch = (envVars.PROXY_AUTO_FETCH || '').trim().toLowerCase() === 'true';
 
-    // Auto-fetch supplies the pool at runtime, so routing may legitimately be
-    // enabled with no manually configured proxies at all.
-    this.proxyEnabled = (envVars.PROXY_ENABLED || '').trim().toLowerCase() === 'true'
-      && (this.proxyUrls.length > 0 || this.proxyAutoFetch);
+    // Proxying is opted into per provider. PROXY_ENABLED is the old global
+    // switch; it now only supplies a default for providers that have no
+    // explicit {TYPE}_{NAME}_PROXY of their own, so existing setups keep working.
+    const legacyGlobal = (envVars.PROXY_ENABLED || '').trim().toLowerCase() === 'true';
+    for (const [, provider] of this.providers.entries()) {
+      if (provider.proxy === null || provider.proxy === undefined) {
+        provider.proxy = legacyGlobal;
+      }
+    }
+
+    const proxied = this.getProxiedProviderNames();
+
+    // The proxy subsystem runs when at least one provider asks for it and there
+    // is somewhere for proxies to come from.
+    this.proxyEnabled = proxied.length > 0 && (this.proxyUrls.length > 0 || this.proxyAutoFetch);
 
     this.proxyManager = new ProxyManager(this.proxyUrls, this.proxyEnabled);
 
-    if (this.proxyEnabled) {
+    if (proxied.length === 0) {
+      if (this.proxyUrls.length > 0) {
+        console.log(`[CONFIG] ${this.proxyUrls.length} proxy(ies) configured but no provider is set to use them`);
+      }
+    } else {
       const masked = this.proxyUrls.map(u => ProxyManager.maskProxyUrl(u));
       const manual = this.proxyUrls.length > 0
         ? `${this.proxyUrls.length} manual proxy(ies): [${masked.join(', ')}]`
         : 'no manual proxies';
       const auto = this.proxyAutoFetch ? ' + auto-fetched pool' : '';
-      console.log(`[CONFIG] Outbound proxy ENABLED — ${manual}${auto}`);
-    } else if (this.proxyUrls.length > 0) {
-      console.log(`[CONFIG] ${this.proxyUrls.length} proxy(ies) configured but proxy routing is DISABLED`);
+      console.log(`[CONFIG] Proxy routing for [${proxied.join(', ')}] — ${manual}${auto}`);
     }
   }
 
   isProxyAutoFetchEnabled() {
     return this.proxyAutoFetch;
+  }
+
+  /** Providers that have opted into routing through the proxy pool. */
+  getProxiedProviderNames() {
+    const names = [];
+    for (const [name, provider] of this.providers.entries()) {
+      if (provider.proxy) names.push(name);
+    }
+    return names;
+  }
+
+  usesProxy(providerName) {
+    const provider = this.providers.get(providerName);
+    return !!(provider && provider.proxy);
   }
 
   /**

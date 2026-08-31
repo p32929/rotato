@@ -398,9 +398,17 @@ class ProxyManager {
     // Circuit breaker. Free proxies die constantly, so a proxy that keeps
     // failing is benched for a while rather than deleted - it gets another
     // chance later instead of being lost for good.
-    this.health = new Map();            // url -> { fails, deadUntil }
+    this.health = new Map();            // url -> { fails, deadUntil, latencyMs }
     this.maxFailures = 3;
     this.benchMs = 10 * 60 * 1000;
+
+    // Latency-aware selection: rank by measured round-trip and rotate within
+    // the fastest slice. Always taking the single fastest would hammer one IP
+    // and defeat the point of rotating, so a slice keeps some spread.
+    this.fastPoolRatio = 0.25;
+    this.fastPoolMin = 3;
+    this.fastPoolMax = 10;
+    this.latencySmoothing = 0.3;        // weight of the newest sample
 
     // Set by the server: called when every proxy is benched, so an auto pool
     // can go and fetch a fresh batch.
@@ -418,9 +426,21 @@ class ProxyManager {
     return [...this.manualUrls, ...this.autoUrls];
   }
 
-  /** Replace the auto-fetched half of the pool. Manual entries are untouched. */
-  setAutoProxies(urls) {
-    const next = ProxyManager.normalize(urls);
+  /**
+   * Replace the auto-fetched half of the pool. Manual entries are untouched.
+   * Accepts plain URLs or { url, ms } so validation timings seed the ranking
+   * and the very first request already prefers a fast proxy.
+   */
+  setAutoProxies(entries) {
+    const list = Array.isArray(entries) ? entries : [];
+    const next = ProxyManager.normalize(list.map((e) => (typeof e === 'string' ? e : e && e.url)));
+
+    for (const entry of list) {
+      if (entry && typeof entry === 'object' && entry.url && entry.ms != null) {
+        this.recordLatency(entry.url, entry.ms);
+      }
+    }
+
     const keep = new Set(next);
     // Forget health for proxies that are no longer in the pool
     for (const url of [...this.health.keys()]) {
@@ -458,9 +478,36 @@ class ProxyManager {
     return this._agentCache.get(proxyUrl);
   }
 
-  /** A proxy worked - clear whatever failures it had accumulated. */
-  reportSuccess(proxyUrl) {
-    if (proxyUrl) this.health.delete(proxyUrl);
+  /**
+   * A proxy worked. Clears its failure streak and folds the round-trip into a
+   * running average used for ranking.
+   */
+  reportSuccess(proxyUrl, latencyMs = null) {
+    if (!proxyUrl) return;
+
+    const entry = this.health.get(proxyUrl);
+    const known = entry ? entry.latencyMs : null;
+    this.health.set(proxyUrl, { fails: 0, deadUntil: 0, latencyMs: known });
+    if (latencyMs != null) this.recordLatency(proxyUrl, latencyMs);
+  }
+
+  /** Exponentially weighted average, so one slow request can't dominate. */
+  recordLatency(proxyUrl, ms) {
+    if (!proxyUrl || !(ms >= 0)) return;
+    const entry = this.health.get(proxyUrl) || { fails: 0, deadUntil: 0, latencyMs: null };
+    entry.latencyMs = entry.latencyMs == null
+      ? ms
+      : Math.round(entry.latencyMs * (1 - this.latencySmoothing) + ms * this.latencySmoothing);
+    this.health.set(proxyUrl, entry);
+  }
+
+  /**
+   * Ranking score. A proxy with no measurement yet sorts first so it gets one
+   * sample; after that its real number decides where it belongs.
+   */
+  latencyOf(proxyUrl) {
+    const entry = this.health.get(proxyUrl);
+    return entry && entry.latencyMs != null ? entry.latencyMs : -1;
   }
 
   /**
@@ -471,7 +518,7 @@ class ProxyManager {
   reportFailure(proxyUrl) {
     if (!proxyUrl) return;
 
-    const entry = this.health.get(proxyUrl) || { fails: 0, deadUntil: 0 };
+    const entry = this.health.get(proxyUrl) || { fails: 0, deadUntil: 0, latencyMs: null };
     entry.fails += 1;
 
     if (entry.fails >= this.maxFailures) {
@@ -494,11 +541,19 @@ class ProxyManager {
     }
   }
 
+  /** How many of the fastest proxies to rotate between. */
+  fastPoolSize(count) {
+    return Math.max(1, Math.min(this.fastPoolMax, Math.max(this.fastPoolMin, Math.ceil(count * this.fastPoolRatio))));
+  }
+
   /**
-   * Round-robin pick the next usable proxy. Returns
-   * { url, maskedUrl, agent, index } or null when disabled, empty, or when
-   * every proxy is currently benched - in which case the request goes direct
-   * and a pool refresh is requested.
+   * Pick the next proxy, favouring the quick ones. Usable proxies are ranked by
+   * measured latency and the rotation runs across the fastest slice, so slow
+   * proxies stop carrying traffic while several IPs stay in play.
+   *
+   * Returns { url, maskedUrl, agent } or null when disabled, empty, or when
+   * every proxy is benched - in which case the request goes direct and a pool
+   * refresh is requested.
    */
   pick() {
     if (!this.isEnabled()) return null;
@@ -509,27 +564,51 @@ class ProxyManager {
       return null;
     }
 
-    const index = this.rotationIndex % usable.length;
-    this.rotationIndex = (this.rotationIndex + 1) % usable.length;
-    const url = usable[index];
+    const ranked = usable.slice().sort((a, b) => this.latencyOf(a) - this.latencyOf(b));
+    const fast = ranked.slice(0, this.fastPoolSize(ranked.length));
+
+    const index = this.rotationIndex % fast.length;
+    this.rotationIndex = (this.rotationIndex + 1) % fast.length;
+    const url = fast[index];
+
     return {
       url,
       index,
+      latencyMs: this.latencyOf(url) >= 0 ? this.latencyOf(url) : null,
       maskedUrl: ProxyManager.maskProxyUrl(url),
       agent: this.getAgentFor(url),
     };
   }
 
-  /** Counts for the admin panel. */
+  /** Counts and timings for the admin panel. */
   getStats() {
     const benched = this.proxyUrls.filter((url) => this.isBenched(url));
+    const usable = this.getUsable();
+    const timed = usable.map((url) => this.latencyOf(url)).filter((ms) => ms >= 0);
+
     return {
       total: this.proxyUrls.length,
       manual: this.manualUrls.length,
       auto: this.autoUrls.length,
-      usable: this.getUsable().length,
+      usable: usable.length,
       benched: benched.length,
+      fastPool: usable.length ? this.fastPoolSize(usable.length) : 0,
+      fastestMs: timed.length ? Math.min(...timed) : null,
+      medianMs: timed.length ? timed.slice().sort((a, b) => a - b)[Math.floor(timed.length / 2)] : null,
     };
+  }
+
+  /** Per-proxy detail for the panel, fastest first. */
+  getProxyDetails() {
+    return this.proxyUrls
+      .map((url) => ({
+        url,
+        masked: ProxyManager.maskProxyUrl(url),
+        manual: this.manualUrls.includes(url),
+        benched: this.isBenched(url),
+        latencyMs: this.latencyOf(url) >= 0 ? this.latencyOf(url) : null,
+      }))
+      .sort((a, b) => (a.latencyMs == null ? Infinity : a.latencyMs) - (b.latencyMs == null ? Infinity : b.latencyMs));
   }
 
   static parse(proxyUrl) {

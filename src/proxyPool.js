@@ -79,7 +79,7 @@ class ProxyPool {
       lastRefreshAt: this.lastRefreshAt,
       lastError: this.lastError,
       progress: { ...this.progress },
-      proxies: this.live.map((url) => ({ url, masked: ProxyManager.maskProxyUrl(url) })),
+      proxies: this.live.map((e) => ({ url: e.url, masked: ProxyManager.maskProxyUrl(e.url), ms: e.ms })),
     };
   }
 
@@ -127,7 +127,8 @@ class ProxyPool {
       this.live = live;
       this.lastTested = candidates.length;
       this.lastRefreshAt = Date.now();
-      console.log(`[PROXY-POOL] ${live.length} of ${candidates.length} proxies alive (${Math.round((Date.now() - startedAt) / 1000)}s)`);
+      const fastest = live.length ? `${live[0].ms}ms` : 'n/a';
+      console.log(`[PROXY-POOL] ${live.length} of ${candidates.length} proxies alive (${Math.round((Date.now() - startedAt) / 1000)}s, fastest ${fastest})`);
     } catch (err) {
       this.lastError = err.message;
       this.lastRefreshAt = Date.now();
@@ -172,7 +173,11 @@ class ProxyPool {
     return out;
   }
 
-  /** Probe every candidate, `concurrency` at a time, keeping the ones that answer. */
+  /**
+   * Probe every candidate, `concurrency` at a time, keeping the ones that
+   * answer along with how long they took - that timing seeds the rotator's
+   * ranking so the first request already picks a fast proxy.
+   */
   async validate(candidates, targetHost) {
     const live = [];
     let cursor = 0;
@@ -181,10 +186,10 @@ class ProxyPool {
       while (cursor < candidates.length) {
         const url = candidates[cursor++];
         if (!this.enabled) return; // turned off mid-run
-        const ok = await this.probe(url, targetHost);
+        const result = await this.probe(url, targetHost);
         this.progress.tested += 1;
-        if (ok) {
-          live.push(url);
+        if (result.ok) {
+          live.push({ url, ms: result.ms });
           this.progress.live += 1;
         }
       }
@@ -192,24 +197,28 @@ class ProxyPool {
 
     const workers = Array.from({ length: Math.min(this.concurrency, candidates.length) }, worker);
     await Promise.all(workers);
+
+    live.sort((a, b) => a.ms - b.ms); // fastest first
     return live;
   }
 
   /**
    * Open the tunnel and complete the TLS handshake to `targetHost`, then hang
-   * up. Resolves true only if the proxy carried a real connection.
+   * up. Resolves { ok, ms } - ms is how long tunnel + handshake took, which is
+   * a fair proxy for how slow it will be under real traffic.
    */
   probe(proxyUrl, targetHost) {
     return new Promise((resolve) => {
       let settled = false;
       let socket = null;
+      const startedAt = Date.now();
 
       const done = (ok) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
         if (socket) { try { socket.destroy(); } catch (e) { /* ignore */ } }
-        resolve(ok);
+        resolve({ ok, ms: Date.now() - startedAt });
       };
 
       const timer = setTimeout(() => done(false), this.probeTimeoutMs + 500);

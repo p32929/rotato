@@ -462,7 +462,12 @@ class ProxyServer {
       const keyRotator = new this.KeyRotator(enabledKeys, provider.apiType);
       let client;
 
-      const proxyManager = this.config.getProxyManager();
+      // Proxying is per provider: hand the manager over only to the ones that
+      // asked for it, so everyone else connects directly.
+      const proxyManager = provider.proxy ? this.config.getProxyManager() : null;
+      if (provider.proxy) {
+        console.log(`[SERVER] Provider '${providerName}' will route through the proxy pool`);
+      }
       if (provider.apiType === 'openai') {
         client = new this.OpenAIClient(keyRotator, provider.baseUrl, proxyManager);
       } else if (provider.apiType === 'gemini') {
@@ -950,11 +955,11 @@ class ProxyServer {
       for (const [key, value] of Object.entries(currentEnvVars)) {
         if (key in finalEnvVars) continue;
 
-        if (key.endsWith('_DISABLED')) {
-          // Only preserve a provider's disabled flag if that provider still exists
-          // (i.e. its API keys are present in the new payload). Otherwise a deleted
-          // provider's DISABLED flag would resurrect it as a keyless ghost on reload.
-          const apiKeysKey = key.replace(/_DISABLED$/, '_API_KEYS');
+        if (key.endsWith('_DISABLED') || key.endsWith('_PROXY')) {
+          // Only preserve a provider's flags if that provider still exists (i.e.
+          // its API keys are present in the new payload). Otherwise a deleted
+          // provider's flag would resurrect it as a keyless ghost on reload.
+          const apiKeysKey = key.replace(/_(DISABLED|PROXY)$/, '_API_KEYS');
           if (apiKeysKey in finalEnvVars) {
             finalEnvVars[key] = value;
           }
@@ -1465,13 +1470,20 @@ class ProxyServer {
       const enabled = (envVars.PROXY_ENABLED || '').trim().toLowerCase() === 'true';
       const autoFetch = (envVars.PROXY_AUTO_FETCH || '').trim().toLowerCase() === 'true';
 
+      const providers = [];
+      for (const [name, provider] of this.config.getProviders().entries()) {
+        providers.push({ name, apiType: provider.apiType, proxy: !!provider.proxy, disabled: !!provider.disabled });
+      }
+
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
         enabled,
         autoFetch,
         proxies,
+        providers,
         auto: this.proxyPool.getStatus(),
-        pool: this.config.getProxyManager().getStats()
+        pool: this.config.getProxyManager().getStats(),
+        details: this.config.getProxyManager().getProxyDetails()
       }));
     } catch (error) {
       this.sendError(res, 500, 'Failed to read proxy settings');
@@ -1484,7 +1496,7 @@ class ProxyServer {
    */
   async handleUpdateProxySettings(res, body) {
     try {
-      const { enabled, proxies, autoFetch } = JSON.parse(body);
+      const { proxies, autoFetch, providerProxies } = JSON.parse(body);
 
       const list = Array.isArray(proxies)
         ? proxies.map(p => String(p).trim()).filter(p => p.length > 0)
@@ -1521,14 +1533,32 @@ class ProxyServer {
         delete envVars.PROXY_AUTO_FETCH;
       }
 
-      // Auto-fetch fills the pool at runtime, so routing can be on with no
-      // manually entered proxies at all.
-      const enable = !!enabled && (list.length > 0 || useAuto);
-      if (enable) {
-        envVars.PROXY_ENABLED = 'true';
+      // Per-provider opt-in replaces the old global switch. Drop the legacy key
+      // so it stops acting as a default once explicit choices exist.
+      delete envVars.PROXY_ENABLED;
+
+      let proxiedCount = 0;
+      if (providerProxies && typeof providerProxies === 'object') {
+        for (const [name, provider] of this.config.getProviders().entries()) {
+          const key = `${String(provider.apiType).toUpperCase()}_${String(name).toUpperCase()}_PROXY`;
+          if (providerProxies[name]) {
+            envVars[key] = 'true';
+            proxiedCount += 1;
+          } else {
+            delete envVars[key];
+          }
+        }
       } else {
-        delete envVars.PROXY_ENABLED;
+        // No provider map sent - keep whatever is already set
+        for (const [name, provider] of this.config.getProviders().entries()) {
+          if (provider.proxy) {
+            envVars[`${String(provider.apiType).toUpperCase()}_${String(name).toUpperCase()}_PROXY`] = 'true';
+            proxiedCount += 1;
+          }
+        }
       }
+
+      const enable = proxiedCount > 0 && (list.length > 0 || useAuto);
 
       this.writeEnvFile(envVars);
       this.config.loadConfig();
@@ -1539,6 +1569,7 @@ class ProxyServer {
         success: true,
         count: list.length,
         enabled: enable,
+        proxiedProviders: proxiedCount,
         autoFetch: useAuto,
         auto: this.proxyPool.getStatus()
       }));
@@ -1579,7 +1610,8 @@ class ProxyServer {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       auto: this.proxyPool.getStatus(),
-      pool: this.config.getProxyManager().getStats()
+      pool: this.config.getProxyManager().getStats(),
+      details: this.config.getProxyManager().getProxyDetails()
     }));
   }
 
@@ -1663,8 +1695,8 @@ class ProxyServer {
 
       if (key === 'PORT' || key === 'ADMIN_PASSWORD') {
         basicConfig[key] = value;
-      } else if (key.endsWith('_API_KEYS') || key.endsWith('_BASE_URL') || key.endsWith('_ACCESS_KEY') || key.endsWith('_DEFAULT_MODEL') || key.endsWith('_MODEL_HISTORY') || key.endsWith('_DISABLED')) {
-        const match = key.match(/^(.+?)_(.+?)_(API_KEYS|BASE_URL|ACCESS_KEY|DEFAULT_MODEL|MODEL_HISTORY|DISABLED)$/);
+      } else if (key.endsWith('_API_KEYS') || key.endsWith('_BASE_URL') || key.endsWith('_ACCESS_KEY') || key.endsWith('_DEFAULT_MODEL') || key.endsWith('_MODEL_HISTORY') || key.endsWith('_DISABLED') || key.endsWith('_PROXY')) {
+        const match = key.match(/^(.+?)_(.+?)_(API_KEYS|BASE_URL|ACCESS_KEY|DEFAULT_MODEL|MODEL_HISTORY|DISABLED|PROXY)$/);
         if (match) {
           const apiType = match[1];
           const provName = match[2];
@@ -1672,7 +1704,7 @@ class ProxyServer {
           const providerKey = `${apiType}_${provName}`;
 
           if (!providers[providerKey]) {
-            providers[providerKey] = { apiType, providerName: provName, keys: '', baseUrl: '', accessKey: '', defaultModel: '', modelHistory: '', disabled: '' };
+            providers[providerKey] = { apiType, providerName: provName, keys: '', baseUrl: '', accessKey: '', defaultModel: '', modelHistory: '', disabled: '', proxy: '' };
           }
 
           if (keyType === 'API_KEYS') providers[providerKey].keys = value;
@@ -1681,6 +1713,7 @@ class ProxyServer {
           else if (keyType === 'DEFAULT_MODEL') providers[providerKey].defaultModel = value;
           else if (keyType === 'MODEL_HISTORY') providers[providerKey].modelHistory = value;
           else if (keyType === 'DISABLED') providers[providerKey].disabled = value;
+          else if (keyType === 'PROXY') providers[providerKey].proxy = value;
         } else {
           otherConfig[key] = value;
         }
@@ -1709,6 +1742,7 @@ class ProxyServer {
           // Only persist a disabled flag for a provider that actually has keys —
           // an orphaned DISABLED flag would otherwise render as a keyless ghost provider.
           if (p.disabled === 'true' && p.keys) envContent += `${p.apiType}_${p.providerName}_DISABLED=true\n`;
+          if (p.proxy === 'true' && p.keys) envContent += `${p.apiType}_${p.providerName}_PROXY=true\n`;
           envContent += '\n';
         }
       }

@@ -181,7 +181,9 @@ class GeminiClient {
         options.agent = picked.agent;
         options._proxyMasked = picked.maskedUrl;
         options._proxyUrl = picked.url;
-        console.log(`[GEMINI] Routing request via proxy ${picked.maskedUrl}`);
+        options._proxyStartedAt = Date.now();
+        const known = picked.latencyMs != null ? ` (~${picked.latencyMs}ms)` : '';
+        console.log(`[GEMINI] Routing request via proxy ${picked.maskedUrl}${known}`);
       }
     }
 
@@ -264,8 +266,13 @@ class GeminiClient {
   _reportProxyOutcome(options, ok) {
     const url = options && options._proxyUrl;
     if (!url || !this.proxyManager) return;
-    if (ok) this.proxyManager.reportSuccess(url);
-    else this.proxyManager.reportFailure(url);
+
+    if (ok) {
+      const startedAt = options._proxyStartedAt;
+      this.proxyManager.reportSuccess(url, startedAt ? Date.now() - startedAt : null);
+    } else {
+      this.proxyManager.reportFailure(url);
+    }
   }
 
   maskApiKey(key) {

@@ -120,12 +120,14 @@ curl -X POST "http://localhost:8990/gemini/models/gemini-2.5-flash:generateConte
 
 ## Outbound Proxy
 
-Route upstream API requests through proxies, rotated round-robin per request — useful when a provider rate-limits by IP rather than by key. Managed from the admin panel's **Proxy** tab, or via `.env`:
+Route upstream API requests through proxies — useful when a provider rate-limits by IP rather than by key. Managed from the admin panel's **Proxy** tab, or via `.env`:
 
 ```env
-PROXY_ENABLED=true
 PROXY_URLS=http://user:pass@host:port,socks5://host:1080
+OPENAI_GROQ_PROXY=true      # per provider: only groq routes through the proxy
 ```
+
+**Proxying is opted into per provider**, so you can route only the one that's rate-limiting you and leave everything else on a direct connection. The Proxy tab lists every provider with its own toggle. (The old global `PROXY_ENABLED=true` still works as a default for providers that have no explicit setting, so existing configs keep behaving as before.)
 
 Supported schemes: `http://`, `https://`, `socks4://` (SOCKS4a), `socks5://`, each with optional `user:pass@`. A bare `host:port` is treated as HTTP. SOCKS4 has no authentication in the protocol, so credentials are ignored there.
 
@@ -140,6 +142,12 @@ Pulls the SOCKS4 and SOCKS5 lists from [monosans/proxy-list](https://github.com/
 The pool is held in memory and never written to `.env`. It refreshes every 30 minutes, and again whenever every proxy has stopped responding (rate-limited to at most one refresh every 5 minutes). Auto-fetch works on its own — you don't need any proxies of your own for `PROXY_ENABLED=true` to be valid.
 
 Expect heavy attrition: in testing, **32 of 260 entries were alive**, and SOCKS5 fared far better than SOCKS4 (many SOCKS4 proxies don't implement the SOCKS4a hostname extension this needs). Treat proxy rotation as best-effort.
+
+### Fastest-first selection
+
+Proxies are ranked by measured round-trip time and traffic rotates across only the **fastest slice** (a quarter of the usable pool, at least 3 and at most 10). Validation timings seed the ranking so even the first request picks a quick proxy, and every real request updates it via a rolling average.
+
+Rotating across a slice rather than always taking the single fastest keeps several IPs in play, which is the whole point of proxying in the first place. In a typical sweep the rotation sits around 400–800ms while the slowest live proxies measure over 6 seconds, so the tail never carries traffic.
 
 Proxies that fail to carry a request three times in a row are **benched for 10 minutes**, then given another chance. Only connection-level failures count — an HTTP error from the provider isn't the proxy's fault. Your own `PROXY_URLS` entries are never removed automatically. If every proxy is benched, requests fall back to going **direct** rather than failing, and a pool refresh is triggered.
 
