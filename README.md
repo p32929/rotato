@@ -224,13 +224,19 @@ Old day directories are deleted at startup and hourly after that. `logs/` is git
 - Basic API key rotation
 - OpenAI and Gemini-compatible API support
 
-### Screenshot
+### Screenshots
 
-<img width="3024" height="1714" alt="Image" src="https://github.com/user-attachments/assets/f265cc8f-941e-43e4-998e-c713dacfd248" />
+<img width="3600" height="2110" alt="Image" src="https://github.com/user-attachments/assets/e2dba567-31b7-4b1a-9b60-6bd4532aeb1f" />
 
-<img width="3600" height="6418" alt="Image" src="https://github.com/user-attachments/assets/fc8f464b-bd06-4bfd-be9a-10844e25f3ed" />
+<img width="3600" height="2110" alt="Image" src="https://github.com/user-attachments/assets/0dcfeac0-f1fa-40ab-8afa-5f1a83cc2b74" />
 
-<img width="3600" height="2110" alt="Image" src="https://github.com/user-attachments/assets/39833f4f-c4eb-4c77-9a3a-91aeab7ef92c" />
+<img width="3600" height="2110" alt="Image" src="https://github.com/user-attachments/assets/d550796a-5b51-427f-a81c-d0e7a881782c" />
+
+<img width="3600" height="2110" alt="Image" src="https://github.com/user-attachments/assets/e4da21f4-0e33-4089-9982-e61cfeffdb5d" />
+
+<img width="3600" height="2110" alt="Image" src="https://github.com/user-attachments/assets/d459f988-eae2-4495-bcb0-98aa6587419e" />
+
+<img width="3600" height="2110" alt="Image" src="https://github.com/user-attachments/assets/5faa6bee-0eee-4b1f-8772-c1828184b1d1" />
 
 ## Contributing
 
