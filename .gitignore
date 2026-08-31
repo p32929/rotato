@@ -5,3 +5,4 @@
 /.serena
 logs.jsonl
 /logs
+.DS_Store
