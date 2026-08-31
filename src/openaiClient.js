@@ -137,6 +137,7 @@ class OpenAIClient {
       if (picked) {
         options.agent = picked.agent;
         options._proxyMasked = picked.maskedUrl;
+        options._proxyUrl = picked.url;
         console.log(`[OPENAI] Routing request via proxy ${picked.maskedUrl}`);
       }
     }
@@ -156,6 +157,7 @@ class OpenAIClient {
         });
 
         res.on('end', () => {
+          this._reportProxyOutcome(options, true);
           resolve({
             statusCode: res.statusCode,
             headers: res.headers,
@@ -166,6 +168,7 @@ class OpenAIClient {
       });
 
       req.on('error', (error) => {
+        this._reportProxyOutcome(options, false);
         const maskedKey = this.maskApiKey(apiKey);
         console.log(`[OPENAI::${maskedKey}] HTTP request error: ${error.message}`);
         reject(error);
@@ -185,6 +188,7 @@ class OpenAIClient {
       const options = this._buildRequestOptions(method, path, body, headers, apiKey);
 
       const req = https.request(options, (res) => {
+        this._reportProxyOutcome(options, true);
         // Resolve immediately with the raw stream - don't buffer
         resolve({
           statusCode: res.statusCode,
@@ -195,6 +199,7 @@ class OpenAIClient {
       });
 
       req.on('error', (error) => {
+        this._reportProxyOutcome(options, false);
         const maskedKey = this.maskApiKey(apiKey);
         console.log(`[OPENAI::${maskedKey}] HTTP streaming request error: ${error.message}`);
         reject(error);
@@ -207,6 +212,18 @@ class OpenAIClient {
 
       req.end();
     });
+  }
+
+  /**
+   * Feed the proxy's health back to the manager. Only connection-level results
+   * count: reaching the provider at all means the proxy works, whatever status
+   * code comes back.
+   */
+  _reportProxyOutcome(options, ok) {
+    const url = options && options._proxyUrl;
+    if (!url || !this.proxyManager) return;
+    if (ok) this.proxyManager.reportSuccess(url);
+    else this.proxyManager.reportFailure(url);
   }
 
   maskApiKey(key) {

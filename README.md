@@ -5,6 +5,7 @@ Node.js proxy server for automatic API key rotation across multiple LLM provider
 ## Features
 
 - **Automatic Key Rotation**: Rotates keys on configurable status codes (default: 429)
+- **Outbound Proxy Rotation**: HTTP/HTTPS/SOCKS4/SOCKS5, with optional auto-fetched free proxies
 - **Universal API Compatibility**: Works with any OpenAI or Gemini-compatible API
 - **Streaming Support**: Full pass-through for SSE/streaming responses (`"stream": true`)
 - **Smart Key Shuffling**: Avoids recently failed keys using intelligent rotation
@@ -17,7 +18,7 @@ Node.js proxy server for automatic API key rotation across multiple LLM provider
 - **Default Models**: Pre-save models for easy curl command generation
 - **Modern Admin Panel**: Dark/light theme support for comfortable management
 - **Request Monitoring**: Last 100 requests logged with key usage details (which key succeeded/failed)
-- **File Logging**: All API requests logged to `logs.jsonl` with debounced writes for performance
+- **Persistent Logs**: Keep full requests and responses on disk for N days, or in memory only — switchable from the admin panel
 - **Telegram Bot**: Chat with any configured model directly from Telegram (text, images, image generation)
 
 ## Quick Start
@@ -37,6 +38,7 @@ Access admin panel: `http://localhost:8990/admin`
 ```env
 PORT=8990
 ADMIN_PASSWORD=your-secure-password
+API_LOGS=memory
 ```
 
 Visit http://localhost:8990/admin to configure your providers and start using the API.
@@ -116,13 +118,72 @@ curl -X POST "http://localhost:8990/gemini/models/gemini-2.5-flash:generateConte
 
 **Note**: Replace `your-access-key` with your provider's ACCESS_KEY if configured. If no ACCESS_KEY is set for the provider, you can omit the `[ACCESS_KEY:...]` parameter entirely.
 
-## File Logging
+## Outbound Proxy
 
-All API requests are automatically logged to `logs.jsonl` in the project root. Writes are debounced (5 seconds) for performance — multiple requests within the window are batched into a single disk write. Each line is a JSON object:
+Route upstream API requests through proxies, rotated round-robin per request — useful when a provider rate-limits by IP rather than by key. Managed from the admin panel's **Proxy** tab, or via `.env`:
+
+```env
+PROXY_ENABLED=true
+PROXY_URLS=http://user:pass@host:port,socks5://host:1080
+```
+
+Supported schemes: `http://`, `https://`, `socks4://` (SOCKS4a), `socks5://`, each with optional `user:pass@`. A bare `host:port` is treated as HTTP. SOCKS4 has no authentication in the protocol, so credentials are ignored there.
+
+### Auto-fetched free proxies
+
+```env
+PROXY_AUTO_FETCH=true
+```
+
+Pulls the SOCKS4 and SOCKS5 lists from [monosans/proxy-list](https://github.com/monosans/proxy-list) (~260 entries between them), **validates every one**, and keeps only those that respond. Validation opens the proxy tunnel to one of your configured providers and completes the TLS handshake, then hangs up — no HTTP request is sent, no API key is used, and no third-party "what is my IP" service is involved.
+
+The pool is held in memory and never written to `.env`. It refreshes every 30 minutes, and again whenever every proxy has stopped responding (rate-limited to at most one refresh every 5 minutes). Auto-fetch works on its own — you don't need any proxies of your own for `PROXY_ENABLED=true` to be valid.
+
+Expect heavy attrition: in testing, **32 of 260 entries were alive**, and SOCKS5 fared far better than SOCKS4 (many SOCKS4 proxies don't implement the SOCKS4a hostname extension this needs). Treat proxy rotation as best-effort.
+
+Proxies that fail to carry a request three times in a row are **benched for 10 minutes**, then given another chance. Only connection-level failures count — an HTTP error from the provider isn't the proxy's fault. Your own `PROXY_URLS` entries are never removed automatically. If every proxy is benched, requests fall back to going **direct** rather than failing, and a pool refresh is triggered.
+
+> Free public proxies are run by strangers. Provider traffic is HTTPS inside a CONNECT tunnel, so your API keys and request bodies stay encrypted, but the operator can see which hosts you reach and can stall or drop traffic.
+
+## Request Logs
+
+Every API request is logged. `API_LOGS` in `.env` only decides *where* — logging can't be turned off.
+
+```env
+API_LOGS=memory   # default: RAM only, last 100 requests, cleared on restart
+API_LOGS=7D       # on disk, full request + response, kept for 7 days
+```
+
+Any day count works — `1D`, `30D`, `90D`. Anything unrecognized falls back to `memory`.
+
+You don't have to edit `.env` by hand: the admin panel's **Settings** tab has a **Request Logs** card with the same two choices and the retention in days. Saving there writes `API_LOGS` and applies it immediately — no restart, and requests start landing on disk (or stop) right away.
+
+### On-disk layout
+
+In `<N>D` mode each request gets its own file, in a directory named for the day it arrived:
+
+```
+logs/
+  2026-08-30/
+    index.jsonl        one summary line per request
+    0000001849.json    that request's full record
+  2026-08-31/
+    ...
+```
+
+Request IDs are sequential and zero-padded (`0000001849`), and the same ID appears in the console output, the admin panel and the filename — so a log line leads straight to its file. The counter resumes from the highest ID on disk after a restart.
+
+Sharding by day makes retention a directory delete rather than a file rewrite, and the per-day `index.jsonl` keeps the log list cheap to render — drawing the table never opens the (much larger) detail files. Index writes are debounced 5 seconds and batched.
+
+A summary line:
 
 ```json
-{"timestamp":"2026-04-01T15:33:15.221Z","requestId":"h8j4pqqot","method":"POST","endpoint":"/chat/completions","provider":"cerebras","status":200,"responseTime":497,"error":null,"clientIp":"::ffff:127.0.0.1","keyUsed":"csk-...9ft2","failedKeys":[]}
+{"timestamp":"2026-08-31T11:09:46.818Z","requestId":"0000001849","method":"POST","endpoint":"/chat/completions","provider":"cerebras","status":200,"responseTime":497,"error":null,"clientIp":"::ffff:127.0.0.1","keyUsed":"csk-...9ft2","failedKeys":[],"proxyUsed":null}
 ```
+
+The matching `0000001849.json` holds that summary plus the full request body, request headers, and response body — which is what the panel's **View** button shows. Because the bodies survive a restart, the panel can page back through everything still inside the retention window with **Load older**; in `memory` mode it shows the last 100 and no more.
+
+Old day directories are deleted at startup and hourly after that. `logs/` is gitignored. Credentials in stored request headers (your `ACCESS_KEY`, bearer tokens) are masked before anything is written; provider API keys are already masked everywhere they appear.
 
 ## Changelog
 

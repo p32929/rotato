@@ -209,6 +209,11 @@
             left: 2px;
             bottom: 2px;
         }
+        input:disabled + .toggle-slider { opacity: 0.5; cursor: not-allowed; }
+        /* Applied by the double-submit guard. Needed because only ~half the panel's
+           buttons use .btn - the icon-only ones (save, delete, copy) would otherwise
+           lock with no visual change at all. */
+        .is-busy { opacity: 0.5 !important; cursor: not-allowed !important; pointer-events: none !important; }
         input:checked + .toggle-slider {
             /* Always green when on (provider color is used only for the name dot / pills) */
             background-color: var(--success);
@@ -1005,8 +1010,6 @@
                 </div>
 
                 <!-- Status Messages -->
-                <div id="envSuccess" class="hidden bg-green-50 border border-green-200 text-green-800 px-4 py-3 rounded-md mt-4"></div>
-                <div id="envError" class="hidden bg-destructive/10 border border-destructive/20 text-destructive px-4 py-3 rounded-md mt-4"></div>
             </div>
 
             <!-- Logs Tab -->
@@ -1064,7 +1067,7 @@
 
                     <div class="flex items-center justify-between mb-2 text-xs text-muted-foreground">
                         <span id="logCount">—</span>
-                        <span>Last 100 entries in memory • lost on restart</span>
+                        <span id="logStorageNote">—</span>
                     </div>
 
                     <!-- Table -->
@@ -1087,6 +1090,9 @@
                             </table>
                         </div>
                         <div id="logsEmpty" class="hidden p-8 text-center text-xs text-muted-foreground">No logs available yet.</div>
+                        <div id="logsLoadMore" class="hidden p-2.5 text-center border-t border-border">
+                            <button onclick="loadOlderLogs(this)" class="btn btn-secondary btn-sm" title="Read older requests from disk">Load older</button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1098,67 +1104,122 @@
                     <p class="text-muted-foreground text-xs mt-1">Route all upstream API requests through a proxy. If an IP gets blocked, change the proxy here and save — no restart needed.</p>
                 </div>
 
-                <div class="space-y-4">
-                    <!-- Enable + Proxy List -->
-                    <div class="section">
-                        <div class="flex items-center justify-between mb-3">
-                            <h3 class="text-sm font-medium text-foreground">Proxy Configuration</h3>
-                            <label class="flex items-center gap-2 cursor-pointer select-none">
-                                <input type="checkbox" id="proxyEnabled" class="w-4 h-4">
-                                <span class="text-sm text-foreground">Enable proxy routing</span>
-                            </label>
-                        </div>
+                <div class="grid grid-cols-1 gap-4 items-start">
+                    <!-- Proxy Configuration -->
+                    <div class="section" style="margin:0">
+                        <h3 class="text-sm font-medium text-foreground mb-3 flex items-center gap-2">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                            Proxy Configuration
+                        </h3>
+                        <div class="space-y-3">
+                            <div class="flex items-start justify-between gap-4">
+                                <div>
+                                    <div class="text-xs font-medium text-foreground">Enable proxy routing</div>
+                                    <p class="text-xs text-muted-foreground mt-1">While this is off, requests go straight to the provider and the list below is ignored.</p>
+                                </div>
+                                <label class="toggle-switch flex-shrink-0" title="Enable proxy routing">
+                                    <input type="checkbox" id="proxyEnabled">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                            <div class="flex items-start justify-between gap-4 pt-3 border-t border-border">
+                                <div>
+                                    <div class="text-xs font-medium text-foreground">Automatically fetch free proxies</div>
+                                    <p class="text-xs text-muted-foreground mt-1">Pulls the SOCKS4 and SOCKS5 lists from <span class="text-foreground">monosans/proxy-list</span>, tests every entry against your provider, and keeps only the ones that answer. Re-checked every 30 minutes, and again whenever they have all stopped responding.</p>
+                                    <p class="text-xs text-muted-foreground mt-1">These are run by strangers. Your API keys stay encrypted inside the TLS tunnel, but whoever runs the proxy can see which hosts you reach and can stall or drop traffic.</p>
+                                </div>
+                                <label class="toggle-switch flex-shrink-0" title="Automatically fetch free proxies">
+                                    <input type="checkbox" id="proxyAutoFetch" onchange="updateProxyAutoControls()">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                            <div>
+                                <div class="flex items-center gap-2">
+                                    <span id="proxyAutoStatus" class="text-xs text-muted-foreground flex-1">—</span>
+                                    <button id="proxyRefreshBtn" onclick="refreshProxyPool(this)" class="btn btn-secondary px-3 py-1.5 text-xs font-medium flex-shrink-0">Refresh now</button>
+                                </div>
+                                <div id="proxyAutoProgress" class="hidden mt-2">
+                                    <div class="h-1.5 w-full rounded-full overflow-hidden" style="background:var(--muted)">
+                                        <div id="proxyAutoProgressBar" class="h-full rounded-full transition-all duration-300" style="width:0%;background:var(--info)"></div>
+                                    </div>
+                                </div>
+                            </div>
 
-                        <label class="block text-xs font-medium text-muted-foreground mb-2">Proxy URLs — one per line (rotated round-robin, one per request)</label>
-                        <textarea
-                            id="proxyUrls"
-                            rows="5"
-                            class="input-field w-full px-2 py-1.5 text-xs rounded transition-colors font-mono"
-                            placeholder="http://user:pass@host:port&#10;https://host:port&#10;socks5://user:pass@host:1080"
-                        ></textarea>
-                        <p class="text-muted-foreground text-xs mt-1">Supported: <code>http://</code>, <code>https://</code>, <code>socks5://</code> — with optional <code>user:pass@</code>. A bare <code>host:port</code> is treated as HTTP.</p>
-
-                        <div class="flex items-center space-x-2 mt-3">
-                            <button onclick="saveProxySettings(this)" class="btn btn-primary px-3 py-1.5 text-xs font-medium">Save Proxy Settings</button>
-                            <button onclick="loadProxySettings()" class="btn btn-secondary px-3 py-1.5 text-xs font-medium">Reload</button>
+                            <div class="pt-3 border-t border-border">
+                                <label class="block text-xs font-medium text-muted-foreground mb-1">Your own proxy URLs <span class="font-normal">(one per line, rotated round-robin)</span></label>
+                                <textarea
+                                    id="proxyUrls"
+                                    rows="5"
+                                    class="input-field w-full px-3 py-2 rounded-md text-sm font-mono"
+                                    placeholder="http://user:pass@host:port&#10;https://host:port&#10;socks5://user:pass@host:1080"
+                                ></textarea>
+                                <p class="text-xs text-muted-foreground mt-1">Supported: <code>http://</code>, <code>https://</code>, <code>socks4://</code>, <code>socks5://</code> — with optional <code>user:pass@</code>. A bare <code>host:port</code> is treated as HTTP. These are always kept and are never removed automatically.</p>
+                            </div>
                         </div>
                     </div>
 
-                    <!-- Where to get free proxies -->
-                    <div class="section">
-                        <h3 class="text-sm font-medium text-foreground mb-1">Need proxies? Get them free</h3>
-                        <p class="text-muted-foreground text-xs mb-3">Grab a few from these public lists, paste them above (one per line), then hit <span class="text-foreground">Test All</span> to keep the ones that respond. Free proxies rotate and die often, so add several. These are third-party lists — not endorsements.</p>
-                        <div class="flex flex-wrap gap-2">
-                            <a href="https://free-proxy-list.net/" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">free-proxy-list.net</a>
-                            <a href="https://geonode.com/free-proxy-list" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">geonode.com</a>
-                            <a href="https://proxyscrape.com/free-proxy-list" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">proxyscrape.com</a>
-                            <a href="https://www.proxy-list.download/SOCKS5" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">proxy-list.download</a>
-                            <a href="https://spys.one/en/socks-proxy-list/" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">spys.one</a>
-                            <a href="https://github.com/TheSpeedX/PROXY-List" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">TheSpeedX/PROXY-List</a>
-                            <a href="https://github.com/monosans/proxy-list" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">monosans/proxy-list</a>
+                    <!-- Saved Proxies -->
+                    <div class="section" style="margin:0">
+                        <div class="flex items-center justify-between gap-3 mb-3">
+                            <h3 class="text-sm font-medium text-foreground flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01" />
+                                </svg>
+                                Saved Proxies
+                            </h3>
+                            <button onclick="testAllProxies(this)" class="btn btn-secondary px-3 py-1.5 text-xs font-medium flex-shrink-0">Test All</button>
+                        </div>
+                        <div class="space-y-3">
+                            <div>
+                                <div class="text-xs font-medium text-muted-foreground mb-2">Yours</div>
+                                <div id="proxyListContainer" class="space-y-2"></div>
+                                <p id="proxyListEmpty" class="text-xs text-muted-foreground">No proxies saved yet.</p>
+                            </div>
+                            <div id="proxyAutoListWrap" class="hidden pt-3 border-t border-border">
+                                <div class="text-xs font-medium text-muted-foreground mb-2">Auto-fetched <span id="proxyAutoCount" class="font-normal"></span></div>
+                                <div id="proxyAutoListContainer" class="space-y-2"></div>
+                            </div>
+                            <p class="text-xs text-muted-foreground">Testing reports the outbound IP each proxy gives you, so you can drop the ones that no longer respond.</p>
                         </div>
                     </div>
 
-                    <!-- Configured proxies + per-proxy test -->
-                    <div class="section">
-                        <div class="flex items-center justify-between mb-3">
-                            <h3 class="text-sm font-medium text-foreground">Saved Proxies</h3>
-                            <button onclick="testAllProxies(this)" class="btn btn-secondary px-3 py-1.5 text-xs font-medium">Test All (show outbound IP)</button>
+                    <!-- Where to get proxies -->
+                    <div class="section" style="margin:0">
+                        <h3 class="text-sm font-medium text-foreground mb-3 flex items-center gap-2">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                            Where to get proxies
+                        </h3>
+                        <div class="space-y-3">
+                            <p class="text-xs text-muted-foreground">Grab a few from these public lists, paste them above, then hit <span class="text-foreground">Test All</span> to keep the ones that respond. Free proxies rotate and die often, so add several. These are third-party lists — not endorsements.</p>
+                            <div class="flex flex-wrap gap-2">
+                                <a href="https://free-proxy-list.net/" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">free-proxy-list.net</a>
+                                <a href="https://geonode.com/free-proxy-list" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">geonode.com</a>
+                                <a href="https://proxyscrape.com/free-proxy-list" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">proxyscrape.com</a>
+                                <a href="https://www.proxy-list.download/SOCKS5" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">proxy-list.download</a>
+                                <a href="https://spys.one/en/socks-proxy-list/" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">spys.one</a>
+                                <a href="https://github.com/TheSpeedX/PROXY-List" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">TheSpeedX/PROXY-List</a>
+                                <a href="https://github.com/monosans/proxy-list" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">monosans/proxy-list</a>
+                            </div>
                         </div>
-                        <div id="proxyListContainer" class="space-y-2"></div>
-                        <p id="proxyListEmpty" class="text-xs text-muted-foreground">No proxies saved yet.</p>
+                    </div>
+
+                    <!-- Save (matches the Settings tab's action row) -->
+                    <div class="flex items-center space-x-2">
+                        <button onclick="saveProxySettings(this)" class="btn btn-primary px-3 py-1.5 text-xs font-medium">Save Proxy Settings</button>
+                        <button onclick="loadProxySettings()" class="btn btn-secondary px-3 py-1.5 text-xs font-medium">Reload</button>
                     </div>
                 </div>
-
-                <div id="proxySuccess" class="hidden bg-green-50 border border-green-200 text-green-800 px-4 py-3 rounded-md mt-4"></div>
-                <div id="proxyError" class="hidden bg-destructive/10 border border-destructive/20 text-destructive px-4 py-3 rounded-md mt-4"></div>
             </div>
 
             <!-- Settings Tab -->
             <div id="settings" class="tab-content hidden">
                 <div class="section-header">
                     <h2 class="text-lg font-semibold text-foreground">Settings</h2>
-                    <p class="text-muted-foreground text-xs mt-1">Key rotation behavior and Telegram bot configuration</p>
+                    <p class="text-muted-foreground text-xs mt-1">Key rotation behavior, request log storage, and Telegram bot configuration</p>
                 </div>
 
                 <div class="grid grid-cols-1 gap-4 items-start">
@@ -1181,6 +1242,32 @@
                                 <input type="number" id="keepAliveMinutes" class="input-field w-full px-3 py-2 rounded-md text-sm" placeholder="10" value="10" min="0" step="1">
                                 <p class="text-xs text-muted-foreground mt-1">Pings the server periodically to prevent hosting platforms from sleeping it due to inactivity. Set to 0 to disable.</p>
                             </div>
+                        </div>
+                    </div>
+
+                    <!-- Request Logs Section -->
+                    <div class="section" style="margin:0">
+                        <h3 class="text-sm font-medium text-foreground mb-3 flex items-center gap-2">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-6a2 2 0 012-2h2a2 2 0 012 2v6m-6 0a2 2 0 002 2h2a2 2 0 002-2M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                            </svg>
+                            Request Logs
+                        </h3>
+                        <div class="space-y-3">
+                            <div>
+                                <label class="block text-xs font-medium text-muted-foreground mb-1">Storage</label>
+                                <select id="apiLogsMode" onchange="updateApiLogsMode()" class="input-field w-full px-3 py-2 rounded-md text-sm">
+                                    <option value="memory">In memory — last 100 requests, cleared on restart</option>
+                                    <option value="file">On disk — full requests and responses, kept for N days</option>
+                                </select>
+                                <p class="text-xs text-muted-foreground mt-1">Requests are always logged; this only decides where. On disk, each request gets its own file under <code>logs/&lt;date&gt;/</code> and survives a restart.</p>
+                            </div>
+                            <div id="apiLogsRetentionRow" class="hidden">
+                                <label class="block text-xs font-medium text-muted-foreground mb-1">Keep for <span class="font-normal">(days)</span></label>
+                                <input type="number" id="apiLogsRetentionDays" class="input-field w-full px-3 py-2 rounded-md text-sm" placeholder="7" value="7" min="1" step="1">
+                                <p class="text-xs text-muted-foreground mt-1">Log days older than this are deleted automatically, at startup and hourly.</p>
+                            </div>
+                            <p id="apiLogsStatus" class="text-xs text-muted-foreground"></p>
                         </div>
                     </div>
 
@@ -1443,6 +1530,14 @@
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z"></path>
                     </svg>`;
                     break;
+                case 'pending':
+                    bgColor = 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800';
+                    textColor = 'text-blue-800 dark:text-blue-200';
+                    iconSvg = `<svg class="w-4 h-4 text-blue-600 dark:text-blue-400" style="animation:spin 1s linear infinite" fill="none" viewBox="0 0 24 24">
+                        <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" opacity="0.25"></circle>
+                        <path fill="currentColor" d="M12 2a10 10 0 0110 10h-3a7 7 0 00-7-7V2z"></path>
+                    </svg>`;
+                    break;
                 case 'info':
                 default:
                     bgColor = 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800';
@@ -1646,6 +1741,122 @@
             return showToast(message, 'warning', duration);
         }
         
+        // A pending toast stays up until it is explicitly hidden (duration 0)
+        function showPendingToast(message) {
+            return showToast(message, 'pending', 0);
+        }
+
+        // Every admin call goes through fetch(), so wrapping it once gives the whole
+        // panel a "something is happening" notification - no need to hand-roll a
+        // busy state into each of the ~25 buttons that talk to the server.
+        // Matched most-specific first; anything unlisted (background polling like
+        // the status bar, auth checks and the logs auto-refresh) stays silent.
+        const _PENDING_LABELS = [
+            ['POST', '/admin/login', 'Signing in…'],
+            ['POST', '/admin/logout', 'Signing out…'],
+            ['GET', '/admin/api/env-file', 'Preparing export…'],
+            ['POST', '/admin/api/env', 'Saving configuration…'],
+            ['POST', '/admin/api/test', 'Testing API key…'],
+            ['POST', '/admin/api/toggle-key', 'Updating key…'],
+            ['POST', '/admin/api/toggle-provider', 'Updating provider…'],
+            ['POST', '/admin/api/reorder-keys', 'Reordering keys…'],
+            ['POST', '/admin/api/logs/clear', 'Clearing logs…'],
+            ['GET', '/admin/api/logs?before', 'Loading older requests…'],
+            ['GET', '/admin/api/response/', 'Loading response…'],
+            ['POST', '/admin/api/proxy/test', 'Testing proxy…'],
+            ['POST', '/admin/api/proxy', 'Saving proxy settings…'],
+            ['POST', '/admin/api/telegram', 'Saving settings…']
+        ];
+
+        // Only announce a call once it is slow enough to be worth mentioning,
+        // so quick round-trips don't flash a toast at you.
+        const _PENDING_DELAY_MS = 250;
+
+        // Insurance: if a request somehow never settles, drop the toast rather than
+        // leave a spinner stuck in the corner forever. Comfortably longer than the
+        // slowest real call (an unreachable proxy can take over a minute to fail).
+        const _PENDING_MAX_MS = 120000;
+
+        // Whichever control the user last pressed, so a request can be attributed
+        // back to it and that control locked until the request finishes.
+        let _armedControl = null;
+        let _armedTimer = null;
+        const _busyControls = new Set();
+        let _inFlightCount = 0;
+        let _releaseTimer = null;
+
+        document.addEventListener('click', (event) => {
+            const control = event.target.closest('button, input[type="checkbox"]');
+            if (!control || control.disabled) return;
+            _armedControl = control;
+            clearTimeout(_armedTimer);
+            // A click that never leads to a request shouldn't stay armed
+            _armedTimer = setTimeout(() => { _armedControl = null; }, 3000);
+        }, true);
+
+        function _lockControl(control) {
+            if (!control || control.disabled || _busyControls.has(control)) return;
+            _busyControls.add(control);
+            control.disabled = true;
+            control.classList.add('is-busy');
+        }
+
+        // Released together once everything settles - handlers often fire a second
+        // call (test, then save), and the control must stay locked across the gap.
+        function _releaseControls() {
+            for (const control of _busyControls) {
+                control.disabled = false;
+                control.classList.remove('is-busy');
+            }
+            _busyControls.clear();
+        }
+
+        (function installPendingIndicator() {
+            const nativeFetch = window.fetch.bind(window);
+
+            window.fetch = function (input, init) {
+                const url = typeof input === 'string' ? input : (input && input.url) || '';
+                const method = ((init && init.method) || 'GET').toUpperCase();
+                const match = _PENDING_LABELS.find(([m, prefix]) => m === method && url.startsWith(prefix));
+
+                if (!match) return nativeFetch(input, init);
+
+                // Lock the control that started this, so an impatient second click
+                // can't submit the same save twice
+                clearTimeout(_releaseTimer);
+                _inFlightCount++;
+                _lockControl(_armedControl);
+
+                let toastId = null;
+                let capTimer = null;
+                const timer = setTimeout(() => {
+                    toastId = showPendingToast(match[2]);
+                    capTimer = setTimeout(() => { hideNotification(toastId); toastId = null; }, _PENDING_MAX_MS);
+                }, _PENDING_DELAY_MS);
+
+                const settle = () => {
+                    clearTimeout(timer);
+                    if (capTimer) clearTimeout(capTimer);
+                    if (toastId !== null) hideNotification(toastId);
+
+                    _inFlightCount = Math.max(0, _inFlightCount - 1);
+                    if (_inFlightCount === 0) {
+                        // Short grace period so a follow-up call in the same handler
+                        // doesn't briefly re-enable the control mid-operation
+                        clearTimeout(_releaseTimer);
+                        _releaseTimer = setTimeout(() => {
+                            if (_inFlightCount === 0) _releaseControls();
+                        }, 250);
+                    }
+                };
+
+                return nativeFetch(input, init).then(
+                    (response) => { settle(); return response; },
+                    (error) => { settle(); throw error; }
+                );
+            };
+        })();
+
         function showInfoToast(message, duration = 3000) {
             return showToast(message, 'info', duration);
         }
@@ -3996,6 +4207,9 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
         // Filters/search re-render from this without re-fetching.
         let _logsCache = [];
         let _logAutoRefreshTimer = null;
+        // Where the server keeps logs (API_LOGS) + whether older entries exist on disk
+        let _logStorage = { mode: 'memory', retentionDays: null, memoryLimit: 100, storedEntries: 0 };
+        let _logHasMore = false;
 
         // Normalize any log entry (new object format or legacy string) into a common shape.
         function normalizeLog(log) {
@@ -4034,6 +4248,74 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             document.getElementById('logsEmpty')?.classList.add('hidden');
         }
 
+        // Stable key for an entry, so a refresh replaces rows instead of duplicating them
+        function _logKey(log) {
+            if (log && typeof log === 'object' && log.requestId) return log.requestId;
+            if (typeof log === 'string') return log.match(/\[(?:REQ|TEST)-([a-zA-Z0-9]+)\]/)?.[1] || log;
+            return JSON.stringify(log);
+        }
+
+        // Merge into the cache newest-first. Keeps rows pulled in by "Load older"
+        // alive across an auto-refresh instead of dropping them on every poll.
+        function _mergeLogs(incoming) {
+            const merged = new Map();
+            for (const log of _logsCache) merged.set(_logKey(log), log);
+            for (const log of incoming) merged.set(_logKey(log), log);
+
+            _logsCache = [...merged.values()].sort((a, b) => {
+                const at = a && a.timestamp ? Date.parse(a.timestamp) : 0;
+                const bt = b && b.timestamp ? Date.parse(b.timestamp) : 0;
+                if (bt !== at) return bt - at;
+                return String(_logKey(b)).localeCompare(String(_logKey(a)));
+            });
+        }
+
+        function renderLogStorageNote() {
+            const el = document.getElementById('logStorageNote');
+            if (el) {
+                if (_logStorage.mode === 'file') {
+                    const days = _logStorage.retentionDays;
+                    el.textContent = `${_logStorage.storedEntries} on disk • kept ${days} day${days === 1 ? '' : 's'} • survives restart`;
+                    el.title = 'API_LOGS is set to a retention window, so each request is written to logs/<date>/';
+                } else {
+                    el.textContent = `Last ${_logStorage.memoryLimit} entries in memory • lost on restart`;
+                    el.title = 'Set API_LOGS=7D in .env to keep full requests and responses on disk for 7 days';
+                }
+            }
+            const more = document.getElementById('logsLoadMore');
+            if (more) more.classList.toggle('hidden', !_logHasMore);
+        }
+
+        // Pull the next page of older entries off disk and prepend them to the cache
+        async function loadOlderLogs(button) {
+            const oldest = _logsCache[_logsCache.length - 1];
+            if (!oldest || !oldest.timestamp) return;
+
+            const label = button ? button.textContent : null;
+            if (button) { button.disabled = true; button.textContent = 'Loading…'; }
+            try {
+                const response = await fetch(`/admin/api/logs?before=${encodeURIComponent(oldest.timestamp)}&limit=100`);
+                const data = await response.json();
+                const logs = Array.isArray(data.logs) ? data.logs : [];
+                _logHasMore = !!data.hasMore;
+                if (data.storage) _logStorage = data.storage;
+
+                if (logs.length === 0) {
+                    _logHasMore = false;
+                    showInfoToast('No older requests on disk');
+                } else {
+                    _mergeLogs(logs);
+                    populateLogProviderFilter();
+                    renderLogs();
+                }
+                renderLogStorageNote();
+            } catch (error) {
+                showErrorToast('Failed to load older logs: ' + error.message);
+            } finally {
+                if (button) { button.disabled = false; button.textContent = label; }
+            }
+        }
+
         async function refreshLogs() {
             // Show skeletons only on the very first load
             if (_logsCache.length === 0 && document.getElementById('logsTableBody') && !document.getElementById('logsTableBody').children.length) {
@@ -4044,20 +4326,13 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 const data = await response.json();
                 const logs = Array.isArray(data.logs) ? data.logs : [];
 
-                // Deduplicate by requestId - keep the LAST (most complete) entry
-                const seen = new Map();
-                for (const log of logs) {
-                    const key = (log && typeof log === 'object' && log.requestId)
-                        ? log.requestId
-                        : (typeof log === 'string'
-                            ? (log.match(/\[(?:REQ|TEST)-([a-zA-Z0-9]+)\]/)?.[1] || log)
-                            : JSON.stringify(log));
-                    seen.set(key, log);
-                }
-                _logsCache = [...seen.values()].reverse(); // newest first
+                _logHasMore = !!data.hasMore;
+                if (data.storage) _logStorage = data.storage;
+                _mergeLogs(logs);
 
                 populateLogProviderFilter();
                 renderLogs();
+                renderLogStorageNote();
             } catch (error) {
                 const body = document.getElementById('logsTableBody');
                 if (body) body.innerHTML = '';
@@ -4289,8 +4564,11 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 const r = await fetch('/admin/api/logs/clear', { method: 'POST' });
                 if (!r.ok) throw new Error('HTTP ' + r.status);
                 _logsCache = [];
+                _logHasMore = false;
+                _logStorage = { ..._logStorage, storedEntries: 0 };
                 populateLogProviderFilter();
                 renderLogs();
+                renderLogStorageNote();
                 showSuccessToast('Logs cleared');
             } catch (e) {
                 showErrorToast('Failed to clear logs: ' + e.message);
@@ -4612,10 +4890,169 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 const data = await res.json();
                 proxyState = data;
                 document.getElementById('proxyEnabled').checked = !!data.enabled;
+                document.getElementById('proxyAutoFetch').checked = !!data.autoFetch;
                 document.getElementById('proxyUrls').value = (data.proxies || []).map(p => p.url).join('\n');
                 renderProxyList(data.proxies || []);
+                renderProxyAuto(data);
             } catch (e) {
-                showError('proxyError', e.message);
+                showErrorToast('Failed to load proxy settings: ' + e.message);
+            }
+        }
+
+        // Poll the sweep while it runs so the panel shows it moving. A refresh
+        // takes ~50s, and the server may also be running one of its own (at boot
+        // or after every proxy failed), so the tab picks that up too.
+        let _proxyProgressTimer = null;
+
+        function renderProxyProgress(auto) {
+            const wrap = document.getElementById('proxyAutoProgress');
+            const bar = document.getElementById('proxyAutoProgressBar');
+            const statusEl = document.getElementById('proxyAutoStatus');
+            if (!wrap || !bar) return false;
+
+            const p = (auto && auto.progress) || {};
+            const running = !!(auto && auto.refreshing);
+
+            if (!running) {
+                wrap.classList.add('hidden');
+                bar.style.width = '0%';
+                return false;
+            }
+
+            wrap.classList.remove('hidden');
+            if (p.phase === 'testing' && p.total > 0) {
+                const pct = Math.round((p.tested / p.total) * 100);
+                bar.style.width = pct + '%';
+                if (statusEl) statusEl.textContent = `Testing ${p.tested} of ${p.total} — ${p.live} alive so far (${pct}%)`;
+            } else {
+                bar.style.width = '8%';
+                if (statusEl) statusEl.textContent = 'Fetching proxy lists…';
+            }
+            return true;
+        }
+
+        function stopProxyProgressPolling() {
+            if (_proxyProgressTimer) {
+                clearInterval(_proxyProgressTimer);
+                _proxyProgressTimer = null;
+            }
+        }
+
+        function startProxyProgressPolling() {
+            stopProxyProgressPolling();
+            _proxyProgressTimer = setInterval(async () => {
+                try {
+                    const res = await fetch('/admin/api/proxy/status');
+                    if (!res.ok) return;
+                    const data = await res.json();
+                    if (!renderProxyProgress(data.auto)) {
+                        // sweep finished - stop polling and show the final numbers
+                        stopProxyProgressPolling();
+                        await loadProxySettings();
+                    }
+                } catch (e) {
+                    stopProxyProgressPolling();
+                }
+            }, 1000);
+        }
+
+        function updateProxyAutoControls() {
+            const btn = document.getElementById('proxyRefreshBtn');
+            const checkbox = document.getElementById('proxyAutoFetch');
+            if (!btn || !checkbox) return;
+
+            btn.title = checkbox.checked
+                ? 'Fetch the lists again and re-test every proxy'
+                : "Turn on 'Automatically fetch free proxies' first";
+        }
+
+        // Auto-fetched pool: read-only list plus a one-line summary of the last sweep
+        function renderProxyAuto(data) {
+            const auto = (data && data.auto) || {};
+            const pool = (data && data.pool) || {};
+            const statusEl = document.getElementById('proxyAutoStatus');
+
+            if (statusEl) {
+                const checkbox = document.getElementById('proxyAutoFetch');
+                const unsaved = checkbox && checkbox.checked && !(data && data.autoFetch);
+                if (unsaved) {
+                    statusEl.textContent = 'Auto-fetch is not active yet — hit Save Proxy Settings.';
+                } else if (!auto.enabled) {
+                    statusEl.textContent = data && data.autoFetch
+                        ? 'Auto-fetch is on but proxy routing is off — turn routing on and save.'
+                        : 'Auto-fetch is off.';
+                } else if (auto.refreshing) {
+                    statusEl.textContent = 'Fetching and testing free proxies…';
+                } else if (auto.lastError) {
+                    statusEl.textContent = `Last refresh failed: ${auto.lastError}`;
+                } else if (auto.lastRefreshAt) {
+                    const benched = pool.benched ? ` · ${pool.benched} benched` : '';
+                    statusEl.textContent = `${auto.live} live of ${auto.tested} tested · updated ${relativeTime(new Date(auto.lastRefreshAt).toISOString()).text}${benched}`;
+                } else {
+                    statusEl.textContent = 'Waiting for the first refresh…';
+                }
+            }
+
+            const wrap = document.getElementById('proxyAutoListWrap');
+            const container = document.getElementById('proxyAutoListContainer');
+            const count = document.getElementById('proxyAutoCount');
+            if (!wrap || !container) return;
+
+            updateProxyAutoControls();
+
+            if (renderProxyProgress(auto) && !_proxyProgressTimer) startProxyProgressPolling();
+
+            const list = auto.proxies || [];
+            wrap.classList.toggle('hidden', list.length === 0);
+            if (count) count.textContent = list.length ? `(${list.length})` : '';
+
+            container.innerHTML = '';
+            list.forEach((p) => {
+                const row = document.createElement('div');
+                row.className = 'flex items-center justify-between gap-3 border border-border rounded p-2 bg-muted/20';
+                row.innerHTML = `
+                    <code class="text-xs text-foreground truncate flex-1" title="${escapeHtml(p.masked)}">${escapeHtml(p.masked)}</code>
+                    <span class="proxy-test-result text-xs text-muted-foreground whitespace-nowrap"></span>
+                    <button class="btn btn-secondary px-2 py-1 text-xs font-medium flex-shrink-0">Test</button>
+                `;
+                const btn = row.querySelector('button');
+                const resultEl = row.querySelector('.proxy-test-result');
+                btn.onclick = () => testProxy(p.url, btn, resultEl);
+                container.appendChild(row);
+            });
+        }
+
+        // Force a fresh fetch + validation sweep right now
+        async function refreshProxyPool(btn) {
+            const checkbox = document.getElementById('proxyAutoFetch');
+            if (checkbox && !checkbox.checked) {
+                showWarningToast("Turn on 'Automatically fetch free proxies' first");
+                return;
+            }
+
+            try {
+                // The server acts on saved settings, so apply the toggle if the
+                // user turned it on but hasn't pressed Save yet.
+                if (!(proxyState && proxyState.autoFetch)) {
+                    await persistProxySettings();
+                }
+
+                startProxyProgressPolling();
+                const res = await fetch('/admin/api/proxy/refresh', { method: 'POST' });
+                const data = await res.json();
+                if (!res.ok || !data.success) throw new Error(data.error || 'Refresh failed');
+                stopProxyProgressPolling();
+                await loadProxySettings();
+                const live = data.auto ? data.auto.live : 0;
+                const tested = data.auto ? data.auto.tested : 0;
+                if (tested === 0) {
+                    showWarningToast('No proxies could be fetched — check the server log');
+                } else {
+                    showSuccessToast(`${live} of ${tested} free proxies responded`);
+                }
+            } catch (e) {
+                stopProxyProgressPolling();
+                showErrorToast('Could not refresh proxies: ' + e.message);
             }
         }
 
@@ -4653,30 +5090,36 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             return `<span class="text-foreground">${escapeHtml(name)}</span>`;
         }
 
+        // Write exactly what is on screen. Shared by Save and by Refresh, which
+        // has to apply an unsaved auto-fetch toggle before it can act on it.
+        async function persistProxySettings() {
+            const enabled = document.getElementById('proxyEnabled').checked;
+            const autoFetch = document.getElementById('proxyAutoFetch').checked;
+            const proxies = document.getElementById('proxyUrls').value
+                .split('\n')
+                .map(s => s.trim())
+                .filter(s => s.length > 0);
+
+            const res = await fetch('/admin/api/proxy', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enabled, proxies, autoFetch }),
+            });
+            const data = await res.json();
+            if (!res.ok || !data.success) throw new Error(data.error || 'Failed to save');
+            return data;
+        }
+
+        // The global in-flight indicator handles the button state and the
+        // "Saving proxy settings…" toast, exactly as it does on the Settings tab.
         async function saveProxySettings(btn) {
-            const original = btn ? btn.textContent : '';
-            if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
             try {
-                const enabled = document.getElementById('proxyEnabled').checked;
-                const proxies = document.getElementById('proxyUrls').value
-                    .split('\n')
-                    .map(s => s.trim())
-                    .filter(s => s.length > 0);
-
-                const res = await fetch('/admin/api/proxy', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ enabled, proxies }),
-                });
-                const data = await res.json();
-                if (!res.ok || !data.success) throw new Error(data.error || 'Failed to save');
-
-                showSuccess('proxySuccess', `Saved ${data.count} proxy(ies). Routing ${data.enabled ? 'ENABLED' : 'disabled'}.`);
+                const data = await persistProxySettings();
                 await loadProxySettings();
+                const autoNote = data.autoFetch ? ', auto-fetch on' : '';
+                showSuccessToast(`Saved ${data.count} proxy(ies) — routing ${data.enabled ? 'enabled' : 'disabled'}${autoNote}`);
             } catch (e) {
-                showError('proxyError', e.message);
-            } finally {
-                if (btn) { btn.disabled = false; btn.textContent = original; }
+                showErrorToast('Failed to save proxy settings: ' + e.message);
             }
         }
 
@@ -4726,18 +5169,15 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
         }
         
         // Utility functions
-        function showError(elementId, message) {
-            const errorDiv = document.getElementById(elementId);
-            errorDiv.textContent = message;
-            errorDiv.classList.remove('hidden');
-            setTimeout(() => errorDiv.classList.add('hidden'), 5000);
+        // These used to paint inline banners that only had light-theme colours, so
+        // the same event looked different depending on which tab you were on. They
+        // now feed the toast system every other action already uses.
+        function showError(_elementId, message) {
+            showErrorToast(message);
         }
-        
-        function showSuccess(elementId, message) {
-            const successDiv = document.getElementById(elementId);
-            successDiv.textContent = message;
-            successDiv.classList.remove('hidden');
-            setTimeout(() => successDiv.classList.add('hidden'), 5000);
+
+        function showSuccess(_elementId, message) {
+            showSuccessToast(message);
         }
         
         // Event listeners
@@ -4936,6 +5376,23 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
     </script>
 
 <script>
+    // Retention only applies to disk storage
+    function updateApiLogsMode() {
+        const mode = document.getElementById('apiLogsMode')?.value;
+        document.getElementById('apiLogsRetentionRow')?.classList.toggle('hidden', mode !== 'file');
+    }
+
+    function renderApiLogsStatus(data) {
+        const el = document.getElementById('apiLogsStatus');
+        if (!el) return;
+        if (data.apiLogsMode === 'file') {
+            const n = data.apiLogsStoredEntries;
+            el.textContent = n != null ? `Currently on disk: ${n} request${n === 1 ? '' : 's'}.` : '';
+        } else {
+            el.textContent = 'Nothing is written to disk in this mode.';
+        }
+    }
+
     async function loadTelegramSettings() {
         try {
             const response = await fetch('/admin/api/telegram');
@@ -4946,6 +5403,10 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             document.getElementById('telegramAllowedUsers').value = data.allowedUsers || '';
             document.getElementById('defaultStatusCodes').value = data.defaultStatusCodes || '429';
             document.getElementById('keepAliveMinutes').value = data.keepAliveMinutes != null ? data.keepAliveMinutes : 10;
+            document.getElementById('apiLogsMode').value = data.apiLogsMode === 'file' ? 'file' : 'memory';
+            document.getElementById('apiLogsRetentionDays').value = data.apiLogsRetentionDays || 7;
+            updateApiLogsMode();
+            renderApiLogsStatus(data);
 
             const statusEl = document.getElementById('telegramBotStatus');
             if (data.botRunning) {
@@ -4965,13 +5426,15 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
         const allowedUsers = document.getElementById('telegramAllowedUsers').value.trim();
         const statusCodesInput = document.getElementById('defaultStatusCodes').value.trim() || '429';
         const keepAliveMinutes = parseInt(document.getElementById('keepAliveMinutes').value) || 0;
+        const apiLogsMode = document.getElementById('apiLogsMode').value;
+        const apiLogsRetentionDays = parseInt(document.getElementById('apiLogsRetentionDays').value) || 7;
         const statusEl = document.getElementById('telegramBotStatus');
 
         try {
             const response = await fetch('/admin/api/telegram', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ botToken, allowedUsers, defaultStatusCodes: statusCodesInput, keepAliveMinutes })
+                body: JSON.stringify({ botToken, allowedUsers, defaultStatusCodes: statusCodesInput, keepAliveMinutes, apiLogsMode, apiLogsRetentionDays })
             });
 
             const data = await response.json();
@@ -4979,6 +5442,10 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 // Update global status codes for curl generation (use server-sorted value)
                 defaultStatusCodes = data.defaultStatusCodes || '429';
                 document.getElementById('defaultStatusCodes').value = defaultStatusCodes;
+                document.getElementById('apiLogsMode').value = data.apiLogsMode === 'file' ? 'file' : 'memory';
+                document.getElementById('apiLogsRetentionDays').value = data.apiLogsRetentionDays || 7;
+                updateApiLogsMode();
+                refreshLogs(); // storage note + "Load older" in the Logs tab
                 if (data.botRunning) {
                     statusEl.innerHTML = '<span class="text-green-500 font-medium">Settings saved - Bot is running</span>';
                 } else {

@@ -11,7 +11,9 @@ class Config {
     this.baseUrl = null;
     this.proxyUrls = [];
     this.proxyEnabled = false;
+    this.proxyAutoFetch = false;
     this.proxyManager = new ProxyManager([], false);
+    this.apiLogs = { mode: 'memory', retentionDays: null };
     this.loadConfig();
   }
 
@@ -67,6 +69,9 @@ class Config {
 
     // Parse outbound proxy configuration
     this.parseProxyConfig(envVars);
+
+    // Parse API request log storage (memory vs. file + retention window)
+    this.parseApiLogsConfig(envVars);
 
     console.log(`[CONFIG] Found ${this.providers.size} providers configured`);
 
@@ -269,17 +274,61 @@ class Config {
       .map(u => u.trim())
       .filter(u => u.length > 0);
 
+    this.proxyAutoFetch = (envVars.PROXY_AUTO_FETCH || '').trim().toLowerCase() === 'true';
+
+    // Auto-fetch supplies the pool at runtime, so routing may legitimately be
+    // enabled with no manually configured proxies at all.
     this.proxyEnabled = (envVars.PROXY_ENABLED || '').trim().toLowerCase() === 'true'
-      && this.proxyUrls.length > 0;
+      && (this.proxyUrls.length > 0 || this.proxyAutoFetch);
 
     this.proxyManager = new ProxyManager(this.proxyUrls, this.proxyEnabled);
 
     if (this.proxyEnabled) {
       const masked = this.proxyUrls.map(u => ProxyManager.maskProxyUrl(u));
-      console.log(`[CONFIG] Outbound proxy ENABLED — rotating across ${this.proxyUrls.length} proxy(ies): [${masked.join(', ')}]`);
+      const manual = this.proxyUrls.length > 0
+        ? `${this.proxyUrls.length} manual proxy(ies): [${masked.join(', ')}]`
+        : 'no manual proxies';
+      const auto = this.proxyAutoFetch ? ' + auto-fetched pool' : '';
+      console.log(`[CONFIG] Outbound proxy ENABLED — ${manual}${auto}`);
     } else if (this.proxyUrls.length > 0) {
       console.log(`[CONFIG] ${this.proxyUrls.length} proxy(ies) configured but proxy routing is DISABLED`);
     }
+  }
+
+  isProxyAutoFetchEnabled() {
+    return this.proxyAutoFetch;
+  }
+
+  /**
+   * Parse API_LOGS. Request logging can never be turned off - the only choice is
+   * where the entries live:
+   *   API_LOGS=memory  -> RAM only, last 100 entries, cleared on restart (default)
+   *   API_LOGS=<N>D    -> one file per request under logs/<date>/, holding the
+   *                       full request and response, kept for N days
+   * Anything unrecognized falls back to memory.
+   */
+  parseApiLogsConfig(envVars) {
+    const raw = (envVars.API_LOGS || '').trim();
+    const match = raw.match(/^(\d+)\s*d$/i);
+    const days = match ? parseInt(match[1], 10) : 0;
+
+    if (days > 0) {
+      this.apiLogs = { mode: 'file', retentionDays: days };
+      console.log(`[CONFIG] API logs: one file per request under logs/, keeping ${days} day(s)`);
+    } else {
+      this.apiLogs = { mode: 'memory', retentionDays: null };
+      if (raw && raw.toLowerCase() !== 'memory') {
+        console.log(`[CONFIG] API logs: unrecognized API_LOGS value "${raw}" - falling back to memory`);
+      } else {
+        console.log('[CONFIG] API logs: memory only (last 100 entries, cleared on restart)');
+      }
+    }
+
+    return this.apiLogs;
+  }
+
+  getApiLogsConfig() {
+    return { ...this.apiLogs };
   }
 
   getProxyManager() {

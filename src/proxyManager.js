@@ -6,11 +6,13 @@ const { URL } = require('url');
 /**
  * Proxy support with ZERO external dependencies.
  *
- * Supports two proxy types, auto-detected from the URL scheme:
+ * Supports three proxy types, auto-detected from the URL scheme:
  *   - HTTP/HTTPS proxies via the CONNECT tunneling method
  *       http://[user:pass@]host:port   https://[user:pass@]host:port
  *   - SOCKS5 proxies (with optional username/password auth)
  *       socks5://[user:pass@]host:port  (socks5h:// is treated the same)
+ *   - SOCKS4/4a proxies (no authentication in the protocol)
+ *       socks4://host:port              (socks4a:// is treated the same)
  *
  * The upstream target is always reached over TLS (all provider clients use
  * https.request), so after the tunnel is established the socket is wrapped in
@@ -45,10 +47,12 @@ function parseProxyUrl(raw) {
   let type;
   if (scheme === 'socks5' || scheme === 'socks' || scheme === 'socks5h') {
     type = 'socks5';
+  } else if (scheme === 'socks4' || scheme === 'socks4a') {
+    type = 'socks4';
   } else if (scheme === 'http' || scheme === 'https') {
     type = 'http';
   } else {
-    throw new Error(`Unsupported proxy scheme "${scheme}" (use http, https, or socks5)`);
+    throw new Error(`Unsupported proxy scheme "${scheme}" (use http, https, socks4, or socks5)`);
   }
 
   if (!u.hostname) {
@@ -59,7 +63,7 @@ function parseProxyUrl(raw) {
     ? `${decodeURIComponent(u.username)}:${decodeURIComponent(u.password)}`
     : null;
 
-  const defaultPort = type === 'socks5' ? 1080 : (u.protocol === 'https:' ? 443 : 80);
+  const defaultPort = (type === 'socks5' || type === 'socks4') ? 1080 : (u.protocol === 'https:' ? 443 : 80);
 
   return {
     type,
@@ -75,9 +79,24 @@ function parseProxyUrl(raw) {
  * open a CONNECT tunnel to targetHost:targetPort. Calls cb(err, socket) with a
  * raw duplex socket that is tunneled to the target (not yet TLS-wrapped).
  */
+/**
+ * Arm a connect-phase timeout on a tunnel socket. Without this a black-holed
+ * proxy stalls the request until the OS TCP timeout (over a minute), which
+ * matters a lot once the pool is full of unreliable free proxies.
+ */
+function armTimeout(socket, proxy, finish) {
+  const ms = proxy.timeoutMs || 0;
+  if (!ms) return;
+  socket.setTimeout(ms, () => {
+    finish(new Error(`Proxy connect timed out after ${ms}ms`));
+    socket.destroy();
+  });
+}
+
 function connectHttp(proxy, targetHost, targetPort, cb) {
   let settled = false;
   const finish = (err, socket) => {
+    if (socket) socket.setTimeout(0);
     if (settled) return;
     settled = true;
     cb(err, err ? undefined : socket);
@@ -102,6 +121,7 @@ function connectHttp(proxy, targetHost, targetPort, cb) {
     : net.connect(connectOpts, onReady);
 
   socket.once('error', (err) => finish(err));
+  armTimeout(socket, proxy, finish);
 
   let buffer = Buffer.alloc(0);
   const onData = (chunk) => {
@@ -134,6 +154,7 @@ function connectHttp(proxy, targetHost, targetPort, cb) {
 function connectSocks5(proxy, targetHost, targetPort, cb) {
   let settled = false;
   const finish = (err, socket) => {
+    if (socket) socket.setTimeout(0);
     if (settled) return;
     settled = true;
     cb(err, err ? undefined : socket);
@@ -141,6 +162,7 @@ function connectSocks5(proxy, targetHost, targetPort, cb) {
 
   const socket = net.connect({ host: proxy.hostname, port: proxy.port });
   socket.once('error', (err) => finish(err));
+  armTimeout(socket, proxy, finish);
 
   const [user, pass] = proxy.auth ? splitAuth(proxy.auth) : [null, null];
   let stage = 'greeting';
@@ -247,6 +269,79 @@ function connectSocks5(proxy, targetHost, targetPort, cb) {
 }
 
 /**
+ * Perform a SOCKS4 (or SOCKS4a) handshake and open a connection to
+ * targetHost:targetPort. Calls cb(err, socket) with the raw tunneled socket.
+ *
+ * SOCKS4 is a far simpler exchange than SOCKS5 - one request, one 8-byte reply -
+ * and has no authentication at all, so the userid field is sent empty. Plain
+ * SOCKS4 can only address an IPv4 destination; the SOCKS4a extension signals "a
+ * hostname follows" by sending an otherwise-invalid 0.0.0.x address. We connect
+ * to providers by name, so that is the path used unless the target is a literal
+ * IPv4. Proxies that only speak plain SOCKS4 reject it, which is one reason a
+ * chunk of any public socks4 list will never validate.
+ */
+function connectSocks4(proxy, targetHost, targetPort, cb) {
+  let settled = false;
+  const finish = (err, socket) => {
+    if (socket) socket.setTimeout(0);
+    if (settled) return;
+    settled = true;
+    cb(err, err ? undefined : socket);
+  };
+
+  const socket = net.connect({ host: proxy.hostname, port: proxy.port });
+  socket.once('error', (err) => finish(err));
+  armTimeout(socket, proxy, finish);
+
+  socket.once('connect', () => {
+    const portBuf = Buffer.from([(targetPort >> 8) & 0xff, targetPort & 0xff]);
+    const userIdTerminator = Buffer.from([0x00]); // empty userid
+    const isIpv4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.test(targetHost);
+
+    let req;
+    if (isIpv4) {
+      const ip = Buffer.from(targetHost.split('.').map((n) => parseInt(n, 10) & 0xff));
+      req = Buffer.concat([Buffer.from([0x04, 0x01]), portBuf, ip, userIdTerminator]);
+    } else {
+      const host = Buffer.from(targetHost, 'utf8');
+      req = Buffer.concat([
+        Buffer.from([0x04, 0x01]),
+        portBuf,
+        Buffer.from([0x00, 0x00, 0x00, 0x01]), // 0.0.0.1 -> SOCKS4a, hostname follows
+        userIdTerminator,
+        host,
+        Buffer.from([0x00]),
+      ]);
+    }
+    socket.write(req);
+  });
+
+  let buffer = Buffer.alloc(0);
+  const onData = (chunk) => {
+    buffer = Buffer.concat([buffer, chunk]);
+    if (buffer.length < 8) return; // the reply is always exactly 8 bytes
+
+    socket.removeListener('data', onData);
+    const code = buffer[1];
+    if (code !== 0x5a) {
+      const reason = {
+        0x5b: 'request rejected or failed',
+        0x5c: 'client is not running identd',
+        0x5d: 'identd could not confirm the user id',
+      }[code] || `reply code 0x${code.toString(16)}`;
+      finish(new Error(`SOCKS4 connect failed (${reason})`));
+      socket.destroy();
+      return;
+    }
+
+    const leftover = buffer.slice(8);
+    if (leftover.length > 0) socket.unshift(leftover);
+    finish(null, socket);
+  };
+  socket.on('data', onData);
+}
+
+/**
  * An https.Agent that routes every connection through a single proxy.
  * https.request calls createConnection() for us; we build the tunnel, then
  * TLS-wrap it to the target host and hand the secure socket back.
@@ -255,6 +350,9 @@ class ProxyAgent extends https.Agent {
   constructor(proxyUrl, options = {}) {
     super({ ...options, keepAlive: false, maxSockets: Infinity });
     this.proxy = parseProxyUrl(proxyUrl);
+    this.proxy.timeoutMs = options.proxyTimeoutMs != null
+      ? options.proxyTimeoutMs
+      : ProxyAgent.DEFAULT_TIMEOUT_MS;
   }
 
   createConnection(options, callback) {
@@ -279,28 +377,78 @@ class ProxyAgent extends https.Agent {
 
     if (this.proxy.type === 'socks5') {
       connectSocks5(this.proxy, targetHost, targetPort, onTunnel);
+    } else if (this.proxy.type === 'socks4') {
+      connectSocks4(this.proxy, targetHost, targetPort, onTunnel);
     } else {
       connectHttp(this.proxy, targetHost, targetPort, onTunnel);
     }
   }
 }
 
+ProxyAgent.DEFAULT_TIMEOUT_MS = 15000;
+
 class ProxyManager {
   constructor(proxyUrls = [], enabled = false) {
-    this.proxyUrls = (Array.isArray(proxyUrls) ? proxyUrls : [])
-      .map((u) => (u || '').trim())
-      .filter((u) => u.length > 0);
-    this.enabled = !!enabled && this.proxyUrls.length > 0;
+    this.manualUrls = ProxyManager.normalize(proxyUrls);
+    this.autoUrls = [];                 // fetched pool, in memory only
+    this.enabled = !!enabled;
     this.rotationIndex = 0;
     this._agentCache = new Map();
+
+    // Circuit breaker. Free proxies die constantly, so a proxy that keeps
+    // failing is benched for a while rather than deleted - it gets another
+    // chance later instead of being lost for good.
+    this.health = new Map();            // url -> { fails, deadUntil }
+    this.maxFailures = 3;
+    this.benchMs = 10 * 60 * 1000;
+
+    // Set by the server: called when every proxy is benched, so an auto pool
+    // can go and fetch a fresh batch.
+    this.onPoolExhausted = null;
+  }
+
+  static normalize(urls) {
+    return (Array.isArray(urls) ? urls : [])
+      .map((u) => (u || '').trim())
+      .filter((u) => u.length > 0);
+  }
+
+  /** Manual proxies first, then the auto-fetched ones. */
+  get proxyUrls() {
+    return [...this.manualUrls, ...this.autoUrls];
+  }
+
+  /** Replace the auto-fetched half of the pool. Manual entries are untouched. */
+  setAutoProxies(urls) {
+    const next = ProxyManager.normalize(urls);
+    const keep = new Set(next);
+    // Forget health for proxies that are no longer in the pool
+    for (const url of [...this.health.keys()]) {
+      if (!keep.has(url) && !this.manualUrls.includes(url)) this.health.delete(url);
+    }
+    this.autoUrls = next.filter((u) => !this.manualUrls.includes(u));
+  }
+
+  getAutoProxies() {
+    return [...this.autoUrls];
   }
 
   isEnabled() {
     return this.enabled && this.proxyUrls.length > 0;
   }
 
+  /** True while this proxy is serving out its penalty for repeated failures. */
+  isBenched(url) {
+    const entry = this.health.get(url);
+    return !!(entry && entry.deadUntil && entry.deadUntil > Date.now());
+  }
+
+  getUsable() {
+    return this.proxyUrls.filter((url) => !this.isBenched(url));
+  }
+
   getProxyUrls() {
-    return [...this.proxyUrls];
+    return this.proxyUrls;
   }
 
   getAgentFor(proxyUrl) {
@@ -310,15 +458,60 @@ class ProxyManager {
     return this._agentCache.get(proxyUrl);
   }
 
+  /** A proxy worked - clear whatever failures it had accumulated. */
+  reportSuccess(proxyUrl) {
+    if (proxyUrl) this.health.delete(proxyUrl);
+  }
+
   /**
-   * Round-robin pick the next proxy for a request. Returns
-   * { url, maskedUrl, agent, index } or null when disabled/empty.
+   * A proxy failed to carry a request. Only connection-level failures should
+   * land here - an HTTP error from the provider is not the proxy's fault and
+   * must not get a working proxy benched.
+   */
+  reportFailure(proxyUrl) {
+    if (!proxyUrl) return;
+
+    const entry = this.health.get(proxyUrl) || { fails: 0, deadUntil: 0 };
+    entry.fails += 1;
+
+    if (entry.fails >= this.maxFailures) {
+      entry.deadUntil = Date.now() + this.benchMs;
+      entry.fails = 0;
+      console.log(`[PROXY] ${ProxyManager.maskProxyUrl(proxyUrl)} benched for ${Math.round(this.benchMs / 60000)}m after ${this.maxFailures} consecutive failures`);
+    }
+    this.health.set(proxyUrl, entry);
+
+    if (this.getUsable().length === 0) this.notifyExhausted();
+  }
+
+  notifyExhausted() {
+    if (typeof this.onPoolExhausted === 'function') {
+      try {
+        this.onPoolExhausted();
+      } catch (e) {
+        console.log(`[PROXY] Pool refresh hook failed: ${e.message}`);
+      }
+    }
+  }
+
+  /**
+   * Round-robin pick the next usable proxy. Returns
+   * { url, maskedUrl, agent, index } or null when disabled, empty, or when
+   * every proxy is currently benched - in which case the request goes direct
+   * and a pool refresh is requested.
    */
   pick() {
     if (!this.isEnabled()) return null;
-    const index = this.rotationIndex % this.proxyUrls.length;
-    this.rotationIndex = (this.rotationIndex + 1) % this.proxyUrls.length;
-    const url = this.proxyUrls[index];
+
+    const usable = this.getUsable();
+    if (usable.length === 0) {
+      this.notifyExhausted();
+      return null;
+    }
+
+    const index = this.rotationIndex % usable.length;
+    this.rotationIndex = (this.rotationIndex + 1) % usable.length;
+    const url = usable[index];
     return {
       url,
       index,
@@ -327,12 +520,24 @@ class ProxyManager {
     };
   }
 
+  /** Counts for the admin panel. */
+  getStats() {
+    const benched = this.proxyUrls.filter((url) => this.isBenched(url));
+    return {
+      total: this.proxyUrls.length,
+      manual: this.manualUrls.length,
+      auto: this.autoUrls.length,
+      usable: this.getUsable().length,
+      benched: benched.length,
+    };
+  }
+
   static parse(proxyUrl) {
     return parseProxyUrl(proxyUrl);
   }
 
-  static createAgent(proxyUrl) {
-    return new ProxyAgent(proxyUrl);
+  static createAgent(proxyUrl, options = {}) {
+    return new ProxyAgent(proxyUrl, options);
   }
 
   /** Hide credentials when a proxy URL is shown in logs or the UI. */

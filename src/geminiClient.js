@@ -180,6 +180,7 @@ class GeminiClient {
       if (picked) {
         options.agent = picked.agent;
         options._proxyMasked = picked.maskedUrl;
+        options._proxyUrl = picked.url;
         console.log(`[GEMINI] Routing request via proxy ${picked.maskedUrl}`);
       }
     }
@@ -199,6 +200,7 @@ class GeminiClient {
         });
 
         res.on('end', () => {
+          this._reportProxyOutcome(options, true);
           resolve({
             statusCode: res.statusCode,
             headers: res.headers,
@@ -209,6 +211,7 @@ class GeminiClient {
       });
 
       req.on('error', (error) => {
+        this._reportProxyOutcome(options, false);
         const maskedKey = this.maskApiKey(apiKey);
         console.log(`[GEMINI::${maskedKey}] HTTP request error: ${error.message}`);
         reject(error);
@@ -228,6 +231,7 @@ class GeminiClient {
       const options = this._buildRequestOptions(method, path, body, headers, apiKey, useHeader);
 
       const req = https.request(options, (res) => {
+        this._reportProxyOutcome(options, true);
         resolve({
           statusCode: res.statusCode,
           headers: res.headers,
@@ -237,6 +241,7 @@ class GeminiClient {
       });
 
       req.on('error', (error) => {
+        this._reportProxyOutcome(options, false);
         const maskedKey = this.maskApiKey(apiKey);
         console.log(`[GEMINI::${maskedKey}] HTTP streaming request error: ${error.message}`);
         reject(error);
@@ -249,6 +254,18 @@ class GeminiClient {
 
       req.end();
     });
+  }
+
+  /**
+   * Feed the proxy's health back to the manager. Only connection-level results
+   * count: reaching the provider at all means the proxy works, whatever status
+   * code comes back.
+   */
+  _reportProxyOutcome(options, ok) {
+    const url = options && options._proxyUrl;
+    if (!url || !this.proxyManager) return;
+    if (ok) this.proxyManager.reportSuccess(url);
+    else this.proxyManager.reportFailure(url);
   }
 
   maskApiKey(key) {
