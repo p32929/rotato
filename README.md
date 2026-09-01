@@ -139,7 +139,7 @@ PROXY_AUTO_FETCH=true
 
 Pulls the SOCKS4 and SOCKS5 lists from [monosans/proxy-list](https://github.com/monosans/proxy-list) (~260 entries between them), **validates every one**, and keeps only those that respond. Validation opens the proxy tunnel to one of your configured providers and completes the TLS handshake, then hangs up — no HTTP request is sent, no API key is used, and no third-party "what is my IP" service is involved.
 
-The pool is held in memory and never written to `.env`. It refreshes every 30 minutes, and again whenever every proxy has stopped responding (rate-limited to at most one refresh every 5 minutes). Auto-fetch works on its own — you don't need any proxies of your own for `PROXY_ENABLED=true` to be valid.
+The pool is held in memory and never written to `.env`. It refreshes every 30 minutes, and again once the usable pool has dropped to a quarter of its size (rate-limited to at most one refresh every 5 minutes) — free proxies bleed away continuously, so waiting for the last one to die would mean running on a handful of survivors for most of the interval. Auto-fetch works on its own — you don't need any proxies of your own for `PROXY_ENABLED=true` to be valid.
 
 Expect heavy attrition: in testing, **32 of 260 entries were alive**, and SOCKS5 fared far better than SOCKS4 (many SOCKS4 proxies don't implement the SOCKS4a hostname extension this needs). Treat proxy rotation as best-effort.
 
@@ -148,6 +148,16 @@ Expect heavy attrition: in testing, **32 of 260 entries were alive**, and SOCKS5
 Proxies are ranked by measured round-trip time and traffic rotates across only the **fastest slice** (a quarter of the usable pool, at least 3 and at most 10). Validation timings seed the ranking so even the first request picks a quick proxy, and every real request updates it via a rolling average.
 
 Rotating across a slice rather than always taking the single fastest keeps several IPs in play, which is the whole point of proxying in the first place. In a typical sweep the rotation sits around 400–800ms while the slowest live proxies measure over 6 seconds, so the tail never carries traffic.
+
+### Timeouts and recovery
+
+Every request is bounded. A proxy that accepts the tunnel and then goes silent used to hang the caller indefinitely; now:
+
+- **Connect (tunnel + TLS)** is capped per proxy, scaled to its measured speed — a proxy that benchmarked at 400ms gets 4s, never the full 8s ceiling.
+- **Response** is capped at 60s through a proxy, 120s direct. For streaming, only the wait for headers is bounded; the stream itself may run as long as it likes.
+- **On a proxy failure the same API key is retried through the next proxy** (up to two extra attempts) rather than burning the key or failing the request. With a single key configured, one dead proxy no longer fails the call.
+
+A stall benches the proxy immediately rather than after three strikes, since silence is conclusive. An HTTP **403 or 407 through a proxy** counts as a strike too — a blocked proxy IP answers quickly, so latency ranking would otherwise promote it to the front of the rotation.
 
 Proxies that fail to carry a request three times in a row are **benched for 10 minutes**, then given another chance. Only connection-level failures count — an HTTP error from the provider isn't the proxy's fault. Your own `PROXY_URLS` entries are never removed automatically. If every proxy is benched, requests fall back to going **direct** rather than failing, and a pool refresh is triggered.
 

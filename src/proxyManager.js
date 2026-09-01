@@ -358,9 +358,40 @@ class ProxyAgent extends https.Agent {
   createConnection(options, callback) {
     const targetHost = options.host || options.hostname;
     const targetPort = parseInt(options.port, 10) || 443;
+    const timeoutMs = this.proxy.timeoutMs || 0;
+
+    // One guard across the whole connect. The per-socket timeout only covers
+    // the tunnel handshake and is cleared the moment it succeeds - a proxy that
+    // accepts CONNECT and then goes silent would otherwise leave tls.connect()
+    // waiting forever, with neither its callback nor its error event firing.
+    let settled = false;
+    let raw = null;
+    let secure = null;
+
+    const done = (err, socket) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      if (err) {
+        try { if (raw) raw.destroy(); } catch (e) { /* ignore */ }
+        try { if (secure) secure.destroy(); } catch (e) { /* ignore */ }
+        return callback(err);
+      }
+      callback(null, socket);
+    };
+
+    const timer = timeoutMs
+      ? setTimeout(() => done(new Error(`Proxy connection stalled after ${timeoutMs}ms`)), timeoutMs)
+      : null;
 
     const onTunnel = (err, rawSocket) => {
-      if (err) return callback(err);
+      if (err) return done(err);
+      raw = rawSocket;
+      if (settled) { // timed out while the tunnel was still being built
+        try { rawSocket.destroy(); } catch (e) { /* ignore */ }
+        return;
+      }
+
       const tlsOptions = {
         host: targetHost,
         servername: options.servername || targetHost,
@@ -371,8 +402,8 @@ class ProxyAgent extends https.Agent {
       for (const k of ['rejectUnauthorized', 'ca', 'cert', 'key', 'passphrase', 'pfx', 'ciphers', 'secureProtocol', 'ALPNProtocols']) {
         if (options[k] !== undefined) tlsOptions[k] = options[k];
       }
-      const tlsSocket = tls.connect(tlsOptions, () => callback(null, tlsSocket));
-      tlsSocket.once('error', (e) => callback(e));
+      secure = tls.connect(tlsOptions, () => done(null, secure));
+      secure.once('error', (e) => done(e));
     };
 
     if (this.proxy.type === 'socks5') {
@@ -385,7 +416,7 @@ class ProxyAgent extends https.Agent {
   }
 }
 
-ProxyAgent.DEFAULT_TIMEOUT_MS = 15000;
+ProxyAgent.DEFAULT_TIMEOUT_MS = 8000;
 
 class ProxyManager {
   constructor(proxyUrls = [], enabled = false) {
@@ -471,9 +502,23 @@ class ProxyManager {
     return this.proxyUrls;
   }
 
+  /**
+   * Connect budget for one proxy. A proxy measured at 500ms has no business
+   * taking 15 seconds to open a tunnel, and waiting that long before retrying
+   * is what makes an occasional bad pick feel like a stall. Scale the budget to
+   * what the proxy has actually demonstrated.
+   */
+  connectTimeoutFor(proxyUrl) {
+    const known = this.latencyOf(proxyUrl);
+    if (known < 0) return ProxyAgent.DEFAULT_TIMEOUT_MS;
+    return Math.max(4000, Math.min(ProxyAgent.DEFAULT_TIMEOUT_MS, Math.round(known * 5)));
+  }
+
   getAgentFor(proxyUrl) {
     if (!this._agentCache.has(proxyUrl)) {
-      this._agentCache.set(proxyUrl, new ProxyAgent(proxyUrl));
+      this._agentCache.set(proxyUrl, new ProxyAgent(proxyUrl, {
+        proxyTimeoutMs: this.connectTimeoutFor(proxyUrl),
+      }));
     }
     return this._agentCache.get(proxyUrl);
   }
@@ -515,11 +560,11 @@ class ProxyManager {
    * land here - an HTTP error from the provider is not the proxy's fault and
    * must not get a working proxy benched.
    */
-  reportFailure(proxyUrl) {
+  reportFailure(proxyUrl, immediate = false) {
     if (!proxyUrl) return;
 
     const entry = this.health.get(proxyUrl) || { fails: 0, deadUntil: 0, latencyMs: null };
-    entry.fails += 1;
+    entry.fails = immediate ? this.maxFailures : entry.fails + 1;
 
     if (entry.fails >= this.maxFailures) {
       entry.deadUntil = Date.now() + this.benchMs;
@@ -528,7 +573,19 @@ class ProxyManager {
     }
     this.health.set(proxyUrl, entry);
 
-    if (this.getUsable().length === 0) this.notifyExhausted();
+    if (this.isRunningLow()) this.notifyExhausted();
+  }
+
+  /**
+   * Free proxies bleed away continuously. Waiting for the pool to hit exactly
+   * zero before refilling means running on a handful of survivors for most of
+   * the refresh interval, so top up once it is mostly gone. The pool's own
+   * minimum gap keeps this from turning into a fetch storm.
+   */
+  isRunningLow() {
+    const total = this.proxyUrls.length;
+    if (total === 0) return true;
+    return this.getUsable().length <= Math.max(3, Math.ceil(total * 0.25));
   }
 
   notifyExhausted() {
