@@ -239,13 +239,17 @@ class ProxyServer {
         console.log(`[REQ-${requestId}] Using custom status codes for rotation: ${Array.from(customStatusCodes).join(', ')}`);
       }
 
+      // Some OpenAI-compatible clients send max_tokens AND max_completion_tokens in the
+      // same request; Gemini rejects that pair with a 400 instead of ignoring one.
+      const upstreamBody = this.sanitizeRequestBody(body);
+
       // Detect streaming request
       const isStreaming = this.isStreamingRequest(body);
       if (isStreaming) {
         console.log(`[REQ-${requestId}] Streaming request detected`);
       }
 
-      response = await client.makeRequest(req.method, path, body, headers, customStatusCodes, isStreaming);
+      response = await client.makeRequest(req.method, path, upstreamBody, headers, customStatusCodes, isStreaming);
 
       // Extract key info from response
       const keyInfo = response._keyInfo || null;
@@ -594,6 +598,29 @@ class ProxyServer {
 
     res.writeHead(statusCode, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(errorResponse));
+  }
+
+  /**
+   * Strip parameter combinations that upstream providers reject outright.
+   * Today that is only max_tokens + max_completion_tokens together: either one alone is
+   * fine, but Gemini answers 400 INVALID_ARGUMENT when it receives both, which is what
+   * LiteLLM-based clients (OpenHands, Cline, Aider) send by default. We keep
+   * max_completion_tokens because reasoning models reject the legacy max_tokens.
+   * Returns the body untouched, in the same shape, when there is nothing to fix.
+   */
+  sanitizeRequestBody(body) {
+    if (!body) return body;
+    const wasString = typeof body === 'string';
+    let parsed;
+    try {
+      parsed = wasString ? JSON.parse(body) : body;
+    } catch {
+      return body;
+    }
+    if (!parsed || typeof parsed !== 'object') return body;
+    if (parsed.max_tokens === undefined || parsed.max_completion_tokens === undefined) return body;
+    const { max_tokens, ...rest } = parsed;
+    return wasString ? JSON.stringify(rest) : rest;
   }
 
   /**
