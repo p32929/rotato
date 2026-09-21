@@ -1,6 +1,8 @@
-# openai-gemini-api-key-rotator
+# rotato
 
 Node.js proxy server for automatic API key rotation across multiple LLM providers (OpenAI, Gemini, Groq, OpenRouter, etc.). Includes a built-in Telegram bot for chatting with any model. ***Zero external dependencies***.
+
+<img width="3024" height="1714" alt="rotato admin panel" src="https://github.com/user-attachments/assets/f265cc8f-941e-43e4-998e-c713dacfd248" />
 
 ## Features
 
@@ -23,8 +25,8 @@ Node.js proxy server for automatic API key rotation across multiple LLM provider
 ## Quick Start
 
 ```bash
-git clone https://github.com/p32929/openai-gemini-api-key-rotator.git
-cd openai-gemini-api-key-rotator
+git clone https://github.com/p32929/rotato.git
+cd rotato
 cp .env.example .env
 # Edit .env: Set PORT and ADMIN_PASSWORD
 npm start
@@ -175,7 +177,8 @@ All API requests are automatically logged to `logs.jsonl` in the project root. W
 
 Contributions are warmly welcomed and greatly appreciated! Whether it's a bug fix, new feature, or improvement, your input helps make this project better for everyone.
 
-**Before submitting a pull request**, please:
+Before submitting a pull request, please:
+
 1. Create an issue describing the feature or bug fix you'd like to work on
 2. Wait for discussion and approval to ensure alignment with project goals
 3. Fork the repository and create your feature branch
@@ -186,6 +189,19 @@ This approach helps avoid duplicate efforts and ensures smooth collaboration. Th
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Share
+
+Sharing this repository with your friends is just one click away from here
+
+[![facebook](https://user-images.githubusercontent.com/6418354/179013321-ac1d1452-0689-493f-9066-940cf2302b6e.png)](https://www.facebook.com/sharer/sharer.php?u=https://github.com/p32929/rotato/)
+[![twitter](https://user-images.githubusercontent.com/6418354/179013351-7d8d6d1c-4ce2-46ab-bef8-4c4765a1b888.png)](https://twitter.com/intent/tweet?url=https://github.com/p32929/rotato/)
+[![tumblr](https://user-images.githubusercontent.com/6418354/179013343-3111f55a-3b90-40c7-8487-9777348672b0.png)](https://www.tumblr.com/share?v=3&u=https://github.com/p32929/rotato/)
+[![pocket](https://user-images.githubusercontent.com/6418354/179013334-b095c45f-becf-49f4-9ee1-5a731a9b1f85.png)](https://getpocket.com/save?url=https://github.com/p32929/rotato/)
+[![pinterest](https://user-images.githubusercontent.com/6418354/179013331-44cd9206-11b1-4b65-becb-5863b61c828f.png)](https://pinterest.com/pin/create/button/?url=https://github.com/p32929/rotato/)
+[![reddit](https://user-images.githubusercontent.com/6418354/179013338-7416ae3f-73ba-4522-86e1-1374d7082d22.png)](https://www.reddit.com/submit?url=https://github.com/p32929/rotato/)
+[![linkedin](https://user-images.githubusercontent.com/6418354/179013327-ca7b7102-1da8-4b1c-858f-1a6e5f21bd70.png)](https://www.linkedin.com/shareArticle?mini=true&url=https://github.com/p32929/rotato/)
+[![whatsapp](https://user-images.githubusercontent.com/6418354/179013353-f477fa0b-3e6f-4138-a357-c9991b23ff88.png)](https://api.whatsapp.com/send?text=https://github.com/p32929/rotato/)
 
 ---
 
