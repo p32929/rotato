@@ -11,7 +11,9 @@ class Config {
     this.baseUrl = null;
     this.proxyUrls = [];
     this.proxyEnabled = false;
+    this.proxyAutoFetch = false;
     this.proxyManager = new ProxyManager([], false);
+    this.apiLogs = { mode: 'memory', retentionDays: null };
     this.loadConfig();
   }
 
@@ -67,6 +69,9 @@ class Config {
 
     // Parse outbound proxy configuration
     this.parseProxyConfig(envVars);
+
+    // Parse API request log storage (memory vs. file + retention window)
+    this.parseApiLogsConfig(envVars);
 
     console.log(`[CONFIG] Found ${this.providers.size} providers configured`);
 
@@ -150,7 +155,7 @@ class Config {
     // Parse {API_TYPE}_{PROVIDER}_API_KEYS, {API_TYPE}_{PROVIDER}_BASE_URL, and {API_TYPE}_{PROVIDER}_ACCESS_KEY format
     const providerConfigs = new Map();
 
-    const defaultConfig = () => ({ apiType: null, keys: [], allKeys: [], baseUrl: null, accessKey: null, defaultModel: null, disabled: false });
+    const defaultConfig = () => ({ apiType: null, keys: [], allKeys: [], baseUrl: null, accessKey: null, defaultModel: null, disabled: false, proxy: null });
 
     for (const [key, value] of Object.entries(envVars)) {
       if (key.endsWith('_API_KEYS') && value) {
@@ -204,6 +209,18 @@ class Config {
           }
 
           providerConfigs.get(provider).defaultModel = value.trim();
+        }
+      } else if (key.endsWith('_PROXY') && value) {
+        const parts = key.replace('_PROXY', '').split('_');
+        if (parts.length >= 1) {
+          const apiType = parts[0].toLowerCase();
+          const provider = parts.length === 1 ? apiType : parts.slice(1).join('_').toLowerCase();
+
+          if (!providerConfigs.has(provider)) {
+            providerConfigs.set(provider, defaultConfig());
+          }
+
+          providerConfigs.get(provider).proxy = (value.trim().toLowerCase() === 'true');
         }
       } else if (key.endsWith('_DISABLED') && value) {
         const parts = key.replace('_DISABLED', '').split('_');
@@ -269,17 +286,88 @@ class Config {
       .map(u => u.trim())
       .filter(u => u.length > 0);
 
-    this.proxyEnabled = (envVars.PROXY_ENABLED || '').trim().toLowerCase() === 'true'
-      && this.proxyUrls.length > 0;
+    this.proxyAutoFetch = (envVars.PROXY_AUTO_FETCH || '').trim().toLowerCase() === 'true';
+
+    // Proxying is opted into per provider. PROXY_ENABLED is the old global
+    // switch; it now only supplies a default for providers that have no
+    // explicit {TYPE}_{NAME}_PROXY of their own, so existing setups keep working.
+    const legacyGlobal = (envVars.PROXY_ENABLED || '').trim().toLowerCase() === 'true';
+    for (const [, provider] of this.providers.entries()) {
+      if (provider.proxy === null || provider.proxy === undefined) {
+        provider.proxy = legacyGlobal;
+      }
+    }
+
+    const proxied = this.getProxiedProviderNames();
+
+    // The proxy subsystem runs when at least one provider asks for it and there
+    // is somewhere for proxies to come from.
+    this.proxyEnabled = proxied.length > 0 && (this.proxyUrls.length > 0 || this.proxyAutoFetch);
 
     this.proxyManager = new ProxyManager(this.proxyUrls, this.proxyEnabled);
 
-    if (this.proxyEnabled) {
+    if (proxied.length === 0) {
+      if (this.proxyUrls.length > 0) {
+        console.log(`[CONFIG] ${this.proxyUrls.length} proxy(ies) configured but no provider is set to use them`);
+      }
+    } else {
       const masked = this.proxyUrls.map(u => ProxyManager.maskProxyUrl(u));
-      console.log(`[CONFIG] Outbound proxy ENABLED — rotating across ${this.proxyUrls.length} proxy(ies): [${masked.join(', ')}]`);
-    } else if (this.proxyUrls.length > 0) {
-      console.log(`[CONFIG] ${this.proxyUrls.length} proxy(ies) configured but proxy routing is DISABLED`);
+      const manual = this.proxyUrls.length > 0
+        ? `${this.proxyUrls.length} manual proxy(ies): [${masked.join(', ')}]`
+        : 'no manual proxies';
+      const auto = this.proxyAutoFetch ? ' + auto-fetched pool' : '';
+      console.log(`[CONFIG] Proxy routing for [${proxied.join(', ')}] — ${manual}${auto}`);
     }
+  }
+
+  isProxyAutoFetchEnabled() {
+    return this.proxyAutoFetch;
+  }
+
+  /** Providers that have opted into routing through the proxy pool. */
+  getProxiedProviderNames() {
+    const names = [];
+    for (const [name, provider] of this.providers.entries()) {
+      if (provider.proxy) names.push(name);
+    }
+    return names;
+  }
+
+  usesProxy(providerName) {
+    const provider = this.providers.get(providerName);
+    return !!(provider && provider.proxy);
+  }
+
+  /**
+   * Parse API_LOGS. Request logging can never be turned off - the only choice is
+   * where the entries live:
+   *   API_LOGS=memory  -> RAM only, last 100 entries, cleared on restart (default)
+   *   API_LOGS=<N>D    -> one file per request under logs/<date>/, holding the
+   *                       full request and response, kept for N days
+   * Anything unrecognized falls back to memory.
+   */
+  parseApiLogsConfig(envVars) {
+    const raw = (envVars.API_LOGS || '').trim();
+    const match = raw.match(/^(\d+)\s*d$/i);
+    const days = match ? parseInt(match[1], 10) : 0;
+
+    if (days > 0) {
+      this.apiLogs = { mode: 'file', retentionDays: days };
+      console.log(`[CONFIG] API logs: one file per request under logs/, keeping ${days} day(s)`);
+    } else {
+      this.apiLogs = { mode: 'memory', retentionDays: null };
+      if (raw && raw.toLowerCase() !== 'memory') {
+        console.log(`[CONFIG] API logs: unrecognized API_LOGS value "${raw}" - falling back to memory`);
+      } else {
+        console.log('[CONFIG] API logs: memory only (last 100 entries, cleared on restart)');
+      }
+    }
+
+    return this.apiLogs;
+  }
+
+  getApiLogsConfig() {
+    return { ...this.apiLogs };
   }
 
   getProxyManager() {

@@ -6,6 +6,8 @@ const path = require('path');
 const crypto = require('crypto');
 const TelegramBot = require('./telegramBot');
 const ProxyManager = require('./proxyManager');
+const ApiLogStore = require('./apiLogStore');
+const ProxyPool = require('./proxyPool');
 
 class ProxyServer {
   constructor(config, geminiClient = null, openaiClient = null) {
@@ -15,16 +17,11 @@ class ProxyServer {
     this.providerClients = new Map(); // Map of provider_name -> client instance
     this.server = null;
     this.adminSessionToken = null;
-    this.logBuffer = []; // Store logs in RAM only (last 100 entries)
-    this.responseStorage = new Map(); // Store response data for viewing
     this.startTime = Date.now(); // For uptime in the status bar (J2)
     this.totalApiRequests = 0;    // Cumulative API request counter (J2)
 
-    // File logging - debounced write
-    this.pendingLogEntries = [];
-    this.logFlushTimer = null;
-    this.logFlushDelay = 5000; // 5 second debounce
-    this.logFilePath = path.join(process.cwd(), 'logs.jsonl');
+    // API request logging - memory vs. per-request files, driven by API_LOGS in .env
+    this.apiLogs = new ApiLogStore();
 
     // Rate limiting for login
     this.failedLoginAttempts = 0;
@@ -35,11 +32,32 @@ class ProxyServer {
     this.GeminiClient = require('./geminiClient');
     this.OpenAIClient = require('./openaiClient');
 
+    // Auto-fetched proxy pool. Lives in memory; feeds the ProxyManager.
+    this.proxyPool = new ProxyPool({
+      getProbeTarget: () => this.getProxyProbeTarget(),
+      onUpdate: () => this.config.getProxyManager().setAutoProxies(this.proxyPool.live),
+    });
+
     // Telegram bot (started after server.listen in start())
     this.telegramBot = new TelegramBot(this);
   }
 
+  // The panel and the Telegram bot read these directly; keep them pointing at
+  // the log store so it stays the single source of truth.
+  get logBuffer() { return this.apiLogs.buffer; }
+  set logBuffer(entries) { this.apiLogs.buffer = Array.isArray(entries) ? entries : []; }
+  get responseStorage() { return this.apiLogs.details; }
+
+  /** Adopt the current API_LOGS setting (at boot, and after an .env save). */
+  applyLogSettings() {
+    this.apiLogs.applySettings(this.config.getApiLogsConfig());
+  }
+
   start() {
+    // Restore persisted logs (and prune expired ones) before accepting traffic
+    this.applyLogSettings();
+    this.applyProxySettings();
+
     this.server = http.createServer((req, res) => {
       this.handleRequest(req, res);
     });
@@ -74,7 +92,6 @@ class ProxyServer {
   }
 
   async handleRequest(req, res) {
-    const requestId = Math.random().toString(36).substring(2, 11);
     const clientIp = req.headers['x-forwarded-for'] || req.connection.remoteAddress;
     const startTime = Date.now();
 
@@ -91,8 +108,13 @@ class ProxyServer {
       return;
     }
 
-    // Only log to file for API calls, always log to console
+    // Only proxied API calls are logged; they get the sequential id that names
+    // their log file. Admin and static traffic gets a throwaway console tag so it
+    // can't punch gaps in the log sequence.
     const isApiCall = this.parseRoute(req.url) !== null;
+    const requestId = isApiCall
+      ? this.apiLogs.nextRequestId()
+      : `adm-${Math.random().toString(36).substring(2, 8)}`;
     console.log(`[REQ-${requestId}] ${req.method} ${req.url} from ${clientIp}`);
 
     try {
@@ -295,6 +317,7 @@ class ProxyServer {
             contentType: response.headers['content-type'] || 'text/event-stream',
             responseData: streamedData,
             requestBody: body,
+            requestHeaders: req.headers,
             streaming: true,
             provider: providerName,
             proxyUsed: proxyUsed,
@@ -316,17 +339,19 @@ class ProxyServer {
           }
         });
       } else {
-        // Non-streaming response
+        // Non-streaming response. logApiResponse() stages the full payload and
+        // logApiRequest() writes it, so the response must be stored first.
+        this.logApiResponse(requestId, response, body, {
+          method: req.method, endpoint: path, apiType: apiType.toUpperCase(),
+          provider: providerName, proxyUsed, keyInfo, requestHeaders: req.headers
+        });
+
         if (isApiCall) {
           const responseTime = Date.now() - startTime;
           const error = response.statusCode >= 400 ? `HTTP ${response.statusCode}` : null;
           this.logApiRequest(requestId, req.method, path, providerName, response.statusCode, responseTime, error, clientIp, keyInfo, proxyUsed);
         }
 
-        this.logApiResponse(requestId, response, body, {
-          method: req.method, endpoint: path, apiType: apiType.toUpperCase(),
-          provider: providerName, proxyUsed, keyInfo
-        });
         this.sendResponse(res, response);
       }
     } catch (error) {
@@ -441,7 +466,12 @@ class ProxyServer {
       const keyRotator = new this.KeyRotator(enabledKeys, provider.apiType);
       let client;
 
-      const proxyManager = this.config.getProxyManager();
+      // Proxying is per provider: hand the manager over only to the ones that
+      // asked for it, so everyone else connects directly.
+      const proxyManager = provider.proxy ? this.config.getProxyManager() : null;
+      if (provider.proxy) {
+        console.log(`[SERVER] Provider '${providerName}' will route through the proxy pool`);
+      }
       if (provider.apiType === 'openai') {
         client = new this.OpenAIClient(keyRotator, provider.baseUrl, proxyManager);
       } else if (provider.apiType === 'gemini') {
@@ -650,6 +680,7 @@ class ProxyServer {
       contentType: contentType,
       responseData: response.data,
       requestBody: requestBody,
+      requestHeaders: meta.requestHeaders || null,
       provider: meta.provider || null,
       proxyUsed: meta.proxyUsed || null,
       keyInfo: meta.keyInfo || null
@@ -774,7 +805,7 @@ class ProxyServer {
     } else if (path === '/admin/api/test' && req.method === 'POST') {
       await this.handleTestApiKey(res, body);
     } else if (path === '/admin/api/logs' && req.method === 'GET') {
-      await this.handleGetLogs(res);
+      await this.handleGetLogs(res, url);
     } else if (path === '/admin/api/logs/clear' && req.method === 'POST') {
       await this.handleClearLogs(res);
     } else if (path === '/admin/api/status' && req.method === 'GET') {
@@ -799,6 +830,10 @@ class ProxyServer {
       await this.handleUpdateProxySettings(res, body);
     } else if (path === '/admin/api/proxy/test' && req.method === 'POST') {
       await this.handleTestProxy(res, body);
+    } else if (path === '/admin/api/proxy/refresh' && req.method === 'POST') {
+      await this.handleRefreshProxyPool(res);
+    } else if (path === '/admin/api/proxy/status' && req.method === 'GET') {
+      await this.handleGetProxyStatus(res);
     } else {
       this.sendError(res, 404, 'Not found');
     }
@@ -947,15 +982,15 @@ class ProxyServer {
       for (const [key, value] of Object.entries(currentEnvVars)) {
         if (key in finalEnvVars) continue;
 
-        if (key.endsWith('_DISABLED')) {
-          // Only preserve a provider's disabled flag if that provider still exists
-          // (i.e. its API keys are present in the new payload). Otherwise a deleted
-          // provider's DISABLED flag would resurrect it as a keyless ghost on reload.
-          const apiKeysKey = key.replace(/_DISABLED$/, '_API_KEYS');
+        if (key.endsWith('_DISABLED') || key.endsWith('_PROXY')) {
+          // Only preserve a provider's flags if that provider still exists (i.e.
+          // its API keys are present in the new payload). Otherwise a deleted
+          // provider's flag would resurrect it as a keyless ghost on reload.
+          const apiKeysKey = key.replace(/_(DISABLED|PROXY)$/, '_API_KEYS');
           if (apiKeysKey in finalEnvVars) {
             finalEnvVars[key] = value;
           }
-        } else if (key.startsWith('TELEGRAM_') || key.startsWith('PROXY_') || key === 'DEFAULT_STATUS_CODES' || key === 'KEEP_ALIVE_MINUTES') {
+        } else if (key.startsWith('TELEGRAM_') || key.startsWith('PROXY_') || key === 'DEFAULT_STATUS_CODES' || key === 'KEEP_ALIVE_MINUTES' || key === 'API_LOGS') {
           finalEnvVars[key] = value;
         }
       }
@@ -1104,54 +1139,70 @@ class ProxyServer {
     }
   }
   
-  async handleGetLogs(res) {
+  /** Normalize a stored entry (new object format or legacy string) for the panel. */
+  normalizeStoredLog(log) {
+    if (typeof log !== 'string') return log;
+
+    // Legacy string format: "2024-01-15T10:30:45.123Z [REQ-abc123] POST /endpoint"
+    const match = log.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)\s+(.*)$/);
+    return {
+      timestamp: match ? match[1] : new Date().toISOString(),
+      requestId: match ? 'legacy' : 'unknown',
+      method: 'UNKNOWN',
+      endpoint: 'unknown',
+      provider: 'unknown',
+      status: null,
+      responseTime: null,
+      error: null,
+      clientIp: null,
+      message: match ? match[2] : log // Keep original message for backward compatibility
+    };
+  }
+
+  async handleGetLogs(res, url = null) {
     try {
-      // Return logs from memory buffer only (last 100 entries)
-      const recentLogs = this.logBuffer.slice(-100).map(log => {
-        // Handle both old string format and new object format
-        if (typeof log === 'string') {
-          // Parse old string format: "2024-01-15T10:30:45.123Z [REQ-abc123] POST /endpoint"
-          const match = log.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)\s+(.*)$/);
-          if (match) {
-            return {
-              timestamp: match[1],
-              requestId: 'legacy',
-              method: 'UNKNOWN',
-              endpoint: 'unknown',
-              provider: 'unknown',
-              status: null,
-              responseTime: null,
-              error: null,
-              clientIp: null,
-              message: match[2] // Keep original message for backward compatibility
-            };
-          }
-          return {
-            timestamp: new Date().toISOString(),
-            requestId: 'unknown',
-            method: 'UNKNOWN',
-            endpoint: 'unknown',
-            provider: 'unknown',
-            status: null,
-            responseTime: null,
-            error: null,
-            clientIp: null,
-            message: log
-          };
-        }
-        return log; // Already an object
-      });
-      
+      const params = url ? url.searchParams : new URLSearchParams();
+      const before = params.get('before');
+      const parsedLimit = parseInt(params.get('limit'), 10);
+      const limit = Number.isNaN(parsedLimit)
+        ? this.apiLogs.memoryLimit
+        : Math.min(Math.max(parsedLimit, 1), 1000);
+
+      let source;
+      let hasMore;
+
+      if (before) {
+        // "Load older" - only possible when entries are persisted to disk
+        const cutoffTs = Date.parse(before);
+        const older = isNaN(cutoffTs)
+          ? { entries: [], hasMore: false }
+          : this.apiLogs.listBefore(cutoffTs, limit);
+        source = older.entries;
+        hasMore = older.hasMore;
+      } else {
+        source = this.apiLogs.listRecent(limit);
+        hasMore = this.apiLogs.isFileMode() && this.apiLogs.storedCount > source.length;
+      }
+
+      const recentLogs = source.map(log => this.normalizeStoredLog(log));
+
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ 
+      res.end(JSON.stringify({
         logs: recentLogs,
         totalEntries: recentLogs.length,
+        hasMore: hasMore,
+        storage: {
+          mode: this.apiLogs.settings.mode,
+          retentionDays: this.apiLogs.settings.retentionDays,
+          memoryLimit: this.apiLogs.memoryLimit,
+          storedEntries: this.apiLogs.isFileMode() ? this.apiLogs.storedCount : recentLogs.length
+        },
         format: 'json' // Indicate the new format
       }));
     } catch (error) {
       console.error('Failed to get logs:', error.message);
       res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ 
+      res.end(JSON.stringify({
         error: 'Failed to retrieve logs',
         logs: []
       }));
@@ -1182,11 +1233,7 @@ class ProxyServer {
 
   async handleClearLogs(res) {
     try {
-      this.logBuffer = [];
-      this.pendingLogEntries = [];
-      this.responseStorage.clear();
-      // Best-effort truncate the on-disk log file
-      try { fs.writeFileSync(this.logFilePath, ''); } catch (e) { /* ignore */ }
+      this.apiLogs.clear();
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true }));
     } catch (error) {
@@ -1212,43 +1259,12 @@ class ProxyServer {
 
     this.totalApiRequests++;
 
-    // Add to buffer (keep last 100 entries in RAM only)
-    this.logBuffer.push(logEntry);
-    if (this.logBuffer.length > 100) {
-      this.logBuffer.shift();
-    }
-
-    // Queue for file write (debounced)
-    this.pendingLogEntries.push(logEntry);
-    if (this.logFlushTimer) clearTimeout(this.logFlushTimer);
-    this.logFlushTimer = setTimeout(() => this.flushLogs(), this.logFlushDelay);
+    // Keeps the entry hot in RAM and, in file mode, writes this request's file
+    this.apiLogs.record(logEntry);
   }
 
   flushLogs(sync = false) {
-    if (this.pendingLogEntries.length === 0) return;
-
-    const entries = this.pendingLogEntries;
-    this.pendingLogEntries = [];
-    if (this.logFlushTimer) {
-      clearTimeout(this.logFlushTimer);
-      this.logFlushTimer = null;
-    }
-
-    const lines = entries.map(e => JSON.stringify(e)).join('\n') + '\n';
-
-    if (sync) {
-      try {
-        fs.appendFileSync(this.logFilePath, lines);
-      } catch (err) {
-        console.log(`[LOG] Failed to write to log file: ${err.message}`);
-      }
-    } else {
-      fs.appendFile(this.logFilePath, lines, (err) => {
-        if (err) {
-          console.log(`[LOG] Failed to write to log file: ${err.message}`);
-        }
-      });
-    }
+    this.apiLogs.flush(sync);
   }
 
   
@@ -1285,18 +1301,19 @@ class ProxyServer {
 
 
   storeResponseData(testId, responseData) {
-    // Store response data for viewing (keep last 100 responses)
-    this.responseStorage.set(testId, responseData);
-    if (this.responseStorage.size > 100) {
-      const firstKey = this.responseStorage.keys().next().value;
-      this.responseStorage.delete(firstKey);
-    }
+    // Stage the full payload for this request. In file mode it is written to
+    // disk once logApiRequest() supplies the summary; admin key tests never get
+    // a summary, so those stay in RAM only.
+    const staged = (responseData && responseData.requestHeaders)
+      ? { ...responseData, requestHeaders: ApiLogStore.maskHeaders(responseData.requestHeaders) }
+      : responseData;
+    this.apiLogs.stageDetail(testId, staged);
   }
 
   async handleGetResponse(res, path) {
     try {
       const testId = path.split('/').pop(); // Extract testId from path
-      const responseData = this.responseStorage.get(testId);
+      const responseData = this.apiLogs.getDetail(testId);
       
       if (!responseData) {
         this.sendError(res, 404, 'Response not found');
@@ -1478,9 +1495,23 @@ class ProxyServer {
         .map(url => ({ url, masked: ProxyManager.maskProxyUrl(url) }));
 
       const enabled = (envVars.PROXY_ENABLED || '').trim().toLowerCase() === 'true';
+      const autoFetch = (envVars.PROXY_AUTO_FETCH || '').trim().toLowerCase() === 'true';
+
+      const providers = [];
+      for (const [name, provider] of this.config.getProviders().entries()) {
+        providers.push({ name, apiType: provider.apiType, proxy: !!provider.proxy, disabled: !!provider.disabled });
+      }
 
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ enabled, proxies }));
+      res.end(JSON.stringify({
+        enabled,
+        autoFetch,
+        proxies,
+        providers,
+        auto: this.proxyPool.getStatus(),
+        pool: this.config.getProxyManager().getStats(),
+        details: this.config.getProxyManager().getProxyDetails()
+      }));
     } catch (error) {
       this.sendError(res, 500, 'Failed to read proxy settings');
     }
@@ -1492,7 +1523,7 @@ class ProxyServer {
    */
   async handleUpdateProxySettings(res, body) {
     try {
-      const { enabled, proxies } = JSON.parse(body);
+      const { proxies, autoFetch, providerProxies } = JSON.parse(body);
 
       const list = Array.isArray(proxies)
         ? proxies.map(p => String(p).trim()).filter(p => p.length > 0)
@@ -1522,19 +1553,53 @@ class ProxyServer {
         delete envVars.PROXY_URLS;
       }
 
-      const enable = !!enabled && list.length > 0;
-      if (enable) {
-        envVars.PROXY_ENABLED = 'true';
+      const useAuto = !!autoFetch;
+      if (useAuto) {
+        envVars.PROXY_AUTO_FETCH = 'true';
       } else {
-        delete envVars.PROXY_ENABLED;
+        delete envVars.PROXY_AUTO_FETCH;
       }
+
+      // Per-provider opt-in replaces the old global switch. Drop the legacy key
+      // so it stops acting as a default once explicit choices exist.
+      delete envVars.PROXY_ENABLED;
+
+      let proxiedCount = 0;
+      if (providerProxies && typeof providerProxies === 'object') {
+        for (const [name, provider] of this.config.getProviders().entries()) {
+          const key = `${String(provider.apiType).toUpperCase()}_${String(name).toUpperCase()}_PROXY`;
+          if (providerProxies[name]) {
+            envVars[key] = 'true';
+            proxiedCount += 1;
+          } else {
+            delete envVars[key];
+          }
+        }
+      } else {
+        // No provider map sent - keep whatever is already set
+        for (const [name, provider] of this.config.getProviders().entries()) {
+          if (provider.proxy) {
+            envVars[`${String(provider.apiType).toUpperCase()}_${String(name).toUpperCase()}_PROXY`] = 'true';
+            proxiedCount += 1;
+          }
+        }
+      }
+
+      const enable = proxiedCount > 0 && (list.length > 0 || useAuto);
 
       this.writeEnvFile(envVars);
       this.config.loadConfig();
       this.reinitializeClients();
 
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: true, count: list.length, enabled: enable }));
+      res.end(JSON.stringify({
+        success: true,
+        count: list.length,
+        enabled: enable,
+        proxiedProviders: proxiedCount,
+        autoFetch: useAuto,
+        auto: this.proxyPool.getStatus()
+      }));
     } catch (error) {
       this.sendError(res, 500, 'Failed to update proxy settings: ' + error.message);
     }
@@ -1563,6 +1628,36 @@ class ProxyServer {
    * Route a request to an IP-echo service through the given proxy and return
    * the observed outbound IP. Uses only Node built-ins via ProxyManager.
    */
+  /**
+   * Light-weight poll target for the panel's progress bar. Deliberately avoids
+   * re-reading .env the way the full settings endpoint does, since this is hit
+   * once a second while a sweep runs.
+   */
+  async handleGetProxyStatus(res) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      auto: this.proxyPool.getStatus(),
+      pool: this.config.getProxyManager().getStats(),
+      details: this.config.getProxyManager().getProxyDetails()
+    }));
+  }
+
+  async handleRefreshProxyPool(res) {
+    try {
+      if (!this.proxyPool.enabled) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'Auto-fetch is off — turn it on and save first' }));
+        return;
+      }
+
+      const status = await this.proxyPool.refresh('manual', true);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, auto: status, pool: this.config.getProxyManager().getStats() }));
+    } catch (error) {
+      this.sendError(res, 500, 'Failed to refresh proxy pool: ' + error.message);
+    }
+  }
+
   testProxyConnection(proxyUrl) {
     return new Promise((resolve) => {
       let agent;
@@ -1627,8 +1722,8 @@ class ProxyServer {
 
       if (key === 'PORT' || key === 'ADMIN_PASSWORD') {
         basicConfig[key] = value;
-      } else if (key.endsWith('_API_KEYS') || key.endsWith('_BASE_URL') || key.endsWith('_ACCESS_KEY') || key.endsWith('_DEFAULT_MODEL') || key.endsWith('_MODEL_HISTORY') || key.endsWith('_DISABLED')) {
-        const match = key.match(/^(.+?)_(.+?)_(API_KEYS|BASE_URL|ACCESS_KEY|DEFAULT_MODEL|MODEL_HISTORY|DISABLED)$/);
+      } else if (key.endsWith('_API_KEYS') || key.endsWith('_BASE_URL') || key.endsWith('_ACCESS_KEY') || key.endsWith('_DEFAULT_MODEL') || key.endsWith('_MODEL_HISTORY') || key.endsWith('_DISABLED') || key.endsWith('_PROXY')) {
+        const match = key.match(/^(.+?)_(.+?)_(API_KEYS|BASE_URL|ACCESS_KEY|DEFAULT_MODEL|MODEL_HISTORY|DISABLED|PROXY)$/);
         if (match) {
           const apiType = match[1];
           const provName = match[2];
@@ -1636,7 +1731,7 @@ class ProxyServer {
           const providerKey = `${apiType}_${provName}`;
 
           if (!providers[providerKey]) {
-            providers[providerKey] = { apiType, providerName: provName, keys: '', baseUrl: '', accessKey: '', defaultModel: '', modelHistory: '', disabled: '' };
+            providers[providerKey] = { apiType, providerName: provName, keys: '', baseUrl: '', accessKey: '', defaultModel: '', modelHistory: '', disabled: '', proxy: '' };
           }
 
           if (keyType === 'API_KEYS') providers[providerKey].keys = value;
@@ -1645,6 +1740,7 @@ class ProxyServer {
           else if (keyType === 'DEFAULT_MODEL') providers[providerKey].defaultModel = value;
           else if (keyType === 'MODEL_HISTORY') providers[providerKey].modelHistory = value;
           else if (keyType === 'DISABLED') providers[providerKey].disabled = value;
+          else if (keyType === 'PROXY') providers[providerKey].proxy = value;
         } else {
           otherConfig[key] = value;
         }
@@ -1673,6 +1769,7 @@ class ProxyServer {
           // Only persist a disabled flag for a provider that actually has keys —
           // an orphaned DISABLED flag would otherwise render as a keyless ghost provider.
           if (p.disabled === 'true' && p.keys) envContent += `${p.apiType}_${p.providerName}_DISABLED=true\n`;
+          if (p.proxy === 'true' && p.keys) envContent += `${p.apiType}_${p.providerName}_PROXY=true\n`;
           envContent += '\n';
         }
       }
@@ -1735,7 +1832,50 @@ class ProxyServer {
       console.log('[SERVER] Legacy OpenAI client disabled (no keys available)');
     }
     
+    // API_LOGS may have changed in the same save
+    this.applyLogSettings();
+
+    // loadConfig() builds a fresh ProxyManager, so the auto pool has to be
+    // re-attached or saving anything would silently wipe it
+    this.applyProxySettings();
+
     console.log(`[SERVER] ${this.config.getProviders().size} providers available for dynamic initialization`);
+  }
+
+  /**
+   * Point the pool's validation probes at a host we actually talk to, so a
+   * proxy is only kept if it can reach a real provider.
+   */
+  getProxyProbeTarget() {
+    for (const [, provider] of this.config.getProviders().entries()) {
+      if (provider.disabled || !provider.baseUrl) continue;
+      try {
+        return new URL(provider.baseUrl).hostname;
+      } catch (e) { /* try the next provider */ }
+    }
+    return 'api.openai.com';
+  }
+
+  /**
+   * Sync the proxy pool with the current settings and attach it to the live
+   * ProxyManager. Called at boot and after every config reload.
+   */
+  applyProxySettings() {
+    const manager = this.config.getProxyManager();
+
+    // When every proxy is benched, go and fetch a fresh batch. The pool applies
+    // its own minimum gap so a burst of failures can't hammer the source.
+    manager.onPoolExhausted = () => {
+      if (this.proxyPool.enabled) this.proxyPool.refresh('pool exhausted');
+    };
+
+    if (this.config.isProxyEnabled() && this.config.isProxyAutoFetchEnabled()) {
+      this.proxyPool.start();
+    } else {
+      this.proxyPool.stop();
+    }
+
+    manager.setAutoProxies(this.proxyPool.live);
   }
 
   async initTelegramBot() {
@@ -1771,12 +1911,17 @@ class ProxyServer {
       const keepAliveRaw = envVars.KEEP_ALIVE_MINUTES;
       const keepAliveMinutes = keepAliveRaw != null ? parseInt(keepAliveRaw) : 10;
 
+      const apiLogs = this.apiLogs.settings;
+
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
         botToken: envVars.TELEGRAM_BOT_TOKEN || '',
         allowedUsers: envVars.TELEGRAM_ALLOWED_USERS || '',
         defaultStatusCodes: envVars.DEFAULT_STATUS_CODES || '429',
         keepAliveMinutes,
+        apiLogsMode: apiLogs.mode,
+        apiLogsRetentionDays: apiLogs.retentionDays || 7,
+        apiLogsStoredEntries: this.apiLogs.isFileMode() ? this.apiLogs.storedCount : this.apiLogs.buffer.length,
         botRunning: this.telegramBot.polling
       }));
     } catch (error) {
@@ -1786,7 +1931,7 @@ class ProxyServer {
 
   async handleUpdateTelegramSettings(res, body) {
     try {
-      const { botToken, allowedUsers, defaultStatusCodes, keepAliveMinutes } = JSON.parse(body);
+      const { botToken, allowedUsers, defaultStatusCodes, keepAliveMinutes, apiLogsMode, apiLogsRetentionDays } = JSON.parse(body);
       const envPath = path.join(process.cwd(), '.env');
       const envContent = fs.readFileSync(envPath, 'utf8');
       const envVars = this.config.parseEnvFile(envContent);
@@ -1829,7 +1974,22 @@ class ProxyServer {
         }
       }
 
+      if (apiLogsMode !== undefined) {
+        // API_LOGS only chooses where request logs live - it can't switch logging off
+        if (apiLogsMode === 'file') {
+          const days = parseInt(apiLogsRetentionDays);
+          envVars.API_LOGS = `${days > 0 ? days : 7}D`;
+        } else {
+          envVars.API_LOGS = 'memory';
+        }
+      }
+
       this.writeEnvFile(envVars);
+
+      // Adopt the new log setting immediately. Parsing just this section avoids
+      // a full config reload, which would rebuild every provider needlessly.
+      this.config.parseApiLogsConfig(envVars);
+      this.applyLogSettings();
 
       // Restart bot with new settings
       const token = envVars.TELEGRAM_BOT_TOKEN;
@@ -1852,7 +2012,9 @@ class ProxyServer {
         success: true,
         botRunning: this.telegramBot.polling,
         defaultStatusCodes: envVars.DEFAULT_STATUS_CODES || '429',
-        keepAliveMinutes: kaMinutes
+        keepAliveMinutes: kaMinutes,
+        apiLogsMode: this.apiLogs.settings.mode,
+        apiLogsRetentionDays: this.apiLogs.settings.retentionDays || 7
       }));
     } catch (error) {
       this.sendError(res, 500, 'Failed to update telegram settings: ' + error.message);
@@ -1860,7 +2022,8 @@ class ProxyServer {
   }
 
   stop() {
-    this.flushLogs(true); // Sync write before shutdown
+    this.apiLogs.stop(); // Sync-flush the pending index lines before shutdown
+    this.proxyPool.stop();
     if (this.telegramBot) this.telegramBot.stop();
     if (this.server) {
       this.server.close();

@@ -966,7 +966,8 @@ class TelegramBot {
   }
 
   async showLogDetail(chatId, messageId, requestId) {
-    const responseData = this.server.responseStorage.get(requestId);
+    // Goes through the log store so persisted bodies are still readable after a restart
+    const responseData = this.server.apiLogs.getDetail(requestId);
     const logEntry = this.server.logBuffer.find(l => typeof l === 'object' && l.requestId === requestId);
 
     const lines = [`*Log Detail:* \`${requestId}\``];
