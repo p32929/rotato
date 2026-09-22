@@ -1367,6 +1367,89 @@
         </div>
     </div>
 
+    <!-- Models browser -->
+    <div id="modelsDialog" class="ds-overlay hidden fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-modal" onclick="if(event.target===this)closeModelsDialog()">
+        <div class="ds-dialog-panel bg-card border border-border rounded-xl w-full max-w-dialog h-[85vh] flex flex-col shadow-xl overflow-hidden">
+            <div class="flex items-center justify-between gap-3 px-4 py-3 border-b border-border flex-shrink-0">
+                <div class="min-w-0">
+                    <h3 id="mdTitle" class="text-base font-semibold text-foreground truncate">Models</h3>
+                    <p id="mdSubtitle" class="text-xs text-muted-foreground mt-0.5">&nbsp;</p>
+                </div>
+                <div class="flex items-center gap-1.5 flex-shrink-0">
+                    <button onclick="loadModelsList(true)" class="btn btn-secondary btn-sm" title="Refetch from provider">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h5M20 20v-5h-5M20 9A8 8 0 006.3 5.3M4 15a8 8 0 0013.7 3.7"/></svg>
+                        Refresh
+                    </button>
+                    <button onclick="closeModelsDialog()" class="text-muted-foreground hover:text-foreground transition-colors p-1" title="Close (Esc)">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                    </button>
+                </div>
+            </div>
+
+            <div class="flex items-center gap-2 px-4 py-2 border-b border-border flex-shrink-0 bg-muted/30 flex-wrap">
+                <input id="mdSearch" type="text" placeholder="Search models…" oninput="renderModelsList()"
+                       class="input-field flex-1 min-w-[180px] px-3 py-1.5 text-xs rounded font-mono">
+                <select id="mdOwner" onchange="renderModelsList()" class="input-field px-2 py-1.5 text-xs rounded">
+                    <option value="">All owners</option>
+                </select>
+                <select id="mdTier" onchange="renderModelsList()" class="input-field px-2 py-1.5 text-xs rounded">
+                    <option value="">Free &amp; paid</option>
+                </select>
+                <select id="mdCap" onchange="renderModelsList()" class="input-field px-2 py-1.5 text-xs rounded">
+                    <option value="">Any capability</option>
+                </select>
+                <select id="mdSort" onchange="renderModelsList()" class="input-field px-2 py-1.5 text-xs rounded">
+                    <option value="name-asc">Name A → Z</option>
+                    <option value="name-desc">Name Z → A</option>
+                    <option value="created-desc">Newest first</option>
+                    <option value="created-asc">Oldest first</option>
+                    <option value="context-desc">Largest context</option>
+                    <option value="output-desc">Largest max output</option>
+                    <option value="price-asc">Cheapest input</option>
+                    <option value="price-desc">Priciest input</option>
+                </select>
+                <span id="mdCount" class="text-xs text-muted-foreground whitespace-nowrap"></span>
+            </div>
+
+            <!-- Filter builder — fields and values come from the provider's own response -->
+            <div class="flex items-center gap-2 px-4 py-2 border-b border-border flex-shrink-0 bg-muted/30 flex-wrap">
+                <select id="mdFacetField" onchange="onFacetFieldChange()" class="input-field px-2 py-1.5 text-xs rounded max-w-[16rem]">
+                    <option value="">Filter by field…</option>
+                </select>
+                <select id="mdFacetValue" onchange="addFacetFilter()" class="input-field px-2 py-1.5 text-xs rounded max-w-[16rem]" disabled>
+                    <option value="">Pick a field first</option>
+                </select>
+                <div id="mdActiveFilters" class="flex items-center gap-1.5 flex-wrap"></div>
+            </div>
+
+            <div id="mdList" class="flex-1 min-h-0 overflow-auto ds-scroll p-2"></div>
+        </div>
+    </div>
+
+    <!-- Raw record for one model — the nested structures the list can't show as chips -->
+    <div id="modelJsonDialog" class="ds-overlay hidden fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-dropdown" onclick="if(event.target===this)closeModelJsonDialog()">
+        <div class="ds-dialog-panel bg-card border border-border rounded-xl w-full max-w-dialog h-[80vh] flex flex-col shadow-xl overflow-hidden">
+            <div class="flex items-center justify-between gap-3 px-4 py-3 border-b border-border flex-shrink-0">
+                <div class="min-w-0">
+                    <h3 id="mjTitle" class="text-base font-semibold text-foreground truncate font-mono">Model</h3>
+                    <p id="mjSubtitle" class="text-xs text-muted-foreground mt-0.5">&nbsp;</p>
+                </div>
+                <div class="flex items-center gap-1.5 flex-shrink-0">
+                    <button onclick="copyModelJson()" class="btn btn-secondary btn-sm" title="Copy the full record as JSON">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+                        Copy JSON
+                    </button>
+                    <button onclick="closeModelJsonDialog()" class="text-muted-foreground hover:text-foreground transition-colors p-1" title="Close (Esc)">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                    </button>
+                </div>
+            </div>
+            <div class="flex-1 min-h-0 overflow-auto ds-scroll p-3">
+                <pre id="mjBody" class="text-xs font-mono text-foreground whitespace-pre"></pre>
+            </div>
+        </div>
+    </div>
+
 
 
     <script>
@@ -2067,6 +2150,16 @@
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
                                     </svg>
                                     Rename
+                                </button>
+                                <button
+                                    onclick="openModelsDialog('${provider.apiType}', '${provider.name}')"
+                                    class="btn btn-secondary px-2 py-1 text-xs font-medium"
+                                    title="Browse models available from this provider"
+                                >
+                                    <svg class="w-3.5 h-3.5 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h10" />
+                                    </svg>
+                                    Models
                                 </button>
                                 <div class="relative inline-flex" id="curlBtnWrap_${provider.apiType}_${provider.name}">
                                     <button
@@ -4551,9 +4644,653 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             document.getElementById('responseDialog').classList.add('hidden');
         }
 
-        // Esc closes the response viewer
+        // ---- Models browser ----------------------------------------------------
+        // Lists a provider's models by calling its own /{provider}/models through the
+        // proxy, so key rotation, access keys and logging all apply as usual.
+        const modelsCache = new Map(); // provider -> normalized model list
+        let mdCtx = { apiType: '', provider: '', models: [] };
+
+        function openModelsDialog(apiType, providerName) {
+            mdCtx = { apiType, provider: providerName, models: [], showUnpricedBadge: false, facets: [], filters: [] };
+            document.getElementById('mdTitle').textContent = `${providerName} — models`;
+            document.getElementById('mdSearch').value = '';
+            document.getElementById('mdSort').value = 'name-asc';
+            document.getElementById('mdOwner').innerHTML = '<option value="">All owners</option>';
+            document.getElementById('mdCap').innerHTML = '<option value="">Any capability</option>';
+            document.getElementById('mdTier').innerHTML = '<option value="">Free &amp; paid</option>';
+            document.getElementById('mdFacetField').innerHTML = '<option value="">Filter by field…</option>';
+            document.getElementById('mdActiveFilters').innerHTML = '';
+            document.getElementById('modelsDialog').classList.remove('hidden');
+            loadModelsList(false);
+        }
+
+        function closeModelsDialog() {
+            document.getElementById('modelsDialog').classList.add('hidden');
+        }
+
+        // Every provider names the context limit differently, and some wrap it in an
+        // object (poe: context_window {context_length, max_output_tokens},
+        // tokenllm7: context_window {tokens, chars}) — so dig one level in.
+        // Some providers (nvdia, ollamacloud, gemini-openai) report no limit at all.
+        const CONTEXT_KEYS = [
+            'context_length', 'context_window', 'max_context_length', 'maxContextLength',
+            'inputTokenLimit', 'input_token_limit', 'max_input_tokens', 'context_size', 'context'
+        ];
+
+        function toTokenCount(value) {
+            if (typeof value === 'number') return Number.isFinite(value) && value > 0 ? value : null;
+            if (typeof value === 'string') return /^\d+$/.test(value.trim()) ? parseInt(value, 10) : null;
+            if (value && typeof value === 'object') {
+                for (const k of ['tokens', 'context_length', 'context_window', 'total', 'value', 'max']) {
+                    const n = toTokenCount(value[k]);
+                    if (n) return n;
+                }
+            }
+            return null;
+        }
+
+        function resolveContextLimit(m) {
+            for (const key of CONTEXT_KEYS) {
+                const n = toTokenCount(m[key]);
+                if (n) return n;
+            }
+            return null;
+        }
+
+        // Max output tokens — flat on groq/sambanova/gemini, nested on
+        // openrouter (top_provider) and poe (context_window).
+        const OUTPUT_KEYS = [
+            'max_completion_tokens', 'max_output_tokens', 'max_output_length',
+            'outputTokenLimit', 'output_token_limit', 'maxOutputTokens'
+        ];
+
+        function resolveMaxOutput(m) {
+            for (const key of OUTPUT_KEYS) {
+                const n = toTokenCount(m[key]);
+                if (n) return n;
+            }
+            for (const nest of ['top_provider', 'context_window', 'limits']) {
+                const obj = m[nest];
+                if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
+                    for (const key of OUTPUT_KEYS) {
+                        const n = toTokenCount(obj[key]);
+                        if (n) return n;
+                    }
+                }
+            }
+            return null;
+        }
+
+        // Pricing is quoted per-token as a string by most providers, but
+        // tokenllm7 quotes per 1M as a number — `unit` is what tells them apart.
+        function resolvePricing(m) {
+            const p = m.pricing;
+            if (!p || typeof p !== 'object' || Array.isArray(p)) return null;
+
+            const perMillion = /1\s*m|million/i.test(String(p.unit || '')) ? 1 : 1e6;
+            const num = (v) => {
+                const n = typeof v === 'string' ? parseFloat(v) : v;
+                return typeof n === 'number' && Number.isFinite(n) && n >= 0 ? n : null;
+            };
+            const scale = (v) => { const n = num(v); return n === null ? null : n * perMillion; };
+
+            const input = scale(p.prompt !== undefined ? p.prompt : p.input);
+            const output = scale(p.completion !== undefined ? p.completion : p.output);
+            if (input === null && output === null) return null;
+
+            // These are priced per call, not per token — scaling them turns
+            // $0.01/request into a bogus "$10,000/M". Everything else is per token,
+            // including cache variants like input_cache_write_1h.
+            const perCallExtras = ['request', 'web_search', 'image', 'audio', 'video', 'input_audio', 'search'];
+            const extras = [];
+            for (const [k, v] of Object.entries(p)) {
+                if (['prompt', 'completion', 'input', 'output', 'currency', 'unit'].includes(k)) continue;
+                const isPerToken = !perCallExtras.includes(k);
+                const n = isPerToken ? scale(v) : num(v);
+                if (n) extras.push({ key: k, amount: n, per: isPerToken ? 'perMillion' : 'each' });
+            }
+            return { input, output, extras, currency: p.currency || 'USD' };
+        }
+
+        function formatPrice(v) {
+            if (v === null || v === undefined) return null;
+            if (v === 0) return 'free';
+            if (v < 0.01) return '$' + v.toFixed(4);
+            if (v < 1) return '$' + v.toFixed(3);
+            return '$' + v.toFixed(2);
+        }
+
+        // free / paid / unknown. No provider flags free explicitly — it's a $0 price.
+        // "unknown" is its own bucket on purpose: poe omits pricing for ~200 of its
+        // models and mistral omits it entirely, and those are NOT free.
+        function resolvePriceTier(pricing) {
+            if (!pricing) return 'unknown';
+            const { input, output } = pricing;
+            if (input === null && output === null) return 'unknown';
+            return ((input || 0) === 0 && (output || 0) === 0) ? 'free' : 'paid';
+        }
+
+        function resolveModality(m) {
+            const arch = (m.architecture && typeof m.architecture === 'object') ? m.architecture : {};
+            const mods = (m.modalities && typeof m.modalities === 'object') ? m.modalities : {};
+            const input = m.input_modalities || arch.input_modalities || mods.input;
+            const output = m.output_modalities || arch.output_modalities || mods.output;
+            if (Array.isArray(input) && Array.isArray(output) && (input.length || output.length)) {
+                return `${input.join('+') || '?'} → ${output.join('+') || '?'}`;
+            }
+            if (typeof arch.modality === 'string') return arch.modality.replace(/->/g, ' → ');
+            return null;
+        }
+
+        // Providers spell the same capability half a dozen ways. Unmapped flags
+        // aren't dropped — they still show in the full field list below the strip.
+        const CAPABILITY_LABELS = {
+            tools: 'tools', tool_choice: 'tools', tools_calling: 'tools', function_calling: 'tools',
+            vision: 'vision', image: 'vision', ocr: 'ocr',
+            reasoning: 'reasoning', include_reasoning: 'reasoning', thinking: 'reasoning',
+            json_mode: 'json', response_format: 'json', structured_outputs: 'structured',
+            web_search: 'web search', audio: 'audio', audio_transcription: 'audio',
+            audio_speech: 'audio', completion_fim: 'fim', fine_tuning: 'fine-tune',
+            classification: 'classification', moderation: 'moderation', stream: 'streaming'
+        };
+
+        function resolveCapabilities(m) {
+            const found = new Set();
+            const add = (k) => {
+                const label = CAPABILITY_LABELS[String(k).toLowerCase()];
+                if (label) found.add(label);
+            };
+            const scan = (v) => {
+                if (Array.isArray(v)) v.forEach(x => { if (typeof x === 'string') add(x); });
+                else if (v && typeof v === 'object') Object.entries(v).forEach(([k, val]) => { if (val === true) add(k); });
+            };
+            ['supported_features', 'supported_parameters', 'capabilities', 'features'].forEach(k => scan(m[k]));
+            Object.entries(m).forEach(([k, v]) => { if (v === true) add(k); }); // top-level booleans
+            return [...found].sort();
+        }
+
+        // Keep the provider's whole model object — every field is rendered.
+        // The named fields are only what sorting and filtering need.
+        function normalizeModels(data) {
+            const raw = data.data || data.models || (Array.isArray(data) ? data : []);
+            return raw.map(m => {
+                const id = String(m.id || m.name || '').replace(/^models\//, '');
+                const pricing = resolvePricing(m);
+                return {
+                    id,
+                    owner: m.owned_by || m.ownedBy || (id.includes('/') ? id.split('/')[0] : ''),
+                    created: m.created || m.created_at || null,
+                    context: resolveContextLimit(m),
+                    maxOutput: resolveMaxOutput(m),
+                    pricing,
+                    tier: resolvePriceTier(pricing),
+                    modality: resolveModality(m),
+                    capabilities: resolveCapabilities(m),
+                    flat: flattenForFacets(m),
+                    raw: m
+                };
+            }).filter(m => m.id);
+        }
+
+        // Providers disagree on casing: context_length / inputTokenLimit / maxOutputTokens
+        function humanizeFieldName(key) {
+            return key
+                .replace(/[_-]+/g, ' ')
+                .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+                .toLowerCase();
+        }
+
+        function formatFieldValue(key, value) {
+            if (typeof value === 'boolean') return value ? 'yes' : 'no';
+            if (typeof value === 'number') {
+                // Unix timestamps arrive in seconds (OpenAI) or milliseconds
+                if (/creat|updat|modif|time|date/i.test(key) && value > 1e9) {
+                    const ms = value > 1e12 ? value : value * 1000;
+                    return new Date(ms).toISOString().replace('T', ' ').slice(0, 16);
+                }
+                return value >= 1000 ? value.toLocaleString() : String(value);
+            }
+            return String(value);
+        }
+
+        // The facts you pick a model on, pulled to the top in a fixed order so
+        // rows line up and can be compared by eye.
+        function renderModelStats(m) {
+            const chip = (k, v) => `<span class="chip"><span class="chip-k">${escapeHtml(k)}</span><span class="chip-v">${escapeHtml(v)}</span></span>`;
+            const stats = [];
+
+            if (m.pricing) {
+                const inPrice = formatPrice(m.pricing.input);
+                const outPrice = formatPrice(m.pricing.output);
+                const unit = m.pricing.currency === 'USD' ? '/M' : ` ${m.pricing.currency}/M`;
+                if (inPrice) stats.push(chip('in', inPrice === 'free' ? 'free' : inPrice + unit));
+                if (outPrice) stats.push(chip('out', outPrice === 'free' ? 'free' : outPrice + unit));
+                for (const e of m.pricing.extras) {
+                    stats.push(chip(humanizeFieldName(e.key), formatPrice(e.amount) + (e.per === 'perMillion' ? unit : ' each')));
+                }
+            }
+            if (m.maxOutput) stats.push(chip('max output', m.maxOutput.toLocaleString() + ' tokens'));
+            if (m.modality) stats.push(chip('modality', m.modality));
+            if (m.owner) stats.push(chip('owner', m.owner));
+
+            const caps = m.capabilities.map(c => `<span class="badge badge-success">${escapeHtml(c)}</span>`).join('');
+
+            if (!stats.length && !caps) return '';
+            return `<div class="flex items-center gap-1.5 flex-wrap mt-2">${stats.join('')}${caps}</div>`;
+        }
+
+        // Already shown by the stat strip above — don't print them twice.
+        const STAT_STRIP_KEYS = new Set([
+            ...CONTEXT_KEYS, ...OUTPUT_KEYS, 'pricing',
+            'input_modalities', 'output_modalities', 'modalities', 'owned_by', 'ownedBy'
+        ]);
+
+        // ---- Dynamic facets -----------------------------------------------------
+        // Filterable fields are discovered from the response itself, so each
+        // provider offers exactly what it actually returns.
+        const MAX_FACET_VALUES = 30; // beyond this it's free text (descriptions, slugs), not a filter
+
+        // Flat map of "key" / "parent.child" → scalar or array of scalars.
+        function flattenForFacets(raw) {
+            const flat = {};
+            const put = (key, value) => {
+                if (value === null || value === undefined || value === '') return;
+                if (Array.isArray(value)) {
+                    if (value.length && value.every(v => v === null || typeof v !== 'object')) flat[key] = value;
+                    return;
+                }
+                if (typeof value === 'object') return;
+                flat[key] = value;
+            };
+            for (const [key, value] of Object.entries(raw)) {
+                if (key === 'id' || key === 'name') continue;
+                if (value && typeof value === 'object' && !Array.isArray(value)) {
+                    for (const [subKey, subValue] of Object.entries(value)) put(`${key}.${subKey}`, subValue);
+                } else {
+                    put(key, value);
+                }
+            }
+            return flat;
+        }
+
+        function buildFacets(models) {
+            const fields = new Map(); // key → { values: Map(value → count), models: count }
+
+            models.forEach(m => {
+                for (const [key, value] of Object.entries(m.flat)) {
+                    if (!fields.has(key)) fields.set(key, { values: new Map(), models: 0 });
+                    const field = fields.get(key);
+                    field.models++;
+                    const seen = Array.isArray(value) ? [...new Set(value.map(String))] : [String(value)];
+                    seen.forEach(v => field.values.set(v, (field.values.get(v) || 0) + 1));
+                }
+            });
+
+            const facets = [];
+            for (const [key, field] of fields) {
+                const distinct = field.values.size;
+                if (distinct < 2) continue;                 // nothing to choose between
+                if (distinct > MAX_FACET_VALUES) continue;  // free text, not a facet
+                if (distinct >= field.models) continue;     // unique per model (slugs, urls)
+                facets.push({
+                    key,
+                    values: [...field.values.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+                });
+            }
+            return facets.sort((a, b) => a.key.localeCompare(b.key));
+        }
+
+        function facetLabel(key) {
+            return key.split('.').map(humanizeFieldName).join(' · ');
+        }
+
+        function facetValueLabel(value) {
+            if (value === 'true') return 'yes';
+            if (value === 'false') return 'no';
+            return value;
+        }
+
+        // Values of the same field OR together; different fields AND together.
+        function matchesFacets(model, activeFilters) {
+            const byField = new Map();
+            activeFilters.forEach(f => {
+                if (!byField.has(f.key)) byField.set(f.key, new Set());
+                byField.get(f.key).add(f.value);
+            });
+            for (const [key, wanted] of byField) {
+                const value = model.flat[key];
+                if (value === undefined) return false;
+                const have = Array.isArray(value) ? value.map(String) : [String(value)];
+                if (!have.some(v => wanted.has(v))) return false;
+            }
+            return true;
+        }
+
+        const DESCRIPTION_KEYS = ['description', 'displayName', 'display_name', 'summary'];
+
+        // A value belongs on the list only if it maps to one chip: a scalar, or a
+        // flat list of scalars. Anything structural (objects with objects inside,
+        // arrays of objects) goes to the Details dialog instead.
+        function isChippable(value) {
+            if (value === null || value === undefined || value === '') return false;
+            if (Array.isArray(value)) return value.length > 0 && value.every(v => v === null || typeof v !== 'object');
+            return typeof value !== 'object';
+        }
+
+        function fieldChip(label, key, value) {
+            const text = Array.isArray(value) ? value.join(', ') : formatFieldValue(key, value);
+            return `<span class="chip"><span class="chip-k">${escapeHtml(label)}</span><span class="chip-v">${escapeHtml(text)}</span></span>`;
+        }
+
+        // Remaining fields as chips only — no JSON on the list. Nested objects are
+        // flattened one level so their scalars still show (architecture → tokenizer,
+        // top provider → is moderated); whatever won't flatten is counted for Details.
+        function renderModelFields(m) {
+            const chips = [];
+            let description = '';
+            let nested = 0;
+
+            for (const [key, value] of Object.entries(m.raw)) {
+                if (value === null || value === undefined || value === '') continue;
+                if (key === 'id' || key === 'name') continue; // already the row title
+                if (STAT_STRIP_KEYS.has(key)) continue;
+
+                if (DESCRIPTION_KEYS.includes(key) && typeof value === 'string') {
+                    if (value.length > description.length) description = value;
+                    continue;
+                }
+
+                if (isChippable(value)) {
+                    chips.push(fieldChip(humanizeFieldName(key), key, value));
+                } else if (!Array.isArray(value) && typeof value === 'object') {
+                    for (const [subKey, subValue] of Object.entries(value)) {
+                        if (STAT_STRIP_KEYS.has(subKey)) continue; // e.g. top_provider.context_length
+                        if (isChippable(subValue)) {
+                            chips.push(fieldChip(`${humanizeFieldName(key)} ${humanizeFieldName(subKey)}`, subKey, subValue));
+                        } else if (subValue !== null && subValue !== undefined && subValue !== '') {
+                            nested++;
+                        }
+                    }
+                } else {
+                    nested++; // array of objects (benchmarks, parameters, …)
+                }
+            }
+
+            m._nestedCount = nested;
+
+            const chipRow = chips.length
+                ? `<div class="flex items-center gap-1.5 flex-wrap mt-2">${chips.join('')}</div>` : '';
+            const desc = description
+                ? `<div class="text-xs text-muted-foreground mt-2 leading-relaxed">${escapeHtml(description)}</div>` : '';
+            return chipRow + desc;
+        }
+
+        async function loadModelsList(force) {
+            const { apiType, provider } = mdCtx;
+            const list = document.getElementById('mdList');
+            const subtitle = document.getElementById('mdSubtitle');
+
+            if (!force && modelsCache.has(provider)) {
+                mdCtx.models = modelsCache.get(provider);
+                subtitle.textContent = 'cached — hit Refresh to refetch';
+                populateModelOwners();
+                populateFacetFields();
+                renderActiveFilters();
+                renderModelsList();
+                return;
+            }
+
+            list.innerHTML = '<div class="p-8 text-center text-sm text-muted-foreground">Loading models…</div>';
+            document.getElementById('mdCount').textContent = '';
+            subtitle.textContent = `GET /${provider}/models`;
+
+            try {
+                const accessKey = envVars[`${apiType.toUpperCase()}_${provider.toUpperCase()}_ACCESS_KEY`];
+                let auth = `[STATUS_CODES:${defaultStatusCodes}]`;
+                if (accessKey) auth += `[ACCESS_KEY:${accessKey}]`;
+                const headers = apiType === 'gemini'
+                    ? { 'x-goog-api-key': auth }
+                    : { 'Authorization': `Bearer ${auth}` };
+
+                const res = await fetch(`/${provider}/models`, { headers });
+                const text = await res.text();
+                let data = null;
+                try { data = JSON.parse(text); } catch (e) { /* non-JSON below */ }
+
+                if (!res.ok) {
+                    throw new Error((data && data.error && (data.error.message || data.error)) || text.slice(0, 300) || `HTTP ${res.status}`);
+                }
+                if (!data) throw new Error('Provider returned a non-JSON response');
+
+                mdCtx.models = normalizeModels(data);
+                modelsCache.set(provider, mdCtx.models);
+
+                // Spell out what the provider did and didn't tell us, so a missing
+                // badge reads as "not reported" rather than "panel is broken".
+                const total = mdCtx.models.length;
+                const tiers = countPriceTiers(mdCtx.models);
+                const withContext = mdCtx.models.filter(m => m.context).length;
+                const parts = [`${total} models`];
+
+                if (tiers.free) parts.push(`${tiers.free} free`);
+                if (tiers.paid) parts.push(`${tiers.paid} paid`);
+                if (tiers.unknown === total && total > 0) parts.push('no pricing data');
+                else if (tiers.unknown) parts.push(`${tiers.unknown} unpriced`);
+
+                if (total > 0 && withContext === 0) parts.push('no context limits');
+                else if (withContext < total) parts.push(`${withContext} with context`);
+
+                subtitle.textContent = `GET /${provider}/models — ${parts.join(' · ')}`;
+                populateModelOwners();
+                populateFacetFields();
+                renderActiveFilters();
+                renderModelsList();
+            } catch (error) {
+                mdCtx.models = [];
+                subtitle.textContent = `GET /${provider}/models`;
+                list.innerHTML = `<div class="p-8 text-center text-sm text-destructive break-words">Failed to load models<br><span class="text-xs text-muted-foreground font-mono">${escapeHtml(error.message)}</span></div>`;
+            }
+        }
+
+        // Both filters are built from the data, and hide themselves when this
+        // provider reports nothing to filter on.
+        function populateModelOwners() {
+            const fill = (id, allLabel, values) => {
+                const sel = document.getElementById(id);
+                sel.innerHTML = `<option value="">${allLabel}</option>` +
+                    values.map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('');
+                sel.style.display = values.length ? '' : 'none';
+            };
+            const owners = [...new Set(mdCtx.models.map(m => m.owner).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+            const caps = [...new Set(mdCtx.models.flatMap(m => m.capabilities))].sort((a, b) => a.localeCompare(b));
+            fill('mdOwner', 'All owners', owners);
+            fill('mdCap', 'Any capability', caps);
+
+            // Only offer the buckets this provider actually has
+            const counts = countPriceTiers(mdCtx.models);
+            const tierSel = document.getElementById('mdTier');
+            const tierOpts = [
+                counts.free ? `<option value="free">Free only (${counts.free})</option>` : '',
+                counts.paid ? `<option value="paid">Paid only (${counts.paid})</option>` : '',
+                counts.unknown ? `<option value="unknown">No price info (${counts.unknown})</option>` : ''
+            ].filter(Boolean);
+            tierSel.innerHTML = '<option value="">Free &amp; paid</option>' + tierOpts.join('');
+            tierSel.style.display = tierOpts.length > 1 ? '' : 'none';
+
+            // Flagging every row "no price info" is noise when the provider prices
+            // nothing at all — the header already says so.
+            mdCtx.showUnpricedBadge = counts.unknown > 0 && (counts.free + counts.paid) > 0;
+        }
+
+        function populateFacetFields() {
+            mdCtx.facets = buildFacets(mdCtx.models);
+            const sel = document.getElementById('mdFacetField');
+            sel.innerHTML = '<option value="">Filter by field…</option>' +
+                mdCtx.facets.map(f =>
+                    `<option value="${escapeHtml(f.key)}">${escapeHtml(facetLabel(f.key))} (${f.values.length})</option>`
+                ).join('');
+            sel.style.display = mdCtx.facets.length ? '' : 'none';
+            document.getElementById('mdFacetValue').style.display = mdCtx.facets.length ? '' : 'none';
+            onFacetFieldChange();
+        }
+
+        function onFacetFieldChange() {
+            const key = document.getElementById('mdFacetField').value;
+            const valueSel = document.getElementById('mdFacetValue');
+            const facet = (mdCtx.facets || []).find(f => f.key === key);
+
+            if (!facet) {
+                valueSel.innerHTML = '<option value="">Pick a field first</option>';
+                valueSel.disabled = true;
+                return;
+            }
+            valueSel.disabled = false;
+            valueSel.innerHTML = '<option value="">Any value…</option>' +
+                facet.values.map(([value, count]) =>
+                    `<option value="${escapeHtml(value)}">${escapeHtml(facetValueLabel(value))} (${count})</option>`
+                ).join('');
+        }
+
+        function addFacetFilter() {
+            const key = document.getElementById('mdFacetField').value;
+            const value = document.getElementById('mdFacetValue').value;
+            if (!key || !value) return;
+            if (!mdCtx.filters.some(f => f.key === key && f.value === value)) {
+                mdCtx.filters.push({ key, value });
+            }
+            document.getElementById('mdFacetValue').value = '';
+            renderActiveFilters();
+            renderModelsList();
+        }
+
+        function removeFacetFilter(index) {
+            mdCtx.filters.splice(index, 1);
+            renderActiveFilters();
+            renderModelsList();
+        }
+
+        function clearFacetFilters() {
+            mdCtx.filters = [];
+            renderActiveFilters();
+            renderModelsList();
+        }
+
+        function renderActiveFilters() {
+            const box = document.getElementById('mdActiveFilters');
+            if (!mdCtx.filters.length) { box.innerHTML = ''; return; }
+            box.innerHTML = mdCtx.filters.map((f, i) => `
+                <span class="chip">
+                    <span class="chip-k">${escapeHtml(facetLabel(f.key))}</span>
+                    <span class="chip-v">${escapeHtml(facetValueLabel(f.value))}</span>
+                    <button onclick="removeFacetFilter(${i})" class="ml-1 text-muted-foreground hover:text-foreground" title="Remove filter">✕</button>
+                </span>`).join('') +
+                `<button onclick="clearFacetFilters()" class="text-2xs text-muted-foreground hover:text-foreground underline ml-1">clear all</button>`;
+        }
+
+        function countPriceTiers(models) {
+            return models.reduce((acc, m) => { acc[m.tier]++; return acc; }, { free: 0, paid: 0, unknown: 0 });
+        }
+
+        function renderModelsList() {
+            const q = document.getElementById('mdSearch').value.trim().toLowerCase();
+            const owner = document.getElementById('mdOwner').value;
+            const cap = document.getElementById('mdCap').value;
+            const tier = document.getElementById('mdTier').value;
+            const sort = document.getElementById('mdSort').value;
+            const currentDefault = envVars[`${mdCtx.apiType.toUpperCase()}_${mdCtx.provider.toUpperCase()}_DEFAULT_MODEL`] || '';
+
+            // Search covers every field, not just the name
+            let rows = mdCtx.models.filter(m =>
+                (!owner || m.owner === owner) &&
+                (!tier || m.tier === tier) &&
+                (!cap || m.capabilities.includes(cap)) &&
+                matchesFacets(m, mdCtx.filters) &&
+                (!q || JSON.stringify(m.raw).toLowerCase().includes(q))
+            );
+
+            // Models missing the sorted-on value sort last, never first
+            const price = (m) => (m.pricing && m.pricing.input !== null) ? m.pricing.input : null;
+            const cmp = {
+                'name-asc': (a, b) => a.id.localeCompare(b.id),
+                'name-desc': (a, b) => b.id.localeCompare(a.id),
+                'created-desc': (a, b) => (b.created || 0) - (a.created || 0),
+                'created-asc': (a, b) => (a.created || 0) - (b.created || 0),
+                'context-desc': (a, b) => (b.context || 0) - (a.context || 0),
+                'output-desc': (a, b) => (b.maxOutput || 0) - (a.maxOutput || 0),
+                'price-asc': (a, b) => (price(a) === null ? Infinity : price(a)) - (price(b) === null ? Infinity : price(b)),
+                'price-desc': (a, b) => (price(b) === null ? -Infinity : price(b)) - (price(a) === null ? -Infinity : price(a))
+            }[sort];
+            rows = rows.slice().sort(cmp);
+
+            document.getElementById('mdCount').textContent = `${rows.length} / ${mdCtx.models.length}`;
+
+            const list = document.getElementById('mdList');
+            if (rows.length === 0) {
+                list.innerHTML = '<div class="p-8 text-center text-sm text-muted-foreground">No models match</div>';
+                return;
+            }
+
+            list.innerHTML = rows.map(m => {
+                const isDefault = m.id === currentDefault;
+                const safeId = escapeHtml(m.id);
+                const jsId = m.id.replace(/'/g, "\\'");
+                const fields = renderModelFields(m); // also sets m._nestedCount
+                return `
+                    <div class="key-row">
+                        <div class="flex items-start justify-between gap-3">
+                            <div class="min-w-0 font-mono text-xs text-foreground break-all pt-1">
+                                ${safeId}
+                                ${m.tier === 'free' ? '<span class="badge badge-success ml-1.5 font-sans align-middle" title="Provider prices this model at $0">free</span>' : ''}
+                                ${(m.tier === 'unknown' && mdCtx.showUnpricedBadge) ? '<span class="badge badge-warning ml-1.5 font-sans align-middle" title="This provider returned no pricing for this model — it is not necessarily free">no price info</span>' : ''}
+                                ${m.context ? `<span class="badge badge-neutral ml-1.5 font-sans align-middle" title="Context limit">${m.context.toLocaleString()} ctx</span>` : ''}
+                                ${isDefault ? '<span class="badge badge-info ml-1.5 font-sans align-middle">default</span>' : ''}
+                            </div>
+                            <div class="flex items-center gap-1.5 flex-shrink-0">
+                                <button onclick="showModelJson('${jsId}')" class="btn btn-secondary btn-sm" title="Full record from the provider">Details</button>
+                                <button onclick="copyToClipboard('${jsId}', 'Model name copied')" class="btn btn-secondary btn-sm" title="Copy model name">Copy</button>
+                                <button onclick="setModelAsDefault('${jsId}')" class="btn btn-secondary btn-sm" ${isDefault ? 'disabled style="opacity:.4;pointer-events:none"' : ''} title="Set as this provider's default model">Set default</button>
+                            </div>
+                        </div>
+                        ${renderModelStats(m)}
+                        ${fields}
+                    </div>`;
+            }).join('');
+        }
+
+        function showModelJson(modelId) {
+            const model = mdCtx.models.find(m => m.id === modelId);
+            if (!model) return;
+            document.getElementById('mjTitle').textContent = model.id;
+            document.getElementById('mjSubtitle').textContent =
+                `Full record as returned by ${mdCtx.provider} — ${Object.keys(model.raw).length} fields`;
+            document.getElementById('mjBody').textContent = JSON.stringify(model.raw, null, 2);
+            document.getElementById('modelJsonDialog').classList.remove('hidden');
+        }
+
+        function closeModelJsonDialog() {
+            document.getElementById('modelJsonDialog').classList.add('hidden');
+        }
+
+        function copyModelJson() {
+            copyToClipboard(document.getElementById('mjBody').textContent, 'Model JSON copied');
+        }
+
+        async function setModelAsDefault(model) {
+            const input = document.getElementById(`defaultModel_${mdCtx.apiType}_${mdCtx.provider}`);
+            if (!input) { showErrorToast('Provider row not found — close and reopen the dialog'); return; }
+            input.value = model;
+            await saveDefaultModel(mdCtx.apiType, mdCtx.provider);
+            renderModelsList();
+        }
+
+        // Esc closes the topmost open dialog
         document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape' && !document.getElementById('responseDialog').classList.contains('hidden')) {
+            if (e.key !== 'Escape') return;
+            if (!document.getElementById('modelJsonDialog').classList.contains('hidden')) {
+                closeModelJsonDialog();
+            } else if (!document.getElementById('modelsDialog').classList.contains('hidden')) {
+                closeModelsDialog();
+            } else if (!document.getElementById('responseDialog').classList.contains('hidden')) {
                 closeResponseDialog();
             }
         });
