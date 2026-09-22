@@ -1482,23 +1482,18 @@
                 <input id="mdSearch" type="text" placeholder="Search models…" oninput="renderModelsList()"
                        class="input-field flex-1 min-w-[180px] px-3 py-1.5 text-xs rounded font-mono">
                 <select id="mdOwner" onchange="renderModelsList()" class="input-field px-2 py-1.5 text-xs rounded">
-                    <option value="">All owners</option>
+                    <option value="">Any owner</option>
                 </select>
                 <select id="mdTier" onchange="renderModelsList()" class="input-field px-2 py-1.5 text-xs rounded">
-                    <option value="">Free &amp; paid</option>
+                    <option value="">Any price</option>
                 </select>
                 <select id="mdCap" onchange="renderModelsList()" class="input-field px-2 py-1.5 text-xs rounded">
-                    <option value="">Any capability</option>
+                    <option value="">Any feature</option>
                 </select>
                 <select id="mdSort" onchange="renderModelsList()" class="input-field px-2 py-1.5 text-xs rounded">
-                    <option value="name-asc">Name A → Z</option>
-                    <option value="name-desc">Name Z → A</option>
-                    <option value="created-desc">Newest first</option>
-                    <option value="created-asc">Oldest first</option>
-                    <option value="context-desc">Largest context</option>
-                    <option value="output-desc">Largest max output</option>
-                    <option value="price-asc">Cheapest input</option>
-                    <option value="price-desc">Priciest input</option>
+                    <!-- The rest are added once we see what the provider returned -->
+                    <option value="name-asc">Name (A–Z)</option>
+                    <option value="name-desc">Name (Z–A)</option>
                 </select>
                 <span id="mdCount" class="text-xs text-muted-foreground whitespace-nowrap"></span>
             </div>
@@ -1506,10 +1501,10 @@
             <!-- Filter builder — fields and values come from the provider's own response -->
             <div class="flex items-center gap-2 px-4 py-2 border-b border-border flex-shrink-0 bg-muted/30 flex-wrap">
                 <select id="mdFacetField" onchange="onFacetFieldChange()" class="input-field px-2 py-1.5 text-xs rounded max-w-[16rem]">
-                    <option value="">Filter by field…</option>
+                    <option value="">More filters…</option>
                 </select>
                 <select id="mdFacetValue" onchange="addFacetFilter()" class="input-field px-2 py-1.5 text-xs rounded max-w-[16rem]" disabled>
-                    <option value="">Pick a field first</option>
+                    <option value="">Pick something above first</option>
                 </select>
                 <div id="mdActiveFilters" class="flex items-center gap-1.5 flex-wrap"></div>
             </div>
@@ -4937,11 +4932,14 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             mdCtx = { apiType, provider: providerName, models: [], showUnpricedBadge: false, facets: [], filters: [] };
             document.getElementById('mdTitle').textContent = `${providerName} — models`;
             document.getElementById('mdSearch').value = '';
-            document.getElementById('mdSort').value = 'name-asc';
-            document.getElementById('mdOwner').innerHTML = '<option value="">All owners</option>';
-            document.getElementById('mdCap').innerHTML = '<option value="">Any capability</option>';
-            document.getElementById('mdTier').innerHTML = '<option value="">Free &amp; paid</option>';
-            document.getElementById('mdFacetField').innerHTML = '<option value="">Filter by field…</option>';
+            // Back to the two sorts every provider supports; the rest are added
+            // once we know what this one actually returned.
+            document.getElementById('mdSort').innerHTML =
+                '<option value="name-asc">Name (A–Z)</option><option value="name-desc">Name (Z–A)</option>';
+            document.getElementById('mdOwner').innerHTML = '<option value="">Any owner</option>';
+            document.getElementById('mdCap').innerHTML = '<option value="">Any feature</option>';
+            document.getElementById('mdTier').innerHTML = '<option value="">Any price</option>';
+            document.getElementById('mdFacetField').innerHTML = '<option value="">More filters…</option>';
             document.getElementById('mdActiveFilters').innerHTML = '';
             document.getElementById('modelsDialog').classList.remove('hidden');
             loadModelsList(false);
@@ -5123,12 +5121,83 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 .toLowerCase();
         }
 
+        // Plain English for the field names providers ship. Looked up by the full
+        // path first, then by the last segment, so "pricing.image" and
+        // "capabilities.image" don't collapse into the same label.
+        const FIELD_LABELS = {
+            // identity
+            'owned_by': 'Owner', 'ownedBy': 'Owner', 'owner': 'Owner',
+            'object': 'Kind', 'type': 'Kind', 'model_type': 'Kind', 'root': 'Based on',
+            'created': 'Added', 'created_at': 'Added', 'version': 'Version',
+            'tier': 'Tier', 'active': 'Active', 'aliases': 'Other names',
+            'canonical_slug': 'Full name', 'hugging_face_id': 'Hugging Face',
+            'billing_model_name': 'Billed as', 'knowledge_cutoff': 'Knows up to',
+            'expiration_date': 'Retires on', 'deprecation': 'Deprecated on',
+            // size
+            'context_length': 'Context limit', 'context_window': 'Context limit',
+            'max_context_length': 'Context limit', 'inputTokenLimit': 'Context limit',
+            'max_completion_tokens': 'Max reply', 'max_output_tokens': 'Max reply',
+            'max_output_length': 'Max reply', 'outputTokenLimit': 'Max reply',
+            // money
+            'pricing.prompt': 'Input price', 'pricing.input': 'Input price',
+            'pricing.completion': 'Reply price', 'pricing.output': 'Reply price',
+            'pricing.input_cache_read': 'Cached input price',
+            'pricing.input_cache_write': 'Cache write price',
+            'pricing.input_cache_write_1h': 'Cache write price (1h)',
+            'pricing.web_search': 'Web search price', 'pricing.request': 'Per-request price',
+            'pricing.image': 'Per-image price', 'pricing.audio': 'Audio price',
+            'pricing.internal_reasoning': 'Thinking price', 'pricing.currency': 'Currency',
+            'pricing.unit': 'Priced per', 'pricing_mode': 'Priced by',
+            // what it handles
+            'input_modalities': 'Accepts', 'output_modalities': 'Returns',
+            'architecture.input_modalities': 'Accepts', 'architecture.output_modalities': 'Returns',
+            'modalities.input': 'Accepts', 'modalities.output': 'Returns',
+            'architecture.modality': 'Accepts / returns', 'modality': 'Accepts / returns',
+            'architecture.tokenizer': 'Tokenizer', 'architecture.instruct_type': 'Prompt format',
+            // abilities
+            'supported_features': 'Features', 'supported_parameters': 'Options',
+            'supported_sampling_parameters': 'Sampling options',
+            'supportedGenerationMethods': 'Works with', 'supported_endpoints': 'Works with',
+            'schema_endpoints': 'Works with',
+            'reasoning.mandatory': 'Thinking always on', 'reasoning.required': 'Thinking always on',
+            'reasoning.default_enabled': 'Thinking on by default',
+            'reasoning.supported_efforts': 'Thinking levels', 'reasoning.default_effort': 'Default thinking level',
+            'reasoning.supports_reasoning_effort': 'Thinking level can be set',
+            'tools_calling': 'Tool calling', 'function_calling': 'Tool calling',
+            'json_mode': 'JSON mode', 'stream': 'Streaming', 'thinking': 'Thinking',
+            'ocr': 'OCR', 'vision': 'Vision', 'completion_chat': 'Chat',
+            'completion_fim': 'Code fill-in', 'fine_tuning': 'Fine-tuning',
+            'audio_speech': 'Text to speech', 'audio_transcription': 'Transcription',
+            'audio_transcription_realtime': 'Live transcription',
+            'classification': 'Classification', 'moderation': 'Moderation',
+            'top_provider.is_moderated': 'Content filtered',
+            'top_provider.context_length': 'Context limit',
+            'top_provider.max_completion_tokens': 'Max reply',
+            // misc
+            'description': 'About', 'displayName': 'Display name', 'display_name': 'Display name',
+            'metadata.display_name': 'Display name', 'metadata.url': 'Page',
+            'links.details': 'Details URL', 'usage_based_only': 'Usage-based only',
+            'availability_last_hour_percent': 'Uptime (last hour)',
+            'default_model_temperature': 'Default temperature'
+        };
+
+        function prettyLabel(key) {
+            if (FIELD_LABELS[key]) return FIELD_LABELS[key];
+            const leaf = key.split('.').pop();
+            if (FIELD_LABELS[leaf]) return FIELD_LABELS[leaf];
+            // "capabilities.audio_speech" reads fine as just "audio speech"
+            const readable = humanizeFieldName(leaf);
+            return readable.charAt(0).toUpperCase() + readable.slice(1);
+        }
+
         function formatFieldValue(key, value) {
             if (typeof value === 'boolean') return value ? 'yes' : 'no';
             if (typeof value === 'number') {
-                // Unix timestamps arrive in seconds (OpenAI) or milliseconds
-                if (/creat|updat|modif|time|date/i.test(key) && value > 1e9) {
-                    const ms = value > 1e12 ? value : value * 1000;
+                // Unix timestamps arrive in seconds or milliseconds. nvdia stamps
+                // every model 735790403 (1993), so don't require a recent date —
+                // a date-ish key is enough to know it's not a quantity.
+                if (/creat|updat|modif/i.test(key) && value > 1e8) {
+                    const ms = value > 1e11 ? value : value * 1000;
                     return new Date(ms).toISOString().replace('T', ' ').slice(0, 16);
                 }
                 return value >= 1000 ? value.toLocaleString() : String(value);
@@ -5146,15 +5215,15 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 const inPrice = formatPrice(m.pricing.input);
                 const outPrice = formatPrice(m.pricing.output);
                 const unit = m.pricing.currency === 'USD' ? '/M' : ` ${m.pricing.currency}/M`;
-                if (inPrice) stats.push(chip('in', inPrice === 'free' ? 'free' : inPrice + unit));
-                if (outPrice) stats.push(chip('out', outPrice === 'free' ? 'free' : outPrice + unit));
+                if (inPrice) stats.push(chip('Input price', inPrice === 'free' ? 'free' : inPrice + unit));
+                if (outPrice) stats.push(chip('Reply price', outPrice === 'free' ? 'free' : outPrice + unit));
                 for (const e of m.pricing.extras) {
-                    stats.push(chip(humanizeFieldName(e.key), formatPrice(e.amount) + (e.per === 'perMillion' ? unit : ' each')));
+                    stats.push(chip(prettyLabel('pricing.' + e.key), formatPrice(e.amount) + (e.per === 'perMillion' ? unit : ' each')));
                 }
             }
-            if (m.maxOutput) stats.push(chip('max output', m.maxOutput.toLocaleString() + ' tokens'));
-            if (m.modality) stats.push(chip('modality', m.modality));
-            if (m.owner) stats.push(chip('owner', m.owner));
+            if (m.maxOutput) stats.push(chip('Max reply', m.maxOutput.toLocaleString() + ' tokens'));
+            if (m.modality) stats.push(chip('Accepts / returns', m.modality));
+            if (m.owner) stats.push(chip('Owner', m.owner));
 
             const caps = m.capabilities.map(c => `<span class="badge badge-success">${escapeHtml(c)}</span>`).join('');
 
@@ -5215,16 +5284,30 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 if (distinct < 2) continue;                 // nothing to choose between
                 if (distinct > MAX_FACET_VALUES) continue;  // free text, not a facet
                 if (distinct >= field.models) continue;     // unique per model (slugs, urls)
+                // Near-unique values group nothing either (gemini's displayName: 22
+                // across 23 models). The floor keeps small providers usable.
+                if (distinct > Math.max(3, field.models * 0.6)) continue;
                 facets.push({
                     key,
                     values: [...field.values.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
                 });
             }
-            return facets.sort((a, b) => a.key.localeCompare(b.key));
+
+            // groq returns context_window AND context_length with identical values;
+            // both read as "Context limit", so offer the filter once.
+            const seen = new Set();
+            return facets
+                .sort((a, b) => prettyLabel(a.key).localeCompare(prettyLabel(b.key)))
+                .filter(f => {
+                    const signature = prettyLabel(f.key) + '|' + JSON.stringify(f.values);
+                    if (seen.has(signature)) return false;
+                    seen.add(signature);
+                    return true;
+                });
         }
 
         function facetLabel(key) {
-            return key.split('.').map(humanizeFieldName).join(' · ');
+            return prettyLabel(key);
         }
 
         function facetValueLabel(value) {
@@ -5284,12 +5367,12 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 }
 
                 if (isChippable(value)) {
-                    chips.push(fieldChip(humanizeFieldName(key), key, value));
+                    chips.push(fieldChip(prettyLabel(key), key, value));
                 } else if (!Array.isArray(value) && typeof value === 'object') {
                     for (const [subKey, subValue] of Object.entries(value)) {
                         if (STAT_STRIP_KEYS.has(subKey)) continue; // e.g. top_provider.context_length
                         if (isChippable(subValue)) {
-                            chips.push(fieldChip(`${humanizeFieldName(key)} ${humanizeFieldName(subKey)}`, subKey, subValue));
+                            chips.push(fieldChip(prettyLabel(`${key}.${subKey}`), subKey, subValue));
                         } else if (subValue !== null && subValue !== undefined && subValue !== '') {
                             nested++;
                         }
@@ -5317,6 +5400,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 mdCtx.models = modelsCache.get(provider);
                 subtitle.textContent = 'cached — hit Refresh to refetch';
                 populateModelOwners();
+                populateSortOptions();
                 populateFacetFields();
                 renderActiveFilters();
                 renderModelsList();
@@ -5357,14 +5441,15 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
 
                 if (tiers.free) parts.push(`${tiers.free} free`);
                 if (tiers.paid) parts.push(`${tiers.paid} paid`);
-                if (tiers.unknown === total && total > 0) parts.push('no pricing data');
-                else if (tiers.unknown) parts.push(`${tiers.unknown} unpriced`);
+                if (tiers.unknown === total && total > 0) parts.push('no prices given');
+                else if (tiers.unknown) parts.push(`${tiers.unknown} without a price`);
 
-                if (total > 0 && withContext === 0) parts.push('no context limits');
-                else if (withContext < total) parts.push(`${withContext} with context`);
+                if (total > 0 && withContext === 0) parts.push('no context limits given');
+                else if (withContext < total) parts.push(`${withContext} with a context limit`);
 
                 subtitle.textContent = `GET /${provider}/models — ${parts.join(' · ')}`;
                 populateModelOwners();
+                populateSortOptions();
                 populateFacetFields();
                 renderActiveFilters();
                 renderModelsList();
@@ -5386,8 +5471,8 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             };
             const owners = [...new Set(mdCtx.models.map(m => m.owner).filter(Boolean))].sort((a, b) => a.localeCompare(b));
             const caps = [...new Set(mdCtx.models.flatMap(m => m.capabilities))].sort((a, b) => a.localeCompare(b));
-            fill('mdOwner', 'All owners', owners);
-            fill('mdCap', 'Any capability', caps);
+            fill('mdOwner', 'Any owner', owners);
+            fill('mdCap', 'Any feature', caps);
 
             // Only offer the buckets this provider actually has
             const counts = countPriceTiers(mdCtx.models);
@@ -5395,9 +5480,9 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             const tierOpts = [
                 counts.free ? `<option value="free">Free only (${counts.free})</option>` : '',
                 counts.paid ? `<option value="paid">Paid only (${counts.paid})</option>` : '',
-                counts.unknown ? `<option value="unknown">No price info (${counts.unknown})</option>` : ''
+                counts.unknown ? `<option value="unknown">Price unknown (${counts.unknown})</option>` : ''
             ].filter(Boolean);
-            tierSel.innerHTML = '<option value="">Free &amp; paid</option>' + tierOpts.join('');
+            tierSel.innerHTML = '<option value="">Any price</option>' + tierOpts.join('');
             tierSel.style.display = tierOpts.length > 1 ? '' : 'none';
 
             // Flagging every row "no price info" is noise when the provider prices
@@ -5405,10 +5490,32 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             mdCtx.showUnpricedBadge = counts.unknown > 0 && (counts.free + counts.paid) > 0;
         }
 
+        // A sort is only offered when the provider returned something to sort on —
+        // gemini has no dates or prices, nvdia has no context limits.
+        function populateSortOptions() {
+            const models = mdCtx.models;
+            const some = (fn) => models.some(fn);
+            const options = [
+                { value: 'name-asc', text: 'Name (A–Z)', ok: true },
+                { value: 'name-desc', text: 'Name (Z–A)', ok: true },
+                { value: 'created-desc', text: 'Newest first', ok: some(m => m.created) },
+                { value: 'created-asc', text: 'Oldest first', ok: some(m => m.created) },
+                { value: 'context-desc', text: 'Biggest context limit', ok: some(m => m.context) },
+                { value: 'output-desc', text: 'Biggest max reply', ok: some(m => m.maxOutput) },
+                { value: 'price-asc', text: 'Cheapest first', ok: some(m => m.pricing && m.pricing.input !== null) },
+                { value: 'price-desc', text: 'Most expensive first', ok: some(m => m.pricing && m.pricing.input !== null) }
+            ].filter(o => o.ok);
+
+            const sel = document.getElementById('mdSort');
+            const previous = sel.value;
+            sel.innerHTML = options.map(o => `<option value="${o.value}">${o.text}</option>`).join('');
+            sel.value = options.some(o => o.value === previous) ? previous : 'name-asc';
+        }
+
         function populateFacetFields() {
             mdCtx.facets = buildFacets(mdCtx.models);
             const sel = document.getElementById('mdFacetField');
-            sel.innerHTML = '<option value="">Filter by field…</option>' +
+            sel.innerHTML = '<option value="">More filters…</option>' +
                 mdCtx.facets.map(f =>
                     `<option value="${escapeHtml(f.key)}">${escapeHtml(facetLabel(f.key))} (${f.values.length})</option>`
                 ).join('');
@@ -5423,7 +5530,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             const facet = (mdCtx.facets || []).find(f => f.key === key);
 
             if (!facet) {
-                valueSel.innerHTML = '<option value="">Pick a field first</option>';
+                valueSel.innerHTML = '<option value="">Pick something above first</option>';
                 valueSel.disabled = true;
                 return;
             }
@@ -5524,8 +5631,8 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                             <div class="min-w-0 font-mono text-xs text-foreground break-all pt-1">
                                 ${safeId}
                                 ${m.tier === 'free' ? '<span class="badge badge-success ml-1.5 font-sans align-middle" title="Provider prices this model at $0">free</span>' : ''}
-                                ${(m.tier === 'unknown' && mdCtx.showUnpricedBadge) ? '<span class="badge badge-warning ml-1.5 font-sans align-middle" title="This provider returned no pricing for this model — it is not necessarily free">no price info</span>' : ''}
-                                ${m.context ? `<span class="badge badge-neutral ml-1.5 font-sans align-middle" title="Context limit">${m.context.toLocaleString()} ctx</span>` : ''}
+                                ${(m.tier === 'unknown' && mdCtx.showUnpricedBadge) ? '<span class="badge badge-warning ml-1.5 font-sans align-middle" title="This provider returned no pricing for this model — it is not necessarily free">price unknown</span>' : ''}
+                                ${m.context ? `<span class="badge badge-neutral ml-1.5 font-sans align-middle" title="How much text it can read at once">${m.context.toLocaleString()} context</span>` : ''}
                                 ${isDefault ? '<span class="badge badge-info ml-1.5 font-sans align-middle">default</span>' : ''}
                             </div>
                             <div class="flex items-center gap-1.5 flex-shrink-0">
