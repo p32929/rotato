@@ -412,11 +412,28 @@ class TelegramBot {
       throw new Error(parsed.error?.message || `HTTP ${res.statusCode}`);
     }
 
-    if (provider.apiType === 'gemini') {
-      return (parsed.models || []).map(m => m.name.replace('models/', '')).sort();
-    } else {
-      return (parsed.data || []).map(m => m.id).sort();
+    return TelegramBot.modelIdsFrom(parsed);
+  }
+
+  /**
+   * Model names from any list reply - same rules as the admin panel's models
+   * browser: the list may sit under data / models / result / results / items
+   * (or be the first array of objects), and the name is model / id / name,
+   * skipping internal UUID ids.
+   */
+  static modelIdsFrom(parsed) {
+    const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    let list = Array.isArray(parsed) ? parsed : null;
+    if (!list && parsed && typeof parsed === 'object') {
+      list = ['data', 'models', 'result', 'results', 'items'].map(k => parsed[k]).find(Array.isArray)
+        || Object.values(parsed).find(v => Array.isArray(v) && v.some(x => x && typeof x === 'object'));
     }
+    const ids = (list || [])
+      .filter(m => m && typeof m === 'object')
+      .map(m => [m.model, m.id, m.name].find(v => typeof v === 'string' && v && !UUID.test(v)) || '')
+      .map(id => id.replace(/^models\//, ''))
+      .filter(Boolean);
+    return [...new Set(ids)].sort();
   }
 
   /**

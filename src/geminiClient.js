@@ -1,5 +1,6 @@
 const https = require('https');
 const { URL } = require('url');
+const { resolveKey, maskKey } = require('./keyValues');
 
 class GeminiClient {
   constructor(keyRotator, baseUrl = 'https://generativelanguage.googleapis.com', proxyManager = null) {
@@ -123,32 +124,39 @@ class GeminiClient {
     throw new Error('All API keys exhausted without clear error');
   }
 
-  _buildRequestOptions(method, path, body, headers, apiKey, useHeader) {
+  _buildRequestOptions(method, path, body, headers, rawKey, useHeader) {
+    // A full https:// URL (a provider's custom models URL) stands in for the base URL
+    const absolute = /^https:\/\//i.test(path || '');
+    const baseUrl = absolute ? path : this.baseUrl;
+    if (absolute) path = '';
+
     let fullUrl;
     if (!path || path === '/') {
-      fullUrl = this.baseUrl;
+      fullUrl = baseUrl;
     } else if (path.startsWith('/')) {
-      let effectiveBaseUrl = this.baseUrl;
+      let effectiveBaseUrl = baseUrl;
 
       const pathVersionMatch = path.match(/^\/v[^\/]+\//);
-      const baseVersionMatch = this.baseUrl.match(/\/v[^\/]+$/);
+      const baseVersionMatch = baseUrl.match(/\/v[^\/]+$/);
 
       if (pathVersionMatch && baseVersionMatch) {
         const pathVersion = pathVersionMatch[0].slice(0, -1);
         const baseVersion = baseVersionMatch[0];
 
         if (pathVersion !== baseVersion) {
-          effectiveBaseUrl = this.baseUrl.replace(baseVersion, pathVersion);
+          effectiveBaseUrl = baseUrl.replace(baseVersion, pathVersion);
           path = path.substring(pathVersion.length);
         }
       }
 
       fullUrl = effectiveBaseUrl.endsWith('/') ? effectiveBaseUrl + path.substring(1) : effectiveBaseUrl + path;
     } else {
-      fullUrl = this.baseUrl.endsWith('/') ? this.baseUrl + path : this.baseUrl + '/' + path;
+      fullUrl = baseUrl.endsWith('/') ? baseUrl + path : baseUrl + '/' + path;
     }
 
-    const url = new URL(fullUrl);
+    // The key may carry values for {placeholders} anywhere in the URL
+    const { token: apiKey, baseUrl: resolvedUrl } = resolveKey(rawKey, fullUrl);
+    const url = new URL(resolvedUrl);
 
     const finalHeaders = {
       'Content-Type': 'application/json',
@@ -382,8 +390,7 @@ class GeminiClient {
   }
 
   maskApiKey(key) {
-    if (!key || key.length < 8) return '***';
-    return key.substring(0, 4) + '...' + key.substring(key.length - 4);
+    return maskKey(key);
   }
 }
 

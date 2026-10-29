@@ -120,6 +120,31 @@ curl -X POST "http://localhost:8990/gemini/models/gemini-2.5-flash:generateConte
 
 **Note**: Replace `your-access-key` with your provider's ACCESS_KEY if configured. If no ACCESS_KEY is set for the provider, you can omit the `[ACCESS_KEY:...]` parameter entirely.
 
+## Per-Key Values
+
+Some providers need more than a key, and it differs per key: Cloudflare Workers AI puts the account ID in the URL, so each token only works with its own account. Put a `{name}` placeholder in the base URL and give each key its value after a `|`:
+
+```env
+OPENAI_CLOUDFLARE_BASE_URL=https://api.cloudflare.com/client/v4/accounts/{accountId}/ai/v1
+OPENAI_CLOUDFLARE_API_KEYS=token1|accountId=abc123,token2|accountId=def456
+```
+
+Every request fills the placeholders from whichever key is being tried, so rotation works across accounts. Any name works (`{accountId}`, `{region}`, ...), and a key can carry several: `token|accountId=abc|region=eu`. A key missing a value the URL needs is skipped with an error naming it. Keys without `|` are used exactly as before.
+
+In the admin panel you never type the `|` format: once the base URL has a `{placeholder}`, every key row gets a field for it, existing keys show their values as tags (a missing one shows red; click it to fill it in), and **Edit** changes a key's values.
+
+## Custom Models URL
+
+Some providers list their models somewhere other than `{base URL}/models` (Cloudflare Workers AI's OpenAI-compatible API has no `/models` at all). Set a models list URL for that provider (in the **Add provider** dialog, later under the provider's **Connection** settings, or in `.env`), and every `GET /{provider}/models` (the models browser, the Telegram bot, your own apps) is fetched from there instead:
+
+```env
+OPENAI_CLOUDFLARE_MODELS_URL=https://api.cloudflare.com/client/v4/accounts/{accountId}/ai/models/search?per_page=1000
+```
+
+It can be a path joined to the base URL (`/v2/models`) or a full `https://` URL, and `{placeholders}` are filled from the key in use, just like in the base URL. Leave it empty to keep using `{base URL}/models`. Saving it in the panel immediately tries the list and tells you how many models it found. If it uses a `{placeholder}` the base URL doesn't, each key gets a field for that value too.
+
+The models browser and the Telegram bot read the list wherever the reply puts it (`data`, `models`, `result`, ...), and take the model name from `model`, `id` or `name`, skipping internal UUID ids.
+
 ## Outbound Proxy
 
 Route upstream API requests through proxies — useful when a provider rate-limits by IP rather than by key. Managed from the admin panel's **Proxy** tab, or via `.env`:

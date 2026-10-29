@@ -1,3 +1,5 @@
+const { maskKey } = require('./keyValues');
+
 class KeyRotator {
   constructor(apiKeys, apiType = 'unknown') {
     this.apiKeys = [...apiKeys];
@@ -60,8 +62,7 @@ class KeyRotator {
   }
 
   maskApiKey(key) {
-    if (!key || key.length < 8) return '***';
-    return key.substring(0, 4) + '...' + key.substring(key.length - 4);
+    return maskKey(key);
   }
 }
 
@@ -197,8 +198,7 @@ class RequestKeyContext {
   }
 
   maskApiKey(key) {
-    if (!key || key.length < 8) return '***';
-    return key.substring(0, 4) + '...' + key.substring(key.length - 4);
+    return maskKey(key);
   }
 }
 

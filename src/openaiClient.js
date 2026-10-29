@@ -1,5 +1,6 @@
 const https = require('https');
 const { URL } = require('url');
+const { resolveKey, maskKey } = require('./keyValues');
 
 class OpenAIClient {
   constructor(keyRotator, baseUrl = 'https://api.openai.com', proxyManager = null) {
@@ -97,17 +98,24 @@ class OpenAIClient {
     throw new Error('All API keys exhausted without clear error');
   }
 
-  _buildRequestOptions(method, path, body, headers, apiKey) {
+  _buildRequestOptions(method, path, body, headers, rawKey) {
+    // A full https:// URL (a provider's custom models URL) stands in for the base URL
+    const absolute = /^https:\/\//i.test(path || '');
+    const baseUrl = absolute ? path : this.baseUrl;
+    if (absolute) path = '';
+
     let fullUrl;
     if (!path || path === '/') {
-      fullUrl = this.baseUrl;
+      fullUrl = baseUrl;
     } else if (path.startsWith('/')) {
-      fullUrl = this.baseUrl.endsWith('/') ? this.baseUrl + path.substring(1) : this.baseUrl + path;
+      fullUrl = baseUrl.endsWith('/') ? baseUrl + path.substring(1) : baseUrl + path;
     } else {
-      fullUrl = this.baseUrl.endsWith('/') ? this.baseUrl + path : this.baseUrl + '/' + path;
+      fullUrl = baseUrl.endsWith('/') ? baseUrl + path : baseUrl + '/' + path;
     }
 
-    const url = new URL(fullUrl);
+    // The key may carry values for {placeholders} anywhere in the URL
+    const { token: apiKey, baseUrl: resolvedUrl } = resolveKey(rawKey, fullUrl);
+    const url = new URL(resolvedUrl);
 
     const finalHeaders = {
       'Content-Type': 'application/json',
@@ -340,8 +348,7 @@ class OpenAIClient {
   }
 
   maskApiKey(key) {
-    if (!key || key.length < 8) return '***';
-    return key.substring(0, 4) + '...' + key.substring(key.length - 4);
+    return maskKey(key);
   }
 }
 

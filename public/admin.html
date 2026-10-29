@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>API Key Rotator - Admin Panel</title>
+    <title>rotato admin</title>
     <!-- Design system fonts (C1) — Inter for UI, JetBrains Mono for code. Falls back to system fonts offline. -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -484,6 +484,122 @@
         }
         /* Keep the title/subtitle pair tight: 4px apart, no leading bloat */
         .section-header h2 { line-height: 1.2; }
+
+        /* Providers list */
+        .provider-card {
+            background-color: var(--card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            transition: border-color var(--transition-fast);
+        }
+        .provider-card:hover { border-color: color-mix(in srgb, var(--muted-foreground) 35%, var(--border)); }
+        .provider-head {
+            display: flex; align-items: center; gap: var(--space-3);
+            padding: var(--space-3) var(--space-4);
+            cursor: pointer; user-select: none;
+            border-radius: var(--radius-lg);
+        }
+        .provider-head:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--ring); }
+        .provider-chevron { transition: transform var(--transition-base); }
+        .provider-body {
+            border-top: 1px solid var(--border);
+            padding: var(--space-4);
+            display: flex; flex-direction: column; gap: var(--space-5);
+        }
+        .provider-body.hidden { display: none; }
+        .provider-section-title {
+            font-size: var(--text-xs); font-weight: var(--fw-semibold);
+            color: var(--foreground);
+        }
+        .field-label {
+            display: block; margin-bottom: 0.375rem;
+            font-size: var(--text-xs); font-weight: var(--fw-medium);
+            color: var(--muted-foreground);
+        }
+        .field-hint { margin-top: 0.375rem; font-size: var(--text-xs); color: var(--muted-foreground); line-height: var(--leading-normal); }
+        .field-hint code, #newProviderPreview code { font-family: var(--font-mono); font-size: 0.95em; }
+        #newProviderPreview, .field-hint { overflow-wrap: anywhere; }
+        .menu {
+            position: absolute; right: 0; top: calc(100% + 4px); z-index: 50;
+            min-width: 11rem; padding: var(--space-1);
+            background: var(--popover); border: 1px solid var(--border);
+            border-radius: var(--radius-md); box-shadow: var(--shadow-lg);
+        }
+        .menu.hidden { display: none; }
+        .menu-item {
+            display: block; width: 100%; text-align: left; white-space: nowrap;
+            padding: 0.4rem 0.6rem; border-radius: var(--radius-sm);
+            font-size: var(--text-xs); color: var(--foreground);
+        }
+        .menu-item:hover, .menu-item:focus-visible { background: var(--accent); outline: none; }
+        .menu-item.text-destructive { color: var(--destructive); }
+        /* Phones: tighter cards, log rows as stacked cards instead of a wide table */
+        .stat-card { padding: var(--space-3) var(--space-4); }
+        @media (max-width: 639px) {
+            .section { padding: var(--space-4); }
+            .stat-card { padding: var(--space-2) var(--space-3); }
+            #logs .ds-table thead { display: none; }
+            #logs .ds-table, #logs .ds-table tbody { display: block; }
+            #logs .ds-table tbody tr {
+                display: grid;
+                grid-template-columns: auto 1fr auto;
+                grid-template-areas: "status provider time" "req req req" "key key key" "lat proxy view";
+                gap: 0.375rem 0.5rem; align-items: center;
+                padding: var(--space-3);
+                border-bottom: 1px solid var(--border);
+            }
+            #logs .ds-table tbody td { padding: 0; white-space: normal; min-width: 0; }
+            #logs .ds-table tbody td:nth-child(1) { grid-area: time; text-align: right; }
+            #logs .ds-table tbody td:nth-child(2) { grid-area: req; overflow-wrap: anywhere; }
+            #logs .ds-table tbody td:nth-child(3) { grid-area: provider; }
+            #logs .ds-table tbody td:nth-child(4) { grid-area: status; }
+            #logs .ds-table tbody td:nth-child(5) { grid-area: lat; text-align: left; }
+            #logs .ds-table tbody td:nth-child(6) { grid-area: key; overflow-wrap: anywhere; }
+            #logs .ds-table tbody td:nth-child(7) { grid-area: proxy; }
+            #logs .ds-table tbody td:nth-child(8) { grid-area: view; }
+            #logs .ds-table tbody td:empty { display: none; }
+            #logs .ds-table tbody .lat-track { display: none; }
+        }
+
+        /* Save bar for Proxy / Settings: stays reachable at the bottom of long forms */
+        .form-actions {
+            position: sticky; bottom: 0; z-index: 10;
+            display: flex; align-items: center; gap: var(--space-2);
+            padding: var(--space-3) 0;
+            background: linear-gradient(to top, var(--background) 70%, transparent);
+        }
+
+        /* Key row actions: inline on wide screens, own line under the key on phones */
+        .key-actions { display: flex; align-items: center; gap: var(--space-1); flex-shrink: 0; }
+        @media (max-width: 639px) {
+            .key-actions { flex-basis: 100%; justify-content: flex-end; margin-top: -0.125rem; }
+        }
+
+        /* Drag to reorder keys */
+        .drag-handle {
+            display: inline-flex; align-items: center; justify-content: center;
+            width: 1.5rem; height: 1.75rem; flex-shrink: 0;
+            color: var(--muted-foreground); border-radius: var(--radius-sm);
+            cursor: grab; touch-action: none;
+        }
+        .drag-handle:hover { color: var(--foreground); background: var(--accent); }
+        .drag-handle:active { cursor: grabbing; }
+        .drag-handle:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--ring); }
+        .key-item { position: relative; border-radius: var(--radius-md); }
+        .key-item.drag-shift { transition: transform var(--transition-base); }
+        .key-item.dragging {
+            z-index: 5; background: var(--card);
+            box-shadow: var(--shadow-lg);
+            outline: 1px solid var(--border);
+        }
+        .key-item.dragging .drag-handle { cursor: grabbing; color: var(--foreground); }
+        @media (prefers-reduced-motion: reduce) { .key-item.drag-shift { transition: none; } }
+        .empty-state {
+            display: flex; flex-direction: column; align-items: center; text-align: center;
+            padding: var(--space-12) var(--space-4);
+            border: 1px dashed var(--border); border-radius: var(--radius-lg);
+        }
+        .tabular-nums { font-variant-numeric: tabular-nums; }
         .section-header p { line-height: 1.35; }
 
         /* Buttons — tokenized, with sizes, focus ring, transitions (F4/F5/I2) */
@@ -568,6 +684,8 @@
             font-size: var(--text-2xs); background: var(--muted); color: var(--muted-foreground);
         }
         .chip .chip-k { opacity: 0.6; }
+        .chip { max-width: 100%; }
+        .chip .chip-v { overflow-wrap: anywhere; min-width: 0; }
         .chip .chip-v { font-weight: var(--fw-medium); font-family: var(--font-mono); }
 
         /* Small status dot (proxy indicator in the status bar) — color set inline via --pc */
@@ -742,8 +860,8 @@
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
                     </svg>
                 </div>
-                <h1 class="text-2xl font-bold text-foreground">Admin Login</h1>
-                <p class="text-muted-foreground mt-2">Enter your admin password to access the panel</p>
+                <h1 class="text-2xl font-bold text-foreground">Sign in to rotato</h1>
+                <p class="text-muted-foreground mt-2">Use the ADMIN_PASSWORD from your .env</p>
             </div>
             
             <div class="login-container p-6">
@@ -800,8 +918,8 @@
                             </svg>
                         </div>
                         <div>
-                            <h1 class="text-lg font-semibold text-foreground">API Key Rotator</h1>
-                            <p class="text-xs text-muted-foreground">Admin Dashboard</p>
+                            <h1 class="text-base font-semibold text-foreground leading-tight">rotato</h1>
+                            <p class="text-xs text-muted-foreground">API key rotation proxy</p>
                         </div>
                     </div>
                     <div class="flex items-center space-x-3">
@@ -819,12 +937,13 @@
                         </div>
                         <button 
                             onclick="logout()" 
-                            class="btn btn-destructive px-3 py-1.5 text-xs font-medium"
+                            class="btn btn-ghost btn-sm"
+                            title="Sign out"
                         >
                             <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
                             </svg>
-                            Sign Out
+                            <span class="hidden sm:inline">Sign out</span>
                         </button>
                     </div>
                 </div>
@@ -835,43 +954,43 @@
         <div id="navigationTabs" class="header-bg border-b border-border sticky-nav-tabs">
             <div class="app-container">
                 <div class="flex items-center justify-between">
-                    <nav class="flex space-x-6">
+                    <nav class="flex gap-4 sm:gap-6 overflow-x-auto -mx-1 px-1">
                         <button 
                             onclick="showTab('environment')" 
-                            class="tab-btn py-3 px-2 border-b-2 border-transparent text-muted-foreground hover:text-foreground hover:border-border transition-colors active flex items-center space-x-2"
+                            class="tab-btn py-3 px-1 sm:px-2 whitespace-nowrap border-b-2 border-transparent text-muted-foreground hover:text-foreground hover:border-border transition-colors active flex items-center space-x-2"
                             data-tab="environment"
                         >
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1721 9z" />
+                            <svg class="w-4 h-4 hidden sm:block" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
                             </svg>
-                            <span class="text-sm">API Keys</span>
+                            <span class="text-sm">Providers</span>
                         </button>
                         <button 
                             onclick="showTab('logs')" 
-                            class="tab-btn py-3 px-2 border-b-2 border-transparent text-muted-foreground hover:text-foreground hover:border-border transition-colors flex items-center space-x-2"
+                            class="tab-btn py-3 px-1 sm:px-2 whitespace-nowrap border-b-2 border-transparent text-muted-foreground hover:text-foreground hover:border-border transition-colors flex items-center space-x-2"
                             data-tab="logs"
                         >
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <svg class="w-4 h-4 hidden sm:block" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
                             </svg>
-                            <span class="text-sm">API Logs</span>
+                            <span class="text-sm">Logs</span>
                         </button>
                         <button
                             onclick="showTab('proxy')"
-                            class="tab-btn py-3 px-2 border-b-2 border-transparent text-muted-foreground hover:text-foreground hover:border-border transition-colors flex items-center space-x-2"
+                            class="tab-btn py-3 px-1 sm:px-2 whitespace-nowrap border-b-2 border-transparent text-muted-foreground hover:text-foreground hover:border-border transition-colors flex items-center space-x-2"
                             data-tab="proxy"
                         >
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <svg class="w-4 h-4 hidden sm:block" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12h18M3 12a9 9 0 019-9m-9 9a9 9 0 009 9m0-18a9 9 0 019 9m-9-9c2.5 2.5 2.5 15.5 0 18m0-18c-2.5 2.5-2.5 15.5 0 18" />
                             </svg>
                             <span class="text-sm">Proxy</span>
                         </button>
                         <button
                             onclick="showTab('settings')"
-                            class="tab-btn py-3 px-2 border-b-2 border-transparent text-muted-foreground hover:text-foreground hover:border-border transition-colors flex items-center space-x-2"
+                            class="tab-btn py-3 px-1 sm:px-2 whitespace-nowrap border-b-2 border-transparent text-muted-foreground hover:text-foreground hover:border-border transition-colors flex items-center space-x-2"
                             data-tab="settings"
                         >
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <svg class="w-4 h-4 hidden sm:block" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                             </svg>
@@ -880,7 +999,7 @@
                     </nav>
                     
                     <!-- Header Notifications Area (placeholder for positioning) -->
-                    <div id="headerNotifications" class="py-2 ml-6 flex-1 max-w-2xl overflow-hidden relative">
+                    <div id="headerNotifications" class="py-2 ml-2 sm:ml-6 flex-1 max-w-2xl overflow-hidden relative">
                         <!-- Placeholder for positioning calculations -->
                     </div>
 
@@ -894,118 +1013,31 @@
         <main class="app-container content-with-sticky-header">
             <!-- Environment Tab -->
             <div id="environment" class="tab-content">
-                <div class="section-header">
-                    <h2 class="text-lg font-semibold text-foreground">API Keys Management</h2>
-                    <p class="text-muted-foreground text-xs mt-1">Manage and test your API keys</p>
+                <div class="section-header flex flex-wrap items-end justify-between gap-3">
+                    <div>
+                        <h2 class="text-lg font-semibold text-foreground">Providers</h2>
+                        <p id="providersSummary" class="text-muted-foreground text-xs mt-1">&nbsp;</p>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button
+                            onclick="exportConfiguration()"
+                            class="btn btn-secondary btn-md"
+                            title="Copy all configuration as .env format to clipboard"
+                        >
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+                            Copy .env
+                        </button>
+                        <button onclick="openAddProviderDialog()" class="btn btn-primary btn-md">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.25" d="M12 5v14M5 12h14"/></svg>
+                            Add provider
+                        </button>
+                    </div>
                 </div>
 
 
                 <!-- Providers Management -->
                 <div class="space-y-4">
-                    <!-- Existing Providers -->
-                    <div class="section">
-                        <div class="flex items-center justify-between mb-3">
-                            <h3 class="text-sm font-medium text-foreground">Configured Providers</h3>
-                            <button
-                                onclick="exportConfiguration()"
-                                class="btn btn-secondary px-3 py-1.5 text-xs font-medium flex items-center gap-1.5"
-                                title="Copy all configuration as .env format to clipboard"
-                            >
-                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
-                                </svg>
-                                Copy .env
-                            </button>
-                        </div>
-                        <div id="providersContainer" class="space-y-3 mb-4"></div>
-                    </div>
-
-                    <!-- Add New Provider -->
-                    <div class="section">
-                        <h3 class="text-sm font-medium text-foreground mb-3">Add New Provider</h3>
-                        <div class="border-dashed border border-border rounded p-4 bg-muted/30 space-y-4">
-                            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                <div>
-                                    <label class="block text-xs font-medium text-muted-foreground mb-2">Provider Name</label>
-                                    <input
-                                        type="text"
-                                        id="newProviderName"
-                                        class="input-field w-full px-2 py-1.5 text-sm rounded transition-colors"
-                                        placeholder="e.g., groq, together"
-                                        oninput="handleProviderNameInput(this); updateProviderPreview()"
-                                    >
-                                    <p class="text-muted-foreground text-xs mt-1">Provide both name and base URL for custom provider</p>
-                                </div>
-                                <div>
-                                    <label class="block text-xs font-medium text-muted-foreground mb-2">API Type</label>
-                                    <select 
-                                        id="newProviderApiType" 
-                                        class="input-field w-full px-2 py-1.5 text-sm rounded transition-colors"
-                                        onchange="updateProviderPreview()"
-                                    >
-                                        <option value="openai">OpenAI Compatible</option>
-                                        <option value="gemini">Gemini Compatible</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label class="block text-xs font-medium text-muted-foreground mb-2">Base URL</label>
-                                    <input 
-                                        type="text" 
-                                        id="newProviderBaseUrl" 
-                                        class="input-field w-full px-2 py-1.5 text-sm rounded transition-colors" 
-                                        placeholder="e.g., https://api.example.com/v1"
-                                        oninput="handleBaseUrlInput(this); updateProviderPreview()"
-                                    >
-                                    <p class="text-muted-foreground text-xs mt-1">Provide both name and base URL for custom provider</p>
-                                </div>
-                            </div>
-                            <div>
-                                <label class="block text-xs font-medium text-muted-foreground mb-2">API Keys</label>
-                                <div id="newProviderKeys" class="space-y-2">
-                                    <div class="flex items-center space-x-2" data-key-index="0">
-                                        <input 
-                                            type="text" 
-                                            class="input-field flex-1 px-2 py-1.5 text-xs rounded transition-colors new-provider-key" 
-                                            placeholder="Enter API key"
-                                            data-key-index="0"
-                                        >
-                                        <button 
-                                            onclick="testNewProviderKey(0)" 
-                                            class="btn btn-secondary px-2 py-1 text-xs font-medium"
-                                        >
-                                            Test
-                                        </button>
-                                        <button 
-                                            onclick="removeNewProviderKey(0)" 
-                                            class="btn btn-destructive px-2 py-1 text-xs font-medium"
-                                            style="display: none;"
-                                        >
-                                            Remove
-                                        </button>
-                                    </div>
-                                </div>
-                                <div class="flex items-center space-x-2 mt-2">
-                                    <button 
-                                        onclick="addNewProviderKey()" 
-                                        class="btn btn-secondary px-3 py-1.5 text-xs font-medium"
-                                    >
-                                        + Add Another Key
-                                    </button>
-                                    <button 
-                                        onclick="addNewProvider()" 
-                                        class="btn btn-primary px-3 py-1.5 text-xs font-medium"
-                                    >
-                                        Test & Save Provider
-                                    </button>
-                                </div>
-                                <p class="text-muted-foreground text-xs mt-1">Add multiple API keys for automatic rotation. All keys will be tested before saving.</p>
-                            </div>
-                            <div id="newProviderPreview" class="mt-3 p-3 bg-muted/20 border border-border rounded text-xs text-muted-foreground">
-                                <strong>Preview:</strong> <span id="previewText">Will create default OpenAI provider</span>
-                            </div>
-                            <div id="newProviderResult" class="mt-2"></div>
-                        </div>
-                    </div>
+                    <div id="providersContainer" class="space-y-2"></div>
 
                 </div>
 
@@ -1015,12 +1047,12 @@
             <!-- Logs Tab -->
             <div id="logs" class="tab-content hidden">
                 <div class="section-header">
-                    <h2 class="text-lg font-semibold text-foreground">API Request Logs</h2>
-                    <p class="text-muted-foreground text-xs mt-1">Monitor OpenAI and Gemini API requests, keys, and the proxy each request used</p>
+                    <h2 class="text-lg font-semibold text-foreground">Request logs</h2>
+                    <p class="text-muted-foreground text-xs mt-1">Every request through rotato: which key answered, which failed, and how long it took.</p>
                 </div>
 
                 <!-- Stats bar (D6) -->
-                <div id="logStats" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-4"></div>
+                <div id="logStats" class="grid grid-cols-3 lg:grid-cols-5 gap-2 sm:gap-3 mb-4"></div>
 
                 <div class="section">
                     <!-- Toolbar: search + filters + actions -->
@@ -1100,18 +1132,18 @@
             <!-- Proxy Tab -->
             <div id="proxy" class="tab-content hidden">
                 <div class="section-header">
-                    <h2 class="text-lg font-semibold text-foreground">Outbound Proxy</h2>
-                    <p class="text-muted-foreground text-xs mt-1">Route all upstream API requests through a proxy. If an IP gets blocked, change the proxy here and save — no restart needed.</p>
+                    <h2 class="text-lg font-semibold text-foreground">Outbound proxy</h2>
+                    <p class="text-muted-foreground text-xs mt-1">For providers that rate-limit by IP. Pick which providers use it; the rest connect directly.</p>
                 </div>
 
-                <div class="grid grid-cols-1 gap-4 items-start">
+                <div class="grid grid-cols-1 gap-4 items-start max-w-4xl">
                     <!-- Proxy Configuration -->
                     <div class="section" style="margin:0">
                         <h3 class="text-sm font-medium text-foreground mb-3 flex items-center gap-2">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                             </svg>
-                            Proxy Configuration
+                            Proxy sources
                         </h3>
                         <div class="space-y-3">
                             <div class="flex items-start justify-between gap-4">
@@ -1160,7 +1192,7 @@
                         </h3>
                         <div class="space-y-3">
                             <p class="text-xs text-muted-foreground">Proxying is per provider. Anything left off connects directly, so you can route only the provider that is rate-limiting you.</p>
-                            <div id="proxyProviderList" class="space-y-2"></div>
+                            <div id="proxyProviderList" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2"></div>
                             <p id="proxyProviderEmpty" class="text-xs text-muted-foreground hidden">No providers configured yet.</p>
                         </div>
                     </div>
@@ -1172,7 +1204,7 @@
                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01" />
                                 </svg>
-                                Saved Proxies
+                                Saved proxies
                             </h3>
                             <button onclick="testAllProxies(this)" class="btn btn-secondary px-3 py-1.5 text-xs font-medium flex-shrink-0">Test All</button>
                         </div>
@@ -1213,9 +1245,9 @@
                     </div>
 
                     <!-- Save (matches the Settings tab's action row) -->
-                    <div class="flex items-center space-x-2">
-                        <button onclick="saveProxySettings(this)" class="btn btn-primary px-3 py-1.5 text-xs font-medium">Save Proxy Settings</button>
-                        <button onclick="loadProxySettings()" class="btn btn-secondary px-3 py-1.5 text-xs font-medium">Reload</button>
+                    <div class="form-actions">
+                        <button onclick="saveProxySettings(this)" class="btn btn-primary btn-md">Save proxy settings</button>
+                        <button onclick="loadProxySettings()" class="btn btn-ghost btn-md" title="Discard unsaved changes">Discard changes</button>
                     </div>
                 </div>
             </div>
@@ -1224,28 +1256,28 @@
             <div id="settings" class="tab-content hidden">
                 <div class="section-header">
                     <h2 class="text-lg font-semibold text-foreground">Settings</h2>
-                    <p class="text-muted-foreground text-xs mt-1">Key rotation behavior, request log storage, and Telegram bot configuration</p>
+                    <p class="text-muted-foreground text-xs mt-1">Applies to every provider. Changes take effect when you save, no restart.</p>
                 </div>
 
-                <div class="grid grid-cols-1 gap-4 items-start">
+                <div class="grid grid-cols-1 gap-4 items-start max-w-3xl">
                     <!-- Key Rotation Section -->
                     <div class="section" style="margin:0">
                         <h3 class="text-sm font-medium text-foreground mb-3 flex items-center gap-2">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                             </svg>
-                            Key Rotation
+                            Key rotation
                         </h3>
                         <div class="space-y-3">
                             <div>
-                                <label class="block text-xs font-medium text-muted-foreground mb-1">Default Status Codes to Rotate <span class="font-normal">(comma-separated)</span></label>
-                                <input type="text" id="defaultStatusCodes" class="input-field w-full px-3 py-2 rounded-md text-sm" placeholder="429" value="429">
-                                <p class="text-xs text-muted-foreground mt-1">When the API returns any of these status codes, the proxy rotates to the next API key. Reflected in all generated cURL commands.</p>
+                                <label class="field-label" for="defaultStatusCodes">Rotate to the next key on these status codes</label>
+                                <input type="text" id="defaultStatusCodes" class="input-field w-full max-w-xs px-3 py-2 rounded-md text-sm font-mono" placeholder="429" value="429">
+                                <p class="field-hint">Comma-separated, like <code>429, 402</code>. Used in the cURL commands this panel generates.</p>
                             </div>
                             <div>
-                                <label class="block text-xs font-medium text-muted-foreground mb-1">Keep-Alive Interval <span class="font-normal">(minutes, 0 to disable)</span></label>
-                                <input type="number" id="keepAliveMinutes" class="input-field w-full px-3 py-2 rounded-md text-sm" placeholder="10" value="10" min="0" step="1">
-                                <p class="text-xs text-muted-foreground mt-1">Pings the server periodically to prevent hosting platforms from sleeping it due to inactivity. Set to 0 to disable.</p>
+                                <label class="field-label" for="keepAliveMinutes">Keep-alive ping, in minutes</label>
+                                <input type="number" id="keepAliveMinutes" class="input-field w-28 px-3 py-2 rounded-md text-sm tabular-nums" placeholder="10" value="10" min="0" step="1">
+                                <p class="field-hint">Stops free hosting platforms from putting the server to sleep. 0 turns it off.</p>
                             </div>
                         </div>
                     </div>
@@ -1256,20 +1288,20 @@
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-6a2 2 0 012-2h2a2 2 0 012 2v6m-6 0a2 2 0 002 2h2a2 2 0 002-2M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
                             </svg>
-                            Request Logs
+                            Request logs
                         </h3>
                         <div class="space-y-3">
                             <div>
-                                <label class="block text-xs font-medium text-muted-foreground mb-1">Storage</label>
-                                <select id="apiLogsMode" onchange="updateApiLogsMode()" class="input-field w-full px-3 py-2 rounded-md text-sm">
-                                    <option value="memory">In memory — last 100 requests, cleared on restart</option>
-                                    <option value="file">On disk — full requests and responses, kept for N days</option>
+                                <label class="field-label" for="apiLogsMode">Where to keep them</label>
+                                <select id="apiLogsMode" onchange="updateApiLogsMode()" class="input-field w-full max-w-md px-3 py-2 rounded-md text-sm">
+                                    <option value="memory">In memory (last 100, gone on restart)</option>
+                                    <option value="file">On disk (full detail, kept for days)</option>
                                 </select>
                                 <p class="text-xs text-muted-foreground mt-1">Requests are always logged; this only decides where. On disk, each request gets its own file under <code>logs/&lt;date&gt;/</code> and survives a restart.</p>
                             </div>
                             <div id="apiLogsRetentionRow" class="hidden">
-                                <label class="block text-xs font-medium text-muted-foreground mb-1">Keep for <span class="font-normal">(days)</span></label>
-                                <input type="number" id="apiLogsRetentionDays" class="input-field w-full px-3 py-2 rounded-md text-sm" placeholder="7" value="7" min="1" step="1">
+                                <label class="field-label" for="apiLogsRetentionDays">Keep for, in days</label>
+                                <input type="number" id="apiLogsRetentionDays" class="input-field w-28 px-3 py-2 rounded-md text-sm tabular-nums" placeholder="7" value="7" min="1" step="1">
                                 <p class="text-xs text-muted-foreground mt-1">Log days older than this are deleted automatically, at startup and hourly.</p>
                             </div>
                             <p id="apiLogsStatus" class="text-xs text-muted-foreground"></p>
@@ -1282,21 +1314,23 @@
                             <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
                                 <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.74-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .38z"/>
                             </svg>
-                            Telegram Bot
+                            Telegram bot
                         </h3>
                         <div class="space-y-3">
                             <div>
-                                <label class="block text-xs font-medium text-muted-foreground mb-1">Bot Token</label>
+                                <label class="field-label" for="telegramBotToken">Bot token</label>
                                 <input type="password" id="telegramBotToken" class="input-field w-full px-3 py-2 rounded-md text-sm" placeholder="123456789:ABCdefGhIjKlMnOpQrStUvWxYz">
                             </div>
                             <div>
-                                <label class="block text-xs font-medium text-muted-foreground mb-1">Allowed User IDs <span class="font-normal">(comma-separated, leave empty to allow all)</span></label>
-                                <input type="text" id="telegramAllowedUsers" class="input-field w-full px-3 py-2 rounded-md text-sm" placeholder="123456789, 987654321">
+                                <label class="field-label" for="telegramAllowedUsers">Allowed user IDs</label>
+                                <input type="text" id="telegramAllowedUsers" class="input-field w-full px-3 py-2 rounded-md text-sm font-mono" placeholder="123456789, 987654321">
+                                <p class="field-hint">Comma-separated. Leave empty to let anyone use the bot.</p>
                             </div>
                             <div id="telegramBotStatus" class="text-xs"></div>
 
-                            <div class="border border-border rounded-md p-3 bg-muted/30">
-                                <p class="text-xs font-medium text-foreground mb-2">How to set up:</p>
+                            <details class="border border-border rounded-md p-3 bg-muted/30 group">
+                                <summary class="text-xs font-medium text-foreground cursor-pointer select-none">How to set up the bot</summary>
+                                <div class="mt-2">
                                 <ol class="text-xs text-muted-foreground space-y-1.5 list-decimal list-inside">
                                     <li>Open Telegram and search for <strong>@BotFather</strong></li>
                                     <li>Send <code class="bg-muted px-1 rounded">/newbot</code> and follow the prompts</li>
@@ -1313,14 +1347,15 @@
                                         <p><code class="bg-muted px-1 rounded">/status</code> - Show current model info</p>
                                     </div>
                                 </div>
-                            </div>
+                                </div>
+                            </details>
                         </div>
                     </div>
 
                     <!-- Save (persists both Key Rotation + Telegram settings) -->
-                    <div class="flex items-center space-x-2">
-                        <button onclick="saveTelegramSettings()" class="btn btn-primary px-3 py-1.5 text-xs font-medium">Save Settings</button>
-                        <button onclick="loadTelegramSettings()" class="btn btn-secondary px-3 py-1.5 text-xs font-medium">Reload</button>
+                    <div class="form-actions">
+                        <button onclick="saveTelegramSettings()" class="btn btn-primary btn-md">Save settings</button>
+                        <button onclick="loadTelegramSettings()" class="btn btn-ghost btn-md" title="Discard unsaved changes">Discard changes</button>
                     </div>
                 </div>
             </div>
@@ -1455,6 +1490,115 @@
             <div class="flex-1 min-h-0 overflow-auto ds-scroll" style="background:#0d1117;">
                 <div id="responseContent" class="rv-code"></div>
                 <div id="requestContent" class="rv-code hidden"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add provider -->
+    <div id="addProviderDialog" class="ds-overlay hidden fixed inset-0 bg-black/60 backdrop-blur-sm flex items-start sm:items-center justify-center p-4 z-modal overflow-y-auto" onclick="if(event.target===this)closeAddProviderDialog()" role="dialog" aria-modal="true" aria-labelledby="addProviderTitle">
+        <div class="ds-dialog-panel bg-card border border-border rounded-xl w-full max-w-2xl shadow-xl my-8">
+            <div class="flex items-start justify-between gap-3 px-5 pt-4 pb-3 border-b border-border">
+                <div>
+                    <h3 id="addProviderTitle" class="text-base font-semibold text-foreground">Add provider</h3>
+                    <p class="text-xs text-muted-foreground mt-0.5">Every key is tested before anything is saved.</p>
+                </div>
+                <button onclick="closeAddProviderDialog()" class="text-muted-foreground hover:text-foreground transition-colors p-1 -mr-1" title="Close (Esc)" aria-label="Close">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                </button>
+            </div>
+            <div class="px-5 py-4 space-y-4">
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                        <label class="field-label" for="newProviderName">Name</label>
+                        <input
+                            type="text"
+                            id="newProviderName"
+                            class="input-field w-full px-3 py-2 text-sm rounded transition-colors"
+                            placeholder="e.g. groq"
+                            autocomplete="off"
+                            oninput="handleProviderNameInput(this); updateProviderPreview()"
+                        >
+                        <p class="field-hint">Becomes your endpoint path, like <code>/groq/…</code></p>
+                    </div>
+                    <div>
+                        <label class="field-label" for="newProviderApiType">API format</label>
+                        <select
+                            id="newProviderApiType"
+                            class="input-field w-full px-3 py-2 text-sm rounded transition-colors"
+                            onchange="updateProviderPreview(); syncNewProviderValueInputs()"
+                        >
+                            <option value="openai">OpenAI-compatible</option>
+                            <option value="gemini">Gemini-compatible</option>
+                        </select>
+                        <p class="field-hint">Most providers speak the OpenAI format.</p>
+                    </div>
+                </div>
+                <div>
+                    <label class="field-label" for="newProviderBaseUrl">Base URL</label>
+                    <input
+                        type="text"
+                        id="newProviderBaseUrl"
+                        class="input-field w-full px-3 py-2 text-sm rounded transition-colors font-mono"
+                        placeholder="https://api.groq.com/openai/v1"
+                        autocomplete="off"
+                        oninput="handleBaseUrlInput(this); updateProviderPreview(); syncNewProviderValueInputs()"
+                    >
+                    <p class="field-hint">Part of the URL differs per key, like an account ID? Write it as <code>{accountId}</code> and each key gets its own field.</p>
+                </div>
+                <div>
+                    <label class="field-label" for="newProviderModelsUrl">Models list URL <span class="font-normal">— optional</span></label>
+                    <input
+                        type="text"
+                        id="newProviderModelsUrl"
+                        class="input-field w-full px-3 py-2 text-sm rounded transition-colors font-mono"
+                        placeholder="Base URL + /models"
+                        autocomplete="off"
+                        oninput="syncNewProviderValueInputs()"
+                    >
+                    <p class="field-hint">Only if this provider lists its models somewhere other than the base URL + <code>/models</code>. A path like <code>/v2/models</code>, or a full <code>https://</code> URL. <code>{placeholders}</code> work here too.</p>
+                </div>
+                <div>
+                    <label class="field-label">API keys</label>
+                    <div id="newProviderKeys" class="space-y-2">
+                        <div class="flex flex-wrap sm:flex-nowrap items-center gap-2" data-key-index="0">
+                            <input
+                                type="text"
+                                class="input-field flex-1 min-w-0 basis-full sm:basis-auto px-3 py-2 text-xs rounded transition-colors new-provider-key font-mono"
+                                placeholder="Paste an API key"
+                                data-key-index="0"
+                                data-key-token
+                            >
+                            <span class="key-values flex items-center gap-2"></span>
+                            <button
+                                onclick="testNewProviderKey(0)"
+                                class="btn btn-secondary btn-sm"
+                            >
+                                Test
+                            </button>
+                            <button
+                                onclick="removeNewProviderKey(0)"
+                                class="btn btn-destructive btn-sm"
+                                style="display: none;"
+                            >
+                                Remove
+                            </button>
+                        </div>
+                    </div>
+                    <button onclick="addNewProviderKey()" class="btn btn-ghost btn-sm mt-2 -ml-2">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.25" d="M12 5v14M5 12h14"/></svg>
+                        Add another key
+                    </button>
+                    <p class="field-hint">More keys means more rotation room when one gets rate-limited.</p>
+                </div>
+                <div id="newProviderPreview" class="p-3 bg-muted/40 border border-border rounded-md text-xs text-muted-foreground">
+                    <span id="previewText">Will create the default OpenAI provider</span>
+                </div>
+                <div id="newProviderResult"></div>
+            </div>
+            <div class="flex items-center justify-end gap-2 px-5 py-3 border-t border-border">
+                <button onclick="closeAddProviderDialog()" class="btn btn-secondary btn-md">Cancel</button>
+                <button onclick="addNewProvider()" class="btn btn-primary btn-md">Test keys &amp; add</button>
+            </div>
             </div>
         </div>
     </div>
@@ -2096,10 +2240,60 @@
             
             // Render providers
             renderProviders();
+            renderProvidersSummary();
+        }
+
+        // Which provider cards are open; survives re-renders and reloads
+        const expandedProviders = new Set((() => {
+            try { return JSON.parse(localStorage.getItem('rotato.expandedProviders') || '[]'); } catch { return []; }
+        })());
+
+        function saveExpandedProviders() {
+            try { localStorage.setItem('rotato.expandedProviders', JSON.stringify([...expandedProviders])); } catch { /* private mode */ }
+        }
+
+        function setProviderExpanded(pk, open) {
+            if (open) expandedProviders.add(pk); else expandedProviders.delete(pk);
+            saveExpandedProviders();
+            const head = [...document.querySelectorAll('.provider-head')].find(h => h.getAttribute('onclick').includes(`'${pk}'`));
+            if (!head) return;
+            head.setAttribute('aria-expanded', open);
+            head.querySelector('.provider-chevron').classList.toggle('rotate-90', open);
+            head.nextElementSibling.classList.toggle('hidden', !open);
+        }
+
+        function toggleProviderExpanded(pk, event) {
+            // Clicks on the controls inside the row do their own thing
+            if (event && event.target.closest('input, button, label, a, select, textarea, .menu')) return;
+            const head = event && event.currentTarget;
+            const open = head ? head.getAttribute('aria-expanded') !== 'true' : !expandedProviders.has(pk);
+            setProviderExpanded(pk, open);
+        }
+
+        function expandProvider(pk) { setProviderExpanded(pk, true); }
+
+        function toggleMoreMenu(pk, event) {
+            event.stopPropagation();
+            const menu = document.getElementById(`moreMenu_${pk}`);
+            document.querySelectorAll('[id^="moreMenu_"], [id^="curlDropdown_"]').forEach(el => { if (el !== menu) el.classList.add('hidden'); });
+            menu.classList.toggle('hidden');
+        }
+
+        function renderProvidersSummary() {
+            const el = document.getElementById('providersSummary');
+            if (!el) return;
+            const cards = document.querySelectorAll('#providersContainer .provider-card');
+            let keys = 0;
+            for (const [k, v] of Object.entries(envVars)) {
+                if (k.endsWith('_API_KEYS') && v) keys += v.split(',').filter(x => x.trim()).length;
+            }
+            el.textContent = cards.length
+                ? `${cards.length} provider${cards.length === 1 ? '' : 's'} · ${keys} key${keys === 1 ? '' : 's'} · click a provider to see its settings`
+                : 'Add a provider to get an endpoint that rotates its keys for you.';
         }
 
         // Remembers provider display order for the current page session (see sorting below).
-        // Null on a fresh load -> providers get sorted disabled-to-bottom then.
+        // Null on a fresh load -> providers get sorted enabled-first, A–Z, then.
         let _providerOrder = null;
         function renderProviders() {
             const providersContainer = document.getElementById('providersContainer');
@@ -2170,6 +2364,15 @@
                             };
                         }
                         providers[providerKey].baseUrl = value;
+                    }
+                } else if (key.endsWith('_MODELS_URL') && value) {
+                    const match = key.match(/^(.+?)_(.+)_MODELS_URL$/);
+                    if (match) {
+                        const providerKey = `${match[1].toLowerCase()}_${match[2].toLowerCase()}`;
+                        if (!providers[providerKey]) {
+                            providers[providerKey] = { name: match[2].toLowerCase(), apiType: match[1].toLowerCase(), keys: [], baseUrl: '', accessKey: '', defaultModel: '', modelHistory: [] };
+                        }
+                        providers[providerKey].modelsUrl = value;
                     }
                 } else if (key.endsWith('_ACCESS_KEY') && value) {
                     const match = key.match(/^(.+)_(.+)_ACCESS_KEY$/);
@@ -2277,12 +2480,17 @@
                     return d !== 0 ? d : pkey(a).localeCompare(pkey(b));
                 });
             } else {
-                sortedProviders = all.slice().sort((a, b) => (a.disabled ? 1 : 0) - (b.disabled ? 1 : 0));
+                // Enabled first, then A–Z — not .env order, which only happens to be sorted when rotato wrote the file
+                sortedProviders = all.slice().sort((a, b) =>
+                    ((a.disabled ? 1 : 0) - (b.disabled ? 1 : 0)) || a.name.localeCompare(b.name));
             }
             _providerOrder = sortedProviders.map(pkey);
             sortedProviders.forEach((provider, index) => {
                 const providerDiv = document.createElement('div');
-                providerDiv.className = 'key-row';
+                providerDiv.className = 'provider-card';
+                const pk = `${provider.apiType}_${provider.name}`;
+                const expanded = expandedProviders.has(pk) || sortedProviders.length === 1;
+                const requestCount = (keyUsageData[provider.name] || []).reduce((sum, u) => sum + (u.usageCount || 0), 0);
 
                 // Determine initial button state for access key
                 let accessKeyButtonHtml, accessKeyAction, accessKeyClass, accessKeyStyle, accessKeyTitle;
@@ -2335,83 +2543,73 @@
                 const isProviderDisabled = provider.disabled || false;
 
                 providerDiv.innerHTML = `
-                    <div class="space-y-4${isProviderDisabled ? ' opacity-60' : ''}">
-                        <!-- Header with provider name and actions -->
-                        <div class="flex items-center justify-between">
-                            <div class="flex items-center space-x-3">
-                                <label class="toggle-switch" title="${isProviderDisabled ? 'Enable provider' : 'Disable provider'}">
-                                    <input type="checkbox" ${!isProviderDisabled ? 'checked' : ''} onchange="toggleProvider('${provider.apiType}', '${provider.name}', !this.checked)">
-                                    <span class="toggle-slider"></span>
-                                </label>
-                                <div id="provider-name-${provider.apiType}-${provider.name}">
-                                    <h4 class="text-base font-semibold text-foreground leading-tight flex items-center gap-2">
-                                        <span>${provider.name}</span>
-                                        ${isProviderDisabled ? '<span class="text-xs text-destructive font-normal">(disabled)</span>' : ''}
-                                    </h4>
-                                    <p class="text-xs text-muted-foreground mt-0.5">${provider.apiType.toUpperCase()} Compatible • ${enabledKeyCount}/${totalKeyCount} keys active</p>
+                    <div class="${isProviderDisabled ? 'opacity-60' : ''}">
+                        <!-- Summary row: click to expand -->
+                        <div class="provider-head" role="button" tabindex="0" aria-expanded="${expanded}" aria-label="${provider.name} settings"
+                             onclick="toggleProviderExpanded('${pk}', event)"
+                             onkeydown="if((event.key==='Enter'||event.key===' ')&&event.target===this){event.preventDefault();toggleProviderExpanded('${pk}', event)}">
+                            <svg class="provider-chevron w-4 h-4 flex-shrink-0 text-muted-foreground${expanded ? ' rotate-90' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                            <label class="toggle-switch toggle-sm flex-shrink-0" title="${isProviderDisabled ? 'Turn provider on' : 'Turn provider off'}">
+                                <input type="checkbox" ${!isProviderDisabled ? 'checked' : ''} onchange="toggleProvider('${provider.apiType}', '${provider.name}', !this.checked)">
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <div class="min-w-0 flex-1">
+                                <div id="provider-name-${provider.apiType}-${provider.name}" class="flex items-center gap-2 min-w-0">
+                                    <span class="text-sm font-semibold text-foreground truncate">${provider.name}</span>
+                                    <span class="badge badge-neutral">${provider.apiType === 'gemini' ? 'Gemini' : 'OpenAI'}</span>
+                                    ${isProviderDisabled ? '<span class="badge badge-error">Off</span>' : ''}
                                 </div>
+                                <p class="text-xs text-muted-foreground mt-0.5 truncate">
+                                    <span class="tabular-nums">${enabledKeyCount}/${totalKeyCount}</span> keys on<span class="opacity-50"> · </span><span class="tabular-nums">${requestCount}</span> request${requestCount === 1 ? '' : 's'}${provider.defaultModel ? `<span class="opacity-50"> · </span><span class="font-mono">${escapeHtml(provider.defaultModel)}</span>` : ''}
+                                </p>
                             </div>
-                            <div class="flex items-center space-x-2">
-                                <button
-                                    onclick="startRenameProvider('${provider.apiType}', '${provider.name}')"
-                                    class="btn btn-secondary px-2 py-1 text-xs font-medium"
-                                    title="Rename provider"
-                                >
-                                    <svg class="w-3.5 h-3.5 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                                    </svg>
-                                    Rename
-                                </button>
+                            <div class="flex items-center gap-1.5 flex-shrink-0">
                                 <button
                                     onclick="openModelsDialog('${provider.apiType}', '${provider.name}')"
-                                    class="btn btn-secondary px-2 py-1 text-xs font-medium"
+                                    class="btn btn-secondary btn-sm hidden sm:inline-flex"
                                     title="Browse models available from this provider"
-                                >
-                                    <svg class="w-3.5 h-3.5 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h10" />
-                                    </svg>
-                                    Models
-                                </button>
-                                <div class="relative inline-flex" id="curlBtnWrap_${provider.apiType}_${provider.name}">
+                                >Models</button>
+                                <div class="relative hidden sm:inline-flex" id="curlBtnWrap_${provider.apiType}_${provider.name}">
                                     <button
                                         onclick="copyProviderCurl('${provider.apiType}', '${provider.name}', 'completions')"
-                                        class="btn btn-secondary px-2 py-1 text-xs font-medium rounded-r-none border-r-0"
-                                        title="Copy /completions cURL command"
+                                        class="btn btn-secondary btn-sm rounded-r-none border-r-0"
+                                        title="Copy a ready-to-run cURL command for /chat/completions"
                                     >Copy cURL</button>
                                     <button
                                         onclick="toggleCurlDropdown('${provider.apiType}', '${provider.name}', event)"
-                                        class="btn btn-secondary px-1.5 py-1 text-xs font-medium rounded-l-none"
-                                        title="More cURL options"
-                                    >▾</button>
-                                    <div id="curlDropdown_${provider.apiType}_${provider.name}" class="hidden absolute right-0 top-full mt-1 z-50 bg-popover border border-border rounded-md shadow-lg min-w-max">
-                                        <button onclick="copyProviderCurl('${provider.apiType}', '${provider.name}', 'completions'); closeCurlDropdown('${provider.apiType}', '${provider.name}')" class="block w-full text-left px-3 py-2 text-xs hover:bg-accent text-foreground">
-                                            Copy /completions cURL
-                                        </button>
-                                        <button onclick="copyProviderCurl('${provider.apiType}', '${provider.name}', 'models'); closeCurlDropdown('${provider.apiType}', '${provider.name}')" class="block w-full text-left px-3 py-2 text-xs hover:bg-accent text-foreground">
-                                            Copy /models cURL
-                                        </button>
+                                        class="btn btn-secondary btn-sm rounded-l-none px-1.5"
+                                        title="More cURL options" aria-label="More cURL options"
+                                    ><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg></button>
+                                    <div id="curlDropdown_${provider.apiType}_${provider.name}" class="menu hidden">
+                                        <button onclick="copyProviderCurl('${provider.apiType}', '${provider.name}', 'completions'); closeCurlDropdown('${provider.apiType}', '${provider.name}')" class="menu-item">Copy /chat/completions cURL</button>
+                                        <button onclick="copyProviderCurl('${provider.apiType}', '${provider.name}', 'models'); closeCurlDropdown('${provider.apiType}', '${provider.name}')" class="menu-item">Copy /models cURL</button>
                                     </div>
                                 </div>
-                                <button
-                                    onclick="showDeleteProviderConfirmation('${provider.apiType}', '${provider.name}')"
-                                    class="text-destructive hover:text-destructive/80 transition-colors p-1"
-                                    title="Delete Provider"
-                                >
-                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                    </svg>
-                                </button>
+                                <div class="relative inline-flex">
+                                    <button
+                                        onclick="toggleMoreMenu('${pk}', event)"
+                                        class="btn btn-ghost btn-sm px-1.5"
+                                        title="More actions" aria-label="More actions for ${provider.name}"
+                                    ><svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>
+                                    <div id="moreMenu_${pk}" class="menu hidden">
+                                        <button onclick="openModelsDialog('${provider.apiType}', '${provider.name}')" class="menu-item sm:hidden">Browse models</button>
+                                        <button onclick="copyProviderCurl('${provider.apiType}', '${provider.name}', 'completions')" class="menu-item sm:hidden">Copy cURL</button>
+                                        <button onclick="expandProvider('${pk}'); startRenameProvider('${provider.apiType}', '${provider.name}')" class="menu-item">Rename</button>
+                                        <button onclick="showDeleteProviderConfirmation('${provider.apiType}', '${provider.name}')" class="menu-item text-destructive">Delete provider</button>
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
-                        <!-- Configuration Section -->
-                        <div class="bg-muted/30 rounded-lg p-3 space-y-3">
-                            <div class="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Configuration</div>
+                        <div class="provider-body${expanded ? '' : ' hidden'}">
+                        <!-- Connection -->
+                        <div class="space-y-3">
+                            <h5 class="provider-section-title">Connection</h5>
 
                             <!-- URLs Row -->
                             <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
                                 <div>
-                                    <label class="block text-xs text-muted-foreground mb-1.5 font-medium">Original Base URL</label>
+                                    <label class="field-label">Upstream base URL</label>
                                     <div class="relative">
                                         <input
                                             type="text"
@@ -2419,7 +2617,7 @@
                                             value="${provider.baseUrl || ''}"
                                             data-original="${provider.baseUrl || ''}"
                                             class="input-field w-full px-3 py-2 pr-16 text-xs rounded transition-colors font-mono"
-                                            placeholder="Using default URL"
+                                            placeholder="Provider default"
                                             onkeypress="if(event.key === 'Enter') saveBaseUrl('${provider.apiType}', '${provider.name}')"
                                         >
                                         <div class="absolute right-1 top-1/2 -translate-y-1/2 flex items-center">
@@ -2446,7 +2644,7 @@
                                     </div>
                                 </div>
                                 <div>
-                                    <label class="block text-xs text-muted-foreground mb-1.5 font-medium">Your Endpoint URL</label>
+                                    <label class="field-label">Your endpoint <span class="font-normal">— point your app here</span></label>
                                     <div class="relative">
                                         <div class="font-mono text-foreground bg-muted/30 border border-border px-3 py-2 pr-10 rounded text-xs">
                                             <span class="text-muted-foreground">${window.location.protocol}//${window.location.host}/</span><span class="text-primary font-semibold">${provider.name}</span><span class="text-muted-foreground">/*</span>
@@ -2464,10 +2662,42 @@
                                 </div>
                             </div>
 
+                            <!-- Where the model list comes from -->
+                            <div>
+                                <label class="field-label" for="modelsUrl_${provider.apiType}_${provider.name}">Models list URL <span class="font-normal">— optional, used instead of the base URL + /models</span></label>
+                                <div class="relative">
+                                    <input
+                                        type="text"
+                                        id="modelsUrl_${provider.apiType}_${provider.name}"
+                                        value="${escapeHtml(provider.modelsUrl || '')}"
+                                        data-original="${escapeHtml(provider.modelsUrl || '')}"
+                                        class="input-field w-full px-3 py-2 pr-16 text-xs rounded transition-colors font-mono"
+                                        placeholder="${escapeHtml((provider.baseUrl || getDefaultProviderConfig(provider.apiType)?.baseUrl || '').replace(/\/$/, '') + '/models')}"
+                                        autocomplete="off"
+                                        onkeypress="if(event.key === 'Enter') saveModelsUrl('${provider.apiType}', '${provider.name}')"
+                                    >
+                                    <div class="absolute right-1 top-1/2 -translate-y-1/2 flex items-center">
+                                        ${provider.modelsUrl ? `<button
+                                            onclick="document.getElementById('modelsUrl_${provider.apiType}_${provider.name}').value=''; saveModelsUrl('${provider.apiType}', '${provider.name}')"
+                                            class="text-muted-foreground hover:text-foreground transition-colors p-1"
+                                            title="Go back to the base URL + /models" aria-label="Clear models list URL"
+                                        ><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg></button>` : ''}
+                                        <button
+                                            onclick="saveModelsUrl('${provider.apiType}', '${provider.name}')"
+                                            class="text-muted-foreground hover:text-foreground transition-colors p-1"
+                                            title="Save, then try loading the list" aria-label="Save models list URL"
+                                        >
+                                            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M7 19V13H17V19H19V7.828L16.172 5H15V9H9V5H5V19H7ZM17 5V7H15V5H17ZM19 3L21 5V19C21 19.5304 20.7893 20.0391 20.4142 20.4142C20.0391 20.7893 19.5304 21 19 21H5C4.46957 21 3.96086 20.7893 3.58579 20.4142C3.21071 20.0391 3 19.5304 3 19V5C3 4.46957 3.21071 3.96086 3.58579 3.58579C3.96086 3.21071 4.46957 3 5 3H19Z"></path></svg>
+                                        </button>
+                                    </div>
+                                </div>
+                                <p class="field-hint">For providers that list models somewhere else. A path like <code>/v2/models</code>, or a full <code>https://</code> URL. <code>{placeholders}</code> work the same as in the base URL.</p>
+                            </div>
+
                             <!-- Access Key and Default Model Row -->
                             <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
                                 <div>
-                                    <label class="block text-xs text-muted-foreground mb-1.5 font-medium">Access Key (Optional)</label>
+                                    <label class="field-label">Access key <span class="font-normal">— optional, locks this endpoint</span></label>
                                     <div class="relative">
                                         <input
                                             type="text"
@@ -2475,7 +2705,7 @@
                                             value="${provider.accessKey || ''}"
                                             data-original="${provider.accessKey || ''}"
                                             class="input-field w-full px-3 py-2 pr-28 text-xs rounded transition-colors font-mono"
-                                            placeholder="Enter access key or leave empty"
+                                            placeholder="None, open to anyone"
                                             oninput="checkForChanges('accessKey', '${provider.apiType}', '${provider.name}')"
                                             onkeypress="if(event.key === 'Enter') saveAccessKey('${provider.apiType}', '${provider.name}')"
                                         >
@@ -2511,7 +2741,7 @@
                                     </div>
                                 </div>
                                 <div>
-                                    <label class="block text-xs text-muted-foreground mb-1.5 font-medium">Default Model (Optional)</label>
+                                    <label class="field-label">Default model <span class="font-normal">— optional</span></label>
                                     <div class="relative">
                                         <input
                                             type="text"
@@ -2570,75 +2800,97 @@
                             </div>
                         </div>
                         <div>
-                            <label class="block text-muted-foreground mb-1 text-xs">API Keys</label>
+                            <h5 class="provider-section-title mb-2">API keys</h5>
+                            ${(() => { const names = placeholderNames(provider.baseUrl, provider.modelsUrl); return names.length ? `<p class="text-muted-foreground text-xs mb-1.5">Each key has its own ${names.map(n => `<strong>${escapeHtml(placeholderLabel(n))}</strong>`).join(' and ')}, filled into the URL when that key is used.</p>` : ''; })()}
                             <div class="space-y-1">
                                 ${provider.keys.map((keyObj, keyIndex) => {
                                     const keyVal = keyObj.key;
                                     const isKeyDisabled = keyObj.disabled;
-                                    const maskedKey = keyVal.length > 16 ? keyVal.substring(0, 8) + '...' + keyVal.slice(-4) : keyVal;
+                                    const valueNames = placeholderNames(provider.baseUrl, provider.modelsUrl);
+                                    const hasValues = valueNames.length > 0 || Object.keys(splitKeyValues(keyVal).values).length > 0;
+                                    const editId = `keyEdit_${provider.apiType}_${provider.name}_${keyIndex}`;
+                                    const toggleEdit = `toggleKeyEdit('${editId}')`;
                                     const usageEntry = (keyUsageData[provider.name] || []).find(u => u.fullKey === keyVal);
                                     const usageDisplay = usageEntry ? usageEntry.usageCount : 0;
                                     return `
-                                    <div class="flex items-center space-x-2${isKeyDisabled ? ' opacity-50' : ''}">
-                                        <!-- Reorder arrows -->
-                                        <div class="flex flex-col">
-                                            <button onclick="moveKey('${provider.apiType}', '${provider.name}', ${keyIndex}, 'up')"
-                                                class="text-muted-foreground hover:text-foreground p-0 leading-none${keyIndex === 0 ? ' invisible' : ''}" title="Move up">
-                                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/></svg>
-                                            </button>
-                                            <button onclick="moveKey('${provider.apiType}', '${provider.name}', ${keyIndex}, 'down')"
-                                                class="text-muted-foreground hover:text-foreground p-0 leading-none${keyIndex === provider.keys.length - 1 ? ' invisible' : ''}" title="Move down">
-                                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
-                                            </button>
-                                        </div>
+                                    <div class="key-item" data-key-pos="${keyIndex}">
+                                    <div class="flex flex-wrap sm:flex-nowrap items-center gap-2${isKeyDisabled ? ' opacity-50' : ''}">
+                                        <!-- Drag to reorder (arrow keys work too) -->
+                                        ${provider.keys.length > 1 ? `<button type="button" class="drag-handle"
+                                            title="Drag to reorder" aria-label="Reorder key ${keyIndex + 1} of ${provider.keys.length}: drag, or use the arrow keys"
+                                            onpointerdown="startKeyDrag(event, '${provider.apiType}', '${provider.name}', ${keyIndex})"
+                                            onkeydown="keyHandleKeydown(event, '${provider.apiType}', '${provider.name}', ${keyIndex})">
+                                            <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg>
+                                        </button>` : ''}
                                         <!-- Toggle key -->
                                         <label class="toggle-switch toggle-sm" title="${isKeyDisabled ? 'Enable key' : 'Disable key'}">
                                             <input type="checkbox" ${!isKeyDisabled ? 'checked' : ''} onchange="toggleKey('${provider.apiType}', '${provider.name}', ${keyIndex}, !this.checked)">
                                             <span class="toggle-slider"></span>
                                         </label>
                                         <!-- Key value -->
-                                        <div class="flex-1 font-mono text-xs text-foreground bg-muted px-2 py-1 rounded${isKeyDisabled ? ' line-through' : ''}">
-                                            ${maskedKey}
+                                        <div class="flex-1 min-w-0 basis-40 font-mono text-xs text-foreground bg-muted px-2 py-1 rounded${isKeyDisabled ? ' line-through' : ''}">
+                                            ${keyLabelHtml(keyVal, valueNames, toggleEdit)}
                                         </div>
+                                        <div class="key-actions">
                                         <!-- Usage count -->
-                                        <span class="text-xs text-muted-foreground whitespace-nowrap" title="Times used">${usageDisplay} uses</span>
+                                        <span class="text-xs text-muted-foreground whitespace-nowrap tabular-nums" title="Successful requests with this key since the server started">${usageDisplay} use${usageDisplay === 1 ? '' : 's'}</span>
                                         <button
                                             onclick="testProviderKey('${provider.apiType}', '${provider.name}', '${keyVal}', ${keyIndex})"
-                                            class="btn btn-secondary px-2 py-1 text-xs font-medium"
+                                            class="btn btn-ghost btn-sm"
+                                            title="Check this key still works"
                                         >
                                             Test
                                         </button>
+                                        ${hasValues ? `<button
+                                            onclick="${toggleEdit}"
+                                            class="btn btn-ghost btn-sm"
+                                            title="Edit this key's values"
+                                        >
+                                            Edit
+                                        </button>` : ''}
                                         <button
                                             onclick="showDeleteKeyConfirmation('${provider.apiType}', '${provider.name}', ${keyIndex})"
-                                            class="btn btn-destructive px-2 py-1 text-xs font-medium"
-                                            title="Delete Key"
+                                            class="btn btn-ghost btn-sm px-1.5 hover:!text-destructive"
+                                            title="Delete key" aria-label="Delete key"
                                         >
-                                            Delete
+                                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                                         </button>
+                                        </div>
+                                    </div>
+                                    ${hasValues ? `<div id="${editId}" class="hidden flex-wrap items-center gap-2 sm:ml-12 mt-1 mb-1 p-2 rounded border border-border bg-muted/40">
+                                        ${[...new Set([...valueNames, ...Object.keys(splitKeyValues(keyVal).values)])].map(n => `<label class="flex items-center gap-1.5 text-xs text-muted-foreground">${escapeHtml(placeholderLabel(n))} ${valueInputsHtml([n], splitKeyValues(keyVal).values)}</label>`).join('')}
+                                        <button onclick="saveKeyValues('${provider.apiType}', '${provider.name}', ${keyIndex})" class="btn btn-primary px-2 py-1 text-xs font-medium">Test &amp; Save</button>
+                                        <button onclick="${toggleEdit}" class="btn btn-secondary px-2 py-1 text-xs font-medium">Cancel</button>
+                                    </div>` : ''}
                                     </div>`;
                                 }).join('')}
-                                <div class="flex items-center space-x-2 mt-2 pt-2 border-t border-border">
+                                <div id="newKeyRow_${provider.apiType}_${provider.name}" class="flex flex-wrap sm:flex-nowrap items-center gap-2 mt-2 pt-2 border-t border-border">
                                     <input 
                                         type="text" 
                                         id="newKey_${provider.apiType}_${provider.name}" 
-                                        class="input-field flex-1 px-2 py-1 text-xs rounded transition-colors" 
-                                        placeholder="Enter new API key"
+                                        data-key-token
+                                        class="input-field flex-1 min-w-0 basis-40 px-2 py-1 text-xs rounded transition-colors" 
+                                        placeholder="Add another key"
                                     >
+                                    ${valueInputsHtml(placeholderNames(provider.baseUrl, provider.modelsUrl))}
+                                    <div class="key-actions">
                                     <button 
                                         onclick="testProviderNewKey('${provider.apiType}', '${provider.name}')" 
-                                        class="btn btn-secondary px-2 py-1 text-xs font-medium"
+                                        class="btn btn-ghost btn-sm"
                                     >
                                         Test
                                     </button>
                                     <button 
                                         onclick="saveProviderKey('${provider.apiType}', '${provider.name}')" 
-                                        class="btn btn-primary px-2 py-1 text-xs font-medium"
+                                        class="btn btn-secondary btn-sm"
                                     >
-                                        Test & Save
+                                        Add key
                                     </button>
+                                    </div>
                                 </div>
                                 <div id="newKeyResult_${provider.apiType}_${provider.name}" class="mt-2"></div>
                             </div>
+                        </div>
                         </div>
                     </div>
                 `;
@@ -2646,7 +2898,15 @@
             });
             
             if (Object.keys(providers).length === 0) {
-                providersContainer.innerHTML = '<div class="text-muted-foreground text-sm text-center py-4">No providers configured yet. Add one below.</div>';
+                providersContainer.innerHTML = `
+                    <div class="empty-state">
+                        <div class="h-10 w-10 rounded-lg bg-muted flex items-center justify-center mb-3">
+                            <svg class="w-5 h-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/></svg>
+                        </div>
+                        <p class="text-sm font-medium text-foreground">No providers yet</p>
+                        <p class="text-xs text-muted-foreground mt-1 max-w-sm">Add a provider and its API keys. rotato gives it an endpoint and rotates the keys for you.</p>
+                        <button onclick="openAddProviderDialog()" class="btn btn-primary btn-md mt-4">Add provider</button>
+                    </div>`;
             }
         }
         
@@ -2694,19 +2954,14 @@
             }
         }
 
-        async function moveKey(apiType, providerName, keyIndex, direction) {
-            // Read current key order from env
+        // Move one key to a new position; the server keeps each key's on/off state
+        async function reorderKey(apiType, providerName, fromIndex, toIndex) {
             const envKey = `${apiType.toUpperCase()}_${providerName.toUpperCase()}_API_KEYS`;
-            const currentValue = envVars[envKey] || '';
-            const rawKeys = currentValue.split(',').map(k => k.trim()).filter(k => k);
+            const rawKeys = (envVars[envKey] || '').split(',').map(k => k.trim()).filter(k => k);
+            if (fromIndex === toIndex || toIndex < 0 || toIndex >= rawKeys.length) return false;
 
-            const newIndex = direction === 'up' ? keyIndex - 1 : keyIndex + 1;
-            if (newIndex < 0 || newIndex >= rawKeys.length) return;
-
-            // Swap keys (keeping ~ prefix intact)
-            [rawKeys[keyIndex], rawKeys[newIndex]] = [rawKeys[newIndex], rawKeys[keyIndex]];
-
-            // Extract clean keys (without ~ prefix) for the reorder API
+            const [moved] = rawKeys.splice(fromIndex, 1);
+            rawKeys.splice(toIndex, 0, moved);
             const cleanKeys = rawKeys.map(k => k.startsWith('~') ? k.substring(1) : k);
 
             try {
@@ -2716,13 +2971,90 @@
                     body: JSON.stringify({ apiType, providerName, keys: cleanKeys })
                 });
                 const result = await response.json();
-                if (result.success) {
-                    await loadEnvVars();
-                } else {
-                    showErrorToast('Failed to reorder keys');
-                }
+                if (!result.success) throw new Error(result.error || 'server refused');
+                await loadEnvVars();
+                return true;
             } catch (error) {
                 showErrorToast('Failed to reorder keys: ' + error.message);
+                await loadEnvVars();
+                return false;
+            }
+        }
+
+        // Pointer-based so it works the same with a mouse, a finger or a pen
+        let keyDrag = null;
+
+        function startKeyDrag(event, apiType, providerName, fromIndex) {
+            if (event.button !== undefined && event.button !== 0) return;
+            const handle = event.currentTarget;
+            const item = handle.closest('.key-item');
+            const items = [...item.parentElement.querySelectorAll(':scope > .key-item')];
+            if (items.length < 2) return;
+            event.preventDefault();
+            try { handle.setPointerCapture(event.pointerId); } catch { /* synthetic or already-released pointer */ }
+
+            const rects = items.map(el => el.getBoundingClientRect());
+            const gap = rects[1].top - rects[0].bottom;
+            keyDrag = {
+                apiType, providerName, fromIndex, toIndex: fromIndex,
+                handle, item, items, rects,
+                startY: event.clientY,
+                slot: rects[fromIndex].height + gap,
+            };
+            item.classList.add('dragging');
+            items.forEach(el => { if (el !== item) el.classList.add('drag-shift'); });
+            handle.addEventListener('pointermove', moveKeyDrag);
+            handle.addEventListener('pointerup', endKeyDrag);
+            handle.addEventListener('pointercancel', endKeyDrag);
+        }
+
+        function moveKeyDrag(event) {
+            const d = keyDrag;
+            if (!d) return;
+            const first = d.rects[0], last = d.rects[d.rects.length - 1], own = d.rects[d.fromIndex];
+            // Keep the row inside its list
+            const dy = Math.max(first.top - own.top, Math.min(last.bottom - own.bottom, event.clientY - d.startY));
+            d.item.style.transform = `translateY(${dy}px)`;
+
+            const center = own.top + own.height / 2 + dy;
+            d.toIndex = d.rects.filter((r, i) => i !== d.fromIndex && r.top + r.height / 2 < center).length;
+
+            d.items.forEach((el, i) => {
+                if (i === d.fromIndex) return;
+                let shift = 0;
+                if (d.fromIndex < d.toIndex && i > d.fromIndex && i <= d.toIndex) shift = -d.slot;
+                if (d.fromIndex > d.toIndex && i < d.fromIndex && i >= d.toIndex) shift = d.slot;
+                el.style.transform = shift ? `translateY(${shift}px)` : '';
+            });
+        }
+
+        function endKeyDrag() {
+            const d = keyDrag;
+            if (!d) return;
+            keyDrag = null;
+            d.handle.removeEventListener('pointermove', moveKeyDrag);
+            d.handle.removeEventListener('pointerup', endKeyDrag);
+            d.handle.removeEventListener('pointercancel', endKeyDrag);
+
+            // Drop the row where it landed right away, so nothing jumps while saving
+            const list = d.item.parentElement;
+            d.items.forEach(el => { el.style.transform = ''; el.classList.remove('dragging', 'drag-shift'); });
+            if (d.toIndex === d.fromIndex) return;
+            const others = d.items.filter(el => el !== d.item);
+            const anchor = d.toIndex < others.length ? others[d.toIndex] : others[others.length - 1].nextSibling;
+            list.insertBefore(d.item, anchor);
+            reorderKey(d.apiType, d.providerName, d.fromIndex, d.toIndex);
+        }
+
+        async function keyHandleKeydown(event, apiType, providerName, index) {
+            const step = { ArrowUp: -1, ArrowDown: 1 }[event.key];
+            if (!step) return;
+            event.preventDefault();
+            const to = index + step;
+            if (await reorderKey(apiType, providerName, index, to)) {
+                // Keep focus on the key that moved, so it can be moved again
+                const list = document.getElementById(`newKeyRow_${apiType}_${providerName}`)?.parentElement;
+                list?.querySelector(`:scope > .key-item[data-key-pos="${to}"] .drag-handle`)?.focus();
             }
         }
 
@@ -2786,14 +3118,14 @@
             
             // Check for validation errors
             if (hasName && !hasBaseUrl) {
-                previewElement.innerHTML = `<span style="color: var(--destructive);">⚠️ <strong>Validation Error:</strong> Provider name provided but base URL is missing. Please provide both or leave both empty for default.</span>`;
+                previewElement.innerHTML = `<span style="color: var(--destructive);">Add a base URL too, or clear the name to add the default provider.</span>`;
                 previewElement.parentElement.style.borderColor = 'var(--destructive)';
                 previewElement.parentElement.style.backgroundColor = 'rgb(239 68 68 / 0.1)';
                 return;
             }
             
             if (!hasName && hasBaseUrl) {
-                previewElement.innerHTML = `<span style="color: var(--destructive);">⚠️ <strong>Validation Error:</strong> Base URL provided but provider name is missing. Please provide both or leave both empty for default.</span>`;
+                previewElement.innerHTML = `<span style="color: var(--destructive);">Give this provider a name too, or clear the URL to add the default provider.</span>`;
                 previewElement.parentElement.style.borderColor = 'var(--destructive)';
                 previewElement.parentElement.style.backgroundColor = 'rgb(239 68 68 / 0.1)';
                 return;
@@ -2806,10 +3138,10 @@
             // Valid combinations
             if (!hasName && !hasBaseUrl) {
                 // Default provider
-                previewElement.innerHTML = `Will create <strong>default ${apiType.toUpperCase()}</strong> provider '<strong>${defaultConfig.name}</strong>' → <code>${defaultConfig.baseUrl}</code>`;
+                previewElement.innerHTML = `Name and URL empty: adds the default <strong>${defaultConfig.name}</strong> provider (<code>${defaultConfig.baseUrl}</code>), served at <code>${location.host}/${defaultConfig.name}/…</code>`;
             } else {
                 // Custom provider (both name and base URL provided)
-                previewElement.innerHTML = `Will create <strong>custom</strong> provider '<strong>${name}</strong>' → <code>${baseUrl}</code>`;
+                previewElement.innerHTML = `Your app calls <code>${location.host}/<strong>${escapeHtml(name.toLowerCase())}</strong>/…</code> and rotato forwards to <code>${escapeHtml(baseUrl)}</code>`;
             }
         }
 
@@ -2818,7 +3150,13 @@
             let name = document.getElementById('newProviderName').value.trim();
             const apiType = document.getElementById('newProviderApiType').value;
             let baseUrl = document.getElementById('newProviderBaseUrl').value.trim();
+            const modelsUrl = document.getElementById('newProviderModelsUrl').value.trim();
             const resultDiv = document.getElementById('newProviderResult');
+
+            if (modelsUrl && !isValidModelsUrl(modelsUrl)) {
+                showWarningToast('Models list URL: use a path starting with / or a full https:// URL');
+                return;
+            }
 
             // Check for trailing slash in base URL
             if (baseUrl && baseUrl.endsWith('/')) {
@@ -2830,7 +3168,7 @@
             const keyInputs = document.querySelectorAll('.new-provider-key');
             const apiKeys = [];
             for (const input of keyInputs) {
-                const key = input.value.trim();
+                const key = readKeyFrom(input.parentElement);
                 if (key) {
                     apiKeys.push(key);
                 }
@@ -2840,6 +3178,7 @@
                 showWarningToast('At least one API key is required');
                 return;
             }
+            if (!apiKeys.every(key => hasAllKeyValues(key, baseUrl, modelsUrl))) return;
 
             // Check for duplicate keys within the new provider
             const uniqueKeys = new Set(apiKeys);
@@ -2891,7 +3230,7 @@
                 const existing = envVars[existingKeysVar].split(',').map(k => k.trim().replace(/^~/, ''));
                 const dupes = apiKeys.filter(k => existing.includes(k));
                 if (dupes.length > 0) {
-                    const maskedDupes = dupes.map(k => k.length > 16 ? k.substring(0, 8) + '...' + k.slice(-4) : k);
+                    const maskedDupes = dupes.map(k => maskKeyForDisplay(k));
                     showWarningToast(`Key(s) already exist in this provider: ${maskedDupes.join(', ')}`);
                     return;
                 }
@@ -2904,7 +3243,7 @@
             
             for (let i = 0; i < apiKeys.length; i++) {
                 const apiKey = apiKeys[i];
-                const maskedKey = apiKey.length > 16 ? apiKey.substring(0, 8) + '...' + apiKey.slice(-4) : apiKey;
+                const maskedKey = maskKeyForDisplay(apiKey);
                 
                 try {
                     showInfoToast(`Testing API key ${i + 1}/${apiKeys.length}: ${maskedKey}...`);
@@ -2945,6 +3284,7 @@
             // Create environment variable names
             const keysVar = `${apiType.toUpperCase()}_${name.toUpperCase()}_API_KEYS`;
             const baseUrlVar = `${apiType.toUpperCase()}_${name.toUpperCase()}_BASE_URL`;
+            const modelsUrlVar = `${apiType.toUpperCase()}_${name.toUpperCase()}_MODELS_URL`;
             
             // Check if provider already exists
             if (envVars[keysVar]) {
@@ -2957,6 +3297,7 @@
             if (baseUrl) {
                 envVars[baseUrlVar] = baseUrl;
             }
+            if (modelsUrl) envVars[modelsUrlVar] = modelsUrl;
             
             try {
                 const response = await fetch('/admin/api/env', {
@@ -2969,6 +3310,7 @@
                     // Clear form
                     document.getElementById('newProviderName').value = '';
                     document.getElementById('newProviderBaseUrl').value = '';
+                    document.getElementById('newProviderModelsUrl').value = '';
                     
                     // Clear all key inputs
                     keyInputs.forEach(input => input.value = '');
@@ -2976,13 +3318,15 @@
                     // Reset to single key input
                     const container = document.getElementById('newProviderKeys');
                     container.innerHTML = `
-                        <div class="flex items-center space-x-2" data-key-index="0">
+                        <div class="flex flex-wrap sm:flex-nowrap items-center gap-2" data-key-index="0">
                             <input 
                                 type="text" 
-                                class="input-field flex-1 px-2 py-1.5 text-xs rounded transition-colors new-provider-key" 
-                                placeholder="Enter API key"
+                                class="input-field flex-1 min-w-0 basis-full sm:basis-auto px-3 py-2 text-xs rounded transition-colors new-provider-key font-mono" 
+                                placeholder="Paste an API key"
                                 data-key-index="0"
+                                data-key-token
                             >
+                            <span class="key-values flex items-center gap-2"></span>
                             <button 
                                 onclick="testNewProviderKey(0)" 
                                 class="btn btn-secondary px-2 py-1 text-xs font-medium"
@@ -2999,39 +3343,79 @@
                         </div>
                     `;
                     newProviderKeyIndex = 1;
+                    syncNewProviderValueInputs();
+
+                    // Show the new provider open, where its keys are
+                    expandedProviders.add(`${apiType}_${name.toLowerCase()}`);
+                    saveExpandedProviders();
+                    closeAddProviderDialog();
                     
                     renderEnvVars();
+                    if (modelsUrl) probeModelsList(apiType, name.toLowerCase(), `Provider '${name.toLowerCase()}' added`);
                     
                     showSuccessToast(`🎉 Provider '${name}' created successfully with ${testedKeys.length} tested and valid API key${testedKeys.length > 1 ? 's' : ''}!`);
                 } else {
                     // Revert changes
                     delete envVars[keysVar];
                     if (baseUrl) delete envVars[baseUrlVar];
+                    delete envVars[modelsUrlVar];
                     showErrorToast('Failed to save provider');
                 }
             } catch (error) {
                 // Revert changes
                 delete envVars[keysVar];
                 if (baseUrl) delete envVars[baseUrlVar];
+                delete envVars[modelsUrlVar];
                 showErrorToast(`Failed to save provider: ${error.message}`);
             }
         }
         
         let newProviderKeyIndex = 1;
+
+        function openAddProviderDialog() {
+            document.getElementById('addProviderDialog').classList.remove('hidden');
+            updateProviderPreview();
+            syncNewProviderValueInputs();
+            setTimeout(() => document.getElementById('newProviderName').focus(), 50);
+        }
+
+        function closeAddProviderDialog() {
+            document.getElementById('addProviderDialog').classList.add('hidden');
+        }
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && !document.getElementById('addProviderDialog').classList.contains('hidden')) closeAddProviderDialog();
+        });
+
+        // One input per {placeholder} in the base URL on every key row, keeping what was typed
+        function syncNewProviderValueInputs() {
+            const baseUrl = document.getElementById('newProviderBaseUrl').value.trim();
+            const modelsInput = document.getElementById('newProviderModelsUrl');
+            const fallbackBase = baseUrl || getDefaultProviderConfig(document.getElementById('newProviderApiType').value)?.baseUrl || '';
+            modelsInput.placeholder = fallbackBase ? `${fallbackBase.replace(/\/$/, '')}/models` : 'Base URL + /models';
+            const names = placeholderNames(baseUrl, modelsInput.value);
+            document.querySelectorAll('#newProviderKeys .key-values').forEach(slot => {
+                const typed = {};
+                slot.querySelectorAll('[data-value-name]').forEach(i => { typed[i.dataset.valueName] = i.value; });
+                slot.innerHTML = valueInputsHtml(names, typed);
+            });
+        }
         
         function addNewProviderKey() {
             const container = document.getElementById('newProviderKeys');
             const keyDiv = document.createElement('div');
-            keyDiv.className = 'flex items-center space-x-2';
+            keyDiv.className = 'flex flex-wrap sm:flex-nowrap items-center gap-2';
             keyDiv.setAttribute('data-key-index', newProviderKeyIndex);
             
             keyDiv.innerHTML = `
                 <input 
                     type="text" 
-                    class="input-field flex-1 px-2 py-1.5 text-xs rounded transition-colors new-provider-key" 
-                    placeholder="Enter API key"
+                    class="input-field flex-1 min-w-0 basis-full sm:basis-auto px-3 py-2 text-xs rounded transition-colors new-provider-key font-mono" 
+                    placeholder="Paste an API key"
                     data-key-index="${newProviderKeyIndex}"
+                    data-key-token
                 >
+                <span class="key-values flex items-center gap-2"></span>
                 <button 
                     onclick="testNewProviderKey(${newProviderKeyIndex})" 
                     class="btn btn-secondary px-2 py-1 text-xs font-medium"
@@ -3047,6 +3431,7 @@
             `;
             
             container.appendChild(keyDiv);
+            syncNewProviderValueInputs();
             
             // Show remove button on first key if we now have multiple keys
             const firstRemoveBtn = document.querySelector('[data-key-index="0"] button[onclick*="removeNewProviderKey"]');
@@ -3076,15 +3461,15 @@
         async function testNewProviderKey(keyIndex) {
             const apiType = document.getElementById('newProviderApiType').value;
             const baseUrl = document.getElementById('newProviderBaseUrl').value.trim();
-            const keyInput = document.querySelector(`[data-key-index="${keyIndex}"] input`);
-            const apiKey = keyInput.value.trim();
+            const apiKey = readKeyFrom(document.querySelector(`div[data-key-index="${keyIndex}"]`));
             
             if (!apiKey) {
                 showWarningToast('Please enter an API key to test');
                 return;
             }
+            if (!hasAllKeyValues(apiKey, baseUrl, document.getElementById('newProviderModelsUrl').value.trim())) return;
             
-            const maskedKey = apiKey.length > 16 ? apiKey.substring(0, 8) + '...' + apiKey.slice(-4) : apiKey;
+            const maskedKey = maskKeyForDisplay(apiKey);
             showInfoToast(`Testing new API key ${maskedKey}...`);
             
             try {
@@ -3146,7 +3531,7 @@
             event.stopPropagation();
             const dropdown = document.getElementById(`curlDropdown_${apiType}_${providerName}`);
             // Close all other open curl dropdowns first
-            document.querySelectorAll('[id^="curlDropdown_"]').forEach(el => {
+            document.querySelectorAll('[id^="curlDropdown_"], [id^="moreMenu_"]').forEach(el => {
                 if (el.id !== dropdown.id) el.classList.add('hidden');
             });
             dropdown.classList.toggle('hidden');
@@ -3157,9 +3542,9 @@
             if (dropdown) dropdown.classList.add('hidden');
         }
 
-        // Close curl dropdowns when clicking outside
+        // Close curl dropdowns and provider menus when clicking outside
         document.addEventListener('click', () => {
-            document.querySelectorAll('[id^="curlDropdown_"]').forEach(el => el.classList.add('hidden'));
+            document.querySelectorAll('[id^="curlDropdown_"], [id^="moreMenu_"]').forEach(el => el.classList.add('hidden'));
         });
 
         // Generate and copy cURL command for testing a provider
@@ -3552,7 +3937,12 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 showErrorToast(`Add at least one enabled API key first — a key is needed to verify the new base URL.`);
                 return;
             }
-            const testKey = enabledKeys[Math.floor(Math.random() * enabledKeys.length)];
+            // Only keys that already have every {placeholder} value can verify the URL.
+            // If none do yet (placeholders just added), save unverified and let the
+            // key rows ask for the missing values.
+            const newNames = placeholderNames(newBaseUrl);
+            const readyKeys = enabledKeys.filter(k => newNames.every(n => splitKeyValues(k).values[n]));
+            const testKey = readyKeys.length ? readyKeys[Math.floor(Math.random() * readyKeys.length)] : null;
 
             const saveBtn = document.getElementById(`saveBtn_baseUrl_${apiType}_${providerName}`);
             if (saveBtn) { saveBtn.style.pointerEvents = 'none'; saveBtn.style.opacity = '0.5'; }
@@ -3562,15 +3952,17 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             const baseUrlVar = `${apiType.toUpperCase()}_${providerName.toUpperCase()}_BASE_URL`;
             try {
                 // 1) Verify the new URL with a random enabled key
-                const testResp = await fetch('/admin/api/test', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ apiType, apiKey: testKey, baseUrl: newBaseUrl || null })
-                });
-                const testResult = await testResp.json();
-                if (!testResult.success) {
-                    showErrorToast(`New base URL rejected — key test failed: ${testResult.error || 'unknown error'}. Not saved.`);
-                    return;
+                if (testKey) {
+                    const testResp = await fetch('/admin/api/test', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ apiType, apiKey: testKey, baseUrl: newBaseUrl || null })
+                    });
+                    const testResult = await testResp.json();
+                    if (!testResult.success) {
+                        showErrorToast(`New base URL rejected — key test failed: ${testResult.error || 'unknown error'}. Not saved.`);
+                        return;
+                    }
                 }
 
                 // 2) Verified — persist it (empty clears to the provider default)
@@ -3584,7 +3976,8 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 });
                 if (saveResp.ok) {
                     input.setAttribute('data-original', newBaseUrl);
-                    showSuccessToast(`✅ Base URL verified and saved for '${providerName}'.`);
+                    if (testKey) showSuccessToast(`✅ Base URL verified and saved for '${providerName}'.`);
+                    else showWarningToast(`Base URL saved. Now add ${newNames.map(placeholderLabel).join(' and ')} to each key - click the red tags below.`);
                     renderEnvVars();
                 } else {
                     showErrorToast('Base URL verified but failed to save.');
@@ -3788,7 +4181,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             const baseUrlVar = `${apiType.toUpperCase()}_${providerName.toUpperCase()}_BASE_URL`;
             const baseUrl = envVars[baseUrlVar] || null;
             
-            const maskedKey = apiKey.length > 16 ? apiKey.substring(0, 8) + '...' + apiKey.slice(-4) : apiKey;
+            const maskedKey = maskKeyForDisplay(apiKey);
             showInfoToast(`Testing API key ${maskedKey}...`);
             
             try {
@@ -3905,6 +4298,83 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 // Keep button always in default color (no green)
                 saveBtn.className = 'text-muted-foreground hover:text-foreground p-0.5';
             }
+        }
+
+        // Keys can carry values for {placeholders} in the base URL, stored as
+        // "token|accountId=abc". Nobody has to type that: every placeholder gets
+        // its own input, and these helpers convert between the two.
+        function splitKeyValues(key) {
+            const [token, ...pairs] = key.split('|');
+            const values = {};
+            for (const pair of pairs) {
+                const m = pair.trim().match(/^(\w+)=(.*)$/);
+                if (!m) return { token: key, values: {} };
+                values[m[1]] = m[2].trim();
+            }
+            return { token: token.trim(), values };
+        }
+
+        function joinKeyValues(token, values) {
+            return token + Object.entries(values).filter(([, v]) => v).map(([n, v]) => `|${n}=${v}`).join('');
+        }
+
+        // {placeholders} across all of a provider's URLs (base URL and models list URL)
+        function placeholderNames(...urls) {
+            return [...new Set(urls.flatMap(u => [...(u || '').matchAll(/\{(\w+)\}/g)].map(m => m[1])))];
+        }
+
+        function providerUrls(apiType, providerName) {
+            const prefix = `${apiType.toUpperCase()}_${providerName.toUpperCase()}_`;
+            return [envVars[prefix + 'BASE_URL'] || '', envVars[prefix + 'MODELS_URL'] || ''];
+        }
+
+        function placeholderLabel(name) {
+            return humanizeFieldName(name).replace(/\bid\b/g, 'ID').replace(/^./, c => c.toUpperCase());
+        }
+
+        function maskToken(token) {
+            return token.length > 16 ? token.substring(0, 8) + '...' + token.slice(-4) : token;
+        }
+
+        function maskKeyForDisplay(key) {
+            const { token, values } = splitKeyValues(key);
+            const names = Object.keys(values);
+            if (names.length === 0) return maskToken(token);
+            return `${maskToken(token)} (${names.map(n => `${placeholderLabel(n)} ${values[n].substring(0, 4)}…`).join(', ')})`;
+        }
+
+        // Masked token plus one tag per value; a value the URL needs but the key lacks shows red
+        function keyLabelHtml(key, names, editTarget) {
+            const { token, values } = splitKeyValues(key);
+            const all = [...new Set([...names, ...Object.keys(values)])];
+            const tags = all.map(n => values[n]
+                ? `<span class="inline-flex items-center px-1.5 rounded border border-border bg-background text-muted-foreground" title="${escapeHtml(placeholderLabel(n))}: ${escapeHtml(values[n])}">${escapeHtml(placeholderLabel(n))} ${escapeHtml(values[n].substring(0, 6))}…</span>`
+                : `<button type="button" onclick="${editTarget}" class="inline-flex items-center px-1.5 rounded border border-destructive/50 text-destructive" title="This key needs its own ${escapeHtml(placeholderLabel(n))} - click to add it">${escapeHtml(placeholderLabel(n))} missing</button>`);
+            return `<span>${escapeHtml(maskToken(token))}</span>${tags.length ? ` <span class="inline-flex flex-wrap gap-1 ml-1 align-middle">${tags.join('')}</span>` : ''}`;
+        }
+
+        function valueInputsHtml(names, values = {}) {
+            return names.map(n => `<input type="text" data-value-name="${n}" value="${escapeHtml(values[n] || '')}" placeholder="${escapeHtml(placeholderLabel(n))}" title="${escapeHtml(placeholderLabel(n))} for this key (fills {${n}} in the base URL)" class="input-field w-36 px-2 py-1 text-xs rounded transition-colors font-mono">`).join('');
+        }
+
+        // Full stored key from a row: the key input (which may already hold a pasted "token|name=value") plus its value inputs
+        function readKeyFrom(row) {
+            if (!row) return '';
+            const tokenInput = row.querySelector('[data-key-token]') || row.querySelector('input');
+            const { token, values } = splitKeyValues(tokenInput.value.trim());
+            row.querySelectorAll('[data-value-name]').forEach(input => {
+                if (input.value.trim()) values[input.dataset.valueName] = input.value.trim();
+            });
+            return token ? joinKeyValues(token, values) : '';
+        }
+
+        // Warn before a test that is bound to fail because a value is empty
+        function hasAllKeyValues(key, ...urls) {
+            const { values } = splitKeyValues(key);
+            const missing = placeholderNames(...urls).filter(n => !values[n]);
+            if (missing.length === 0) return true;
+            showWarningToast(`Fill in ${missing.map(placeholderLabel).join(' and ')} for this key`);
+            return false;
         }
 
         function handleBaseUrlInput(input) {
@@ -4085,12 +4555,13 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
         
         async function saveProviderKey(apiType, providerName) {
             const inputId = `newKey_${apiType}_${providerName}`;
-            const newKey = document.getElementById(inputId).value.trim();
+            const newKey = readKeyFrom(document.getElementById(`newKeyRow_${apiType}_${providerName}`));
             
             if (!newKey) {
                 showWarningToast('Please enter an API key');
                 return;
             }
+            if (!hasAllKeyValues(newKey, ...providerUrls(apiType, providerName))) return;
 
             // Check for duplicate key in this provider
             const keysVarCheck = `${apiType.toUpperCase()}_${providerName.toUpperCase()}_API_KEYS`;
@@ -4100,7 +4571,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 return;
             }
 
-            const maskedKey = newKey.length > 16 ? newKey.substring(0, 8) + '...' + newKey.slice(-4) : newKey;
+            const maskedKey = maskKeyForDisplay(newKey);
 
             // Get the base URL for this provider to use for testing
             const baseUrlVar = `${apiType.toUpperCase()}_${providerName.toUpperCase()}_BASE_URL`;
@@ -4165,21 +4636,81 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             }
         }
         
+        function toggleKeyEdit(editId) {
+            const panel = document.getElementById(editId);
+            if (!panel) return;
+            const open = panel.classList.toggle('hidden') === false;
+            panel.classList.toggle('flex', open);
+            if (open) (panel.querySelector('input[value=""]') || panel.querySelector('input'))?.focus();
+        }
+
+        // Replace one key's values in place, keeping its position and enabled state
+        async function saveKeyValues(apiType, providerName, keyIndex) {
+            const keysVar = `${apiType.toUpperCase()}_${providerName.toUpperCase()}_API_KEYS`;
+            const baseUrl = envVars[`${apiType.toUpperCase()}_${providerName.toUpperCase()}_BASE_URL`] || '';
+            const rawKeys = (envVars[keysVar] || '').split(',').map(k => k.trim()).filter(k => k);
+            const entry = rawKeys[keyIndex];
+            if (!entry) return;
+            const disabled = entry.startsWith('~');
+            const oldKey = disabled ? entry.substring(1) : entry;
+
+            const { token, values } = splitKeyValues(oldKey);
+            document.querySelectorAll(`#keyEdit_${apiType}_${providerName}_${keyIndex} [data-value-name]`).forEach(input => {
+                values[input.dataset.valueName] = input.value.trim();
+            });
+            const newKey = joinKeyValues(token, values);
+            if (newKey === oldKey) { toggleKeyEdit(`keyEdit_${apiType}_${providerName}_${keyIndex}`); return; }
+            if (!hasAllKeyValues(newKey, ...providerUrls(apiType, providerName))) return;
+
+            showInfoToast(`Testing ${maskKeyForDisplay(newKey)}...`);
+            try {
+                const testResult = await (await fetch('/admin/api/test', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ apiType, apiKey: newKey, baseUrl })
+                })).json();
+                if (!testResult.success) {
+                    showErrorToast(`❌ Not saved - the key failed with these values: ${testResult.error || 'Unknown error'}`);
+                    return;
+                }
+            } catch (error) {
+                showErrorToast(`❌ Failed to test the key: ${error.message}`);
+                return;
+            }
+
+            const previous = envVars[keysVar];
+            rawKeys[keyIndex] = (disabled ? '~' : '') + newKey;
+            envVars[keysVar] = rawKeys.join(',');
+            try {
+                const response = await fetch('/admin/api/env', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(envVars)
+                });
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                renderEnvVars();
+                showSuccessToast(`✅ Saved ${maskKeyForDisplay(newKey)}`);
+            } catch (error) {
+                envVars[keysVar] = previous;
+                showErrorToast(`Failed to save: ${error.message}`);
+            }
+        }
+
         async function testProviderNewKey(apiType, providerName) {
-            const inputId = `newKey_${apiType}_${providerName}`;
-            const newKey = document.getElementById(inputId).value.trim();
+            const newKey = readKeyFrom(document.getElementById(`newKeyRow_${apiType}_${providerName}`));
             
             if (!newKey) {
                 showWarningToast('Please enter an API key to test');
                 return;
             }
+            if (!hasAllKeyValues(newKey, ...providerUrls(apiType, providerName))) return;
             
             // Get provider's base URL
             const keysVar = `${apiType.toUpperCase()}_${providerName.toUpperCase()}_API_KEYS`;
             const baseUrlVar = `${apiType.toUpperCase()}_${providerName.toUpperCase()}_BASE_URL`;
             const baseUrl = envVars[baseUrlVar] || null;
             
-            const maskedKey = newKey.length > 16 ? newKey.substring(0, 8) + '...' + newKey.slice(-4) : newKey;
+            const maskedKey = maskKeyForDisplay(newKey);
             showInfoToast(`Testing API key ${maskedKey} for provider '${providerName}'...`);
             
             try {
@@ -4622,10 +5153,10 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             const viaProxy = logs.filter(l => l.proxyUsed).length;
 
             const card = (label, value, sub, tone) => `
-                <div class="section" style="margin:0;padding:var(--space-3) var(--space-4)">
-                    <div class="text-2xs uppercase tracking-wide text-muted-foreground">${label}</div>
-                    <div class="text-xl font-semibold ${tone || 'text-foreground'} tabular-nums mt-0.5">${value}</div>
-                    ${sub ? `<div class="text-2xs text-muted-foreground mt-0.5">${sub}</div>` : ''}
+                <div class="section stat-card" style="margin:0">
+                    <div class="text-2xs uppercase tracking-wide text-muted-foreground truncate">${label}</div>
+                    <div class="text-lg sm:text-xl font-semibold ${tone || 'text-foreground'} tabular-nums mt-0.5">${value}</div>
+                    ${sub ? `<div class="text-2xs text-muted-foreground mt-0.5 hidden sm:block">${sub}</div>` : ''}
                 </div>`;
             el.innerHTML =
                 card('Total', total, 'requests') +
@@ -5092,14 +5623,70 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
 
         // Keep the provider's whole model object — every field is rendered.
         // The named fields are only what sorting and filtering need.
+        // Where the list sits in the reply: the usual keys first, else the first array of objects
+        function findModelList(data) {
+            if (Array.isArray(data)) return data;
+            if (!data || typeof data !== 'object') return [];
+            for (const key of ['data', 'models', 'result', 'results', 'items']) {
+                if (Array.isArray(data[key])) return data[key];
+            }
+            return Object.values(data).find(v => Array.isArray(v) && v.some(x => x && typeof x === 'object')) || [];
+        }
+
+        const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+        // The name you'd pass as "model": an internal UUID id doesn't count
+        function pickModelId(m) {
+            for (const v of [m.model, m.id, m.name]) {
+                if (typeof v === 'string' && v && !UUID_RE.test(v)) return v;
+            }
+            return String(m.id || '');
+        }
+
+        // Some providers keep a model's settings as a list of name/value pairs,
+        // e.g. [{ property_id: 'context_window', value: '128000' }]. Lift them to
+        // plain fields so context, price and capability detection see them. A price
+        // list of { unit, price } entries becomes the usual pricing object.
+        function expandModel(m) {
+            const out = { ...m };
+            for (const [key, value] of Object.entries(m)) {
+                if (!Array.isArray(value) || !value.length) continue;
+                const pairs = value.every(v => v && typeof v === 'object' && 'value' in v
+                    && typeof (v.property_id ?? v.key ?? v.name) === 'string');
+                if (!pairs) continue;
+                delete out[key];
+                for (const v of value) {
+                    const name = v.property_id ?? v.key ?? v.name;
+                    const val = v.value === 'true' ? true : v.value === 'false' ? false : v.value;
+                    out[name in out ? `${key}.${name}` : name] = val;
+                }
+            }
+            for (const key of ['price', 'prices', 'pricing']) {
+                const list = out[key];
+                if (!Array.isArray(list) || !list.every(p => p && typeof p === 'object' && 'price' in p && 'unit' in p)) continue;
+                const find = (word) => list.find(p => new RegExp(word, 'i').test(p.unit));
+                const input = find('input'), output = find('output');
+                if (!input && !output) continue;
+                const perMillion = /(^|\W)m(\W|$)|million/i.test((input || output).unit);
+                out.pricing = { input: input && input.price, output: output && output.price, unit: perMillion ? 'per 1M tokens' : 'per token' };
+                if (key !== 'pricing') delete out[key];
+            }
+            return out;
+        }
+
         function normalizeModels(data) {
-            const raw = data.data || data.models || (Array.isArray(data) ? data : []);
-            return raw.map(m => {
-                const id = String(m.id || m.name || '').replace(/^models\//, '');
+            const raw = findModelList(data);
+            return raw.filter(x => x && typeof x === 'object').map(original => {
+                const m = expandModel(original);
+                const id = pickModelId(m).replace(/^models\//, '');
                 const pricing = resolvePricing(m);
+                // "@scope/vendor/model" -> vendor; "vendor/model" -> vendor
+                const segments = id.split('/');
+                const ownerFromId = segments.length > 1 ? (segments[0].startsWith('@') && segments.length > 2 ? segments[1] : segments[0]) : '';
                 return {
                     id,
-                    owner: m.owned_by || m.ownedBy || (id.includes('/') ? id.split('/')[0] : ''),
+                    original,
+                    owner: m.owned_by || m.ownedBy || ownerFromId,
                     created: m.created || m.created_at || null,
                     context: resolveContextLimit(m),
                     maxOutput: resolveMaxOutput(m),
@@ -5183,7 +5770,15 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
 
         function prettyLabel(key) {
             if (FIELD_LABELS[key]) return FIELD_LABELS[key];
-            const leaf = key.split('.').pop();
+            const parts = key.split('.');
+            const leaf = parts.pop();
+            // A nested name/id/description only means something with its parent:
+            // task.name -> "Task", task.id -> "Task ID", task.description -> "Task description"
+            const parent = parts.length ? humanizeFieldName(parts[parts.length - 1]) : '';
+            if (parent && ['name', 'title', 'label', 'id', 'description'].includes(leaf)) {
+                const head = parent.charAt(0).toUpperCase() + parent.slice(1);
+                return leaf === 'id' ? `${head} ID` : leaf === 'description' ? `${head} description` : head;
+            }
             if (FIELD_LABELS[leaf]) return FIELD_LABELS[leaf];
             // "capabilities.audio_speech" reads fine as just "audio speech"
             const readable = humanizeFieldName(leaf);
@@ -5391,6 +5986,69 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             return chipRow + desc;
         }
 
+        // How the panel calls a provider through rotato: its access key plus the rotation codes
+        function modelsRequestHeaders(apiType, provider) {
+            const accessKey = envVars[`${apiType.toUpperCase()}_${provider.toUpperCase()}_ACCESS_KEY`];
+            let auth = `[STATUS_CODES:${defaultStatusCodes}]`;
+            if (accessKey) auth += `[ACCESS_KEY:${accessKey}]`;
+            return apiType === 'gemini' ? { 'x-goog-api-key': auth } : { 'Authorization': `Bearer ${auth}` };
+        }
+
+        async function saveModelsUrl(apiType, providerName) {
+            const input = document.getElementById(`modelsUrl_${apiType}_${providerName}`);
+            if (!input) return;
+            const value = input.value.trim();
+            if (value === (input.getAttribute('data-original') || '')) { showInfoToast('Models list URL unchanged'); return; }
+            if (value && !isValidModelsUrl(value)) {
+                showWarningToast('Use a path starting with / or a full https:// URL');
+                return;
+            }
+
+            const envKey = `${apiType.toUpperCase()}_${providerName.toUpperCase()}_MODELS_URL`;
+            const previous = envVars[envKey];
+            if (value) envVars[envKey] = value; else delete envVars[envKey];
+            try {
+                const response = await fetch('/admin/api/env', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(envVars)
+                });
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            } catch (error) {
+                if (previous === undefined) delete envVars[envKey]; else envVars[envKey] = previous;
+                showErrorToast(`Failed to save models list URL: ${error.message}`);
+                return;
+            }
+            modelsCache.delete(providerName);
+            renderEnvVars();
+
+            // Try it straight away, so a wrong URL shows up now rather than in the models browser
+            await probeModelsList(apiType, providerName, value ? 'Models list URL saved' : 'Back to the base URL + /models');
+        }
+
+        function isValidModelsUrl(value) {
+            return /^(https:\/\/|\/)/i.test(value);
+        }
+
+        // Fetch the provider's model list through rotato and say what came back
+        async function probeModelsList(apiType, providerName, label) {
+            try {
+                const res = await fetch(`/${providerName}/models`, { headers: modelsRequestHeaders(apiType, providerName) });
+                const text = await res.text();
+                let data = null;
+                try { data = JSON.parse(text); } catch (e) { /* non-JSON */ }
+                if (!res.ok) {
+                    showErrorToast(`${label}, but loading the list failed: HTTP ${res.status} ${text.slice(0, 160)}`);
+                    return;
+                }
+                const count = data ? normalizeModels(data).length : 0;
+                if (count) showSuccessToast(`${label}. It lists ${count} model${count === 1 ? '' : 's'}.`);
+                else showWarningToast(`${label}. It answered, but no models were found in its reply.`);
+            } catch (error) {
+                showErrorToast(`${label}, but loading the list failed: ${error.message}`);
+            }
+        }
+
         async function loadModelsList(force) {
             const { apiType, provider } = mdCtx;
             const list = document.getElementById('mdList');
@@ -5411,15 +6069,11 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             document.getElementById('mdCount').textContent = '';
             subtitle.textContent = `GET /${provider}/models`;
 
-            try {
-                const accessKey = envVars[`${apiType.toUpperCase()}_${provider.toUpperCase()}_ACCESS_KEY`];
-                let auth = `[STATUS_CODES:${defaultStatusCodes}]`;
-                if (accessKey) auth += `[ACCESS_KEY:${accessKey}]`;
-                const headers = apiType === 'gemini'
-                    ? { 'x-goog-api-key': auth }
-                    : { 'Authorization': `Bearer ${auth}` };
+            const customUrl = envVars[`${apiType.toUpperCase()}_${provider.toUpperCase()}_MODELS_URL`];
+            if (customUrl) subtitle.textContent += ` → ${customUrl}`;
 
-                const res = await fetch(`/${provider}/models`, { headers });
+            try {
+                const res = await fetch(`/${provider}/models`, { headers: modelsRequestHeaders(apiType, provider) });
                 const text = await res.text();
                 let data = null;
                 try { data = JSON.parse(text); } catch (e) { /* non-JSON below */ }
@@ -5627,8 +6281,8 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 const fields = renderModelFields(m); // also sets m._nestedCount
                 return `
                     <div class="key-row">
-                        <div class="flex items-start justify-between gap-3">
-                            <div class="min-w-0 font-mono text-xs text-foreground break-all pt-1">
+                        <div class="flex flex-wrap sm:flex-nowrap items-start justify-between gap-2 sm:gap-3">
+                            <div class="min-w-0 basis-full sm:basis-auto font-mono text-xs text-foreground break-all pt-1">
                                 ${safeId}
                                 ${m.tier === 'free' ? '<span class="badge badge-success ml-1.5 font-sans align-middle" title="Provider prices this model at $0">free</span>' : ''}
                                 ${(m.tier === 'unknown' && mdCtx.showUnpricedBadge) ? '<span class="badge badge-warning ml-1.5 font-sans align-middle" title="This provider returned no pricing for this model — it is not necessarily free">price unknown</span>' : ''}
@@ -5652,8 +6306,8 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             if (!model) return;
             document.getElementById('mjTitle').textContent = model.id;
             document.getElementById('mjSubtitle').textContent =
-                `Full record as returned by ${mdCtx.provider} — ${Object.keys(model.raw).length} fields`;
-            document.getElementById('mjBody').textContent = JSON.stringify(model.raw, null, 2);
+                `Full record as returned by ${mdCtx.provider} — ${Object.keys(model.original || model.raw).length} fields`;
+            document.getElementById('mjBody').textContent = JSON.stringify(model.original || model.raw, null, 2);
             document.getElementById('modelJsonDialog').classList.remove('hidden');
         }
 
@@ -5750,13 +6404,13 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 _proxyProviderState[p.name] = !!p.proxy;
 
                 const row = document.createElement('div');
-                row.className = 'flex items-center justify-between gap-3 border border-border rounded p-2 bg-muted/20';
+                row.className = 'flex items-center justify-between gap-3 border border-border rounded-md px-3 py-2';
                 row.innerHTML = `
-                    <div class="min-w-0">
-                        <div class="text-xs font-medium text-foreground truncate">${escapeHtml(p.name)}${p.disabled ? ' <span class="text-muted-foreground font-normal">(disabled)</span>' : ''}</div>
-                        <div class="text-2xs text-muted-foreground">${escapeHtml(String(p.apiType || '').toUpperCase())}</div>
+                    <div class="min-w-0 flex items-center gap-2">
+                        <span class="text-xs font-medium text-foreground truncate">${escapeHtml(p.name)}</span>
+                        ${p.disabled ? '<span class="badge badge-error">Off</span>' : ''}
                     </div>
-                    <label class="toggle-switch flex-shrink-0" title="Route ${escapeHtml(p.name)} through the proxy">
+                    <label class="toggle-switch toggle-sm flex-shrink-0" title="Route ${escapeHtml(p.name)} through the proxy">
                         <input type="checkbox" ${p.proxy ? 'checked' : ''}>
                         <span class="toggle-slider"></span>
                     </label>
