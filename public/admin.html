@@ -1136,7 +1136,7 @@
                     <p class="text-muted-foreground text-xs mt-1">For providers that rate-limit by IP. Pick which providers use it; the rest connect directly.</p>
                 </div>
 
-                <div class="grid grid-cols-1 gap-4 items-start max-w-4xl">
+                <div class="grid grid-cols-1 gap-4 items-start">
                     <!-- Proxy Configuration -->
                     <div class="section" style="margin:0">
                         <h3 class="text-sm font-medium text-foreground mb-3 flex items-center gap-2">
@@ -1192,7 +1192,7 @@
                         </h3>
                         <div class="space-y-3">
                             <p class="text-xs text-muted-foreground">Proxying is per provider. Anything left off connects directly, so you can route only the provider that is rate-limiting you.</p>
-                            <div id="proxyProviderList" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2"></div>
+                            <div id="proxyProviderList" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2"></div>
                             <p id="proxyProviderEmpty" class="text-xs text-muted-foreground hidden">No providers configured yet.</p>
                         </div>
                     </div>
@@ -1259,7 +1259,7 @@
                     <p class="text-muted-foreground text-xs mt-1">Applies to every provider. Changes take effect when you save, no restart.</p>
                 </div>
 
-                <div class="grid grid-cols-1 gap-4 items-start max-w-3xl">
+                <div class="grid grid-cols-1 gap-4 items-start">
                     <!-- Key Rotation Section -->
                     <div class="section" style="margin:0">
                         <h3 class="text-sm font-medium text-foreground mb-3 flex items-center gap-2">
@@ -1319,11 +1319,11 @@
                         <div class="space-y-3">
                             <div>
                                 <label class="field-label" for="telegramBotToken">Bot token</label>
-                                <input type="password" id="telegramBotToken" class="input-field w-full px-3 py-2 rounded-md text-sm" placeholder="123456789:ABCdefGhIjKlMnOpQrStUvWxYz">
+                                <input type="password" id="telegramBotToken" class="input-field w-full max-w-xl px-3 py-2 rounded-md text-sm" placeholder="123456789:ABCdefGhIjKlMnOpQrStUvWxYz">
                             </div>
                             <div>
                                 <label class="field-label" for="telegramAllowedUsers">Allowed user IDs</label>
-                                <input type="text" id="telegramAllowedUsers" class="input-field w-full px-3 py-2 rounded-md text-sm font-mono" placeholder="123456789, 987654321">
+                                <input type="text" id="telegramAllowedUsers" class="input-field w-full max-w-xl px-3 py-2 rounded-md text-sm font-mono" placeholder="123456789, 987654321">
                                 <p class="field-hint">Comma-separated. Leave empty to let anyone use the bot.</p>
                             </div>
                             <div id="telegramBotStatus" class="text-xs"></div>
