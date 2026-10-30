@@ -9,6 +9,21 @@ const ProxyManager = require('./proxyManager');
 const ApiLogStore = require('./apiLogStore');
 const ProxyPool = require('./proxyPool');
 const { resolveKey } = require('./keyValues');
+const { parseStatusCodes, describeStatusCodes } = require('./statusCodes');
+
+// The provider's own reason from an error body ({error:{message}}, {error:"..."},
+// {message}, Cloudflare's {errors:[{message}]}), so a failed key check says why
+function upstreamErrorText(body) {
+  try {
+    const d = JSON.parse(body);
+    const e = d.error;
+    const msg = (e && typeof e === 'object' ? (e.message || e.code) : e)
+      || d.message || (Array.isArray(d.errors) && d.errors[0] && d.errors[0].message) || '';
+    return String(msg).slice(0, 200);
+  } catch (err) {
+    return '';
+  }
+}
 
 class ProxyServer {
   constructor(config, geminiClient = null, openaiClient = null) {
@@ -505,52 +520,10 @@ class ProxyServer {
   }
 
   parseStatusCodesFromAuth(authHeader) {
-    // Extract [STATUS_CODES:...] from the Authorization header
+    // [STATUS_CODES:403, 420-429, >=500] in the Authorization header (syntax in statusCodes.js)
     const match = authHeader?.match(/\[STATUS_CODES:([^\]]+)\]/i);
     if (!match) return null;
-
-    const statusCodeStr = match[1];
-    const codes = new Set();
-
-    // Parse each part (e.g., "429", "400-420", "500+", "400=+")
-    const parts = statusCodeStr.split(',').map(s => s.trim());
-
-    for (const part of parts) {
-      if (part.includes('-')) {
-        // Range: 400-420
-        const [start, end] = part.split('-').map(n => parseInt(n.trim()));
-        if (!isNaN(start) && !isNaN(end)) {
-          for (let i = start; i <= end; i++) {
-            codes.add(i);
-          }
-        }
-      } else if (part.endsWith('=+')) {
-        // Equal or greater: 400=+
-        const base = parseInt(part.slice(0, -2).trim());
-        if (!isNaN(base)) {
-          // Add codes from base to 599 (reasonable upper limit for HTTP status codes)
-          for (let i = base; i <= 599; i++) {
-            codes.add(i);
-          }
-        }
-      } else if (part.endsWith('+')) {
-        // Greater than: 400+
-        const base = parseInt(part.slice(0, -1).trim());
-        if (!isNaN(base)) {
-          // Add codes from base+1 to 599
-          for (let i = base + 1; i <= 599; i++) {
-            codes.add(i);
-          }
-        }
-      } else {
-        // Single code: 429
-        const code = parseInt(part.trim());
-        if (!isNaN(code)) {
-          codes.add(code);
-        }
-      }
-    }
-
+    const { codes } = parseStatusCodes(match[1]);
     return codes.size > 0 ? codes : null;
   }
 
@@ -1039,10 +1012,10 @@ class ProxyServer {
 
       if (apiType === 'gemini') {
         // Test Gemini API key with custom base URL if provided
-        testResult = await this.testGeminiKey(apiKey, baseUrl);
+        testResult = await this.testGeminiKey(apiKey, baseUrl, parsed.quiet);
       } else if (apiType === 'openai') {
         // Test OpenAI API key with custom base URL if provided
-        testResult = await this.testOpenaiKey(apiKey, baseUrl);
+        testResult = await this.testOpenaiKey(apiKey, baseUrl, parsed.quiet);
       }
       
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -1052,7 +1025,8 @@ class ProxyServer {
     }
   }
   
-  async testGeminiKey(apiKey, baseUrl = null) {
+  // quiet: a bulk "Test all" run - don't fill the request log with key checks
+  async testGeminiKey(apiKey, baseUrl = null, quiet = false) {
     const testId = Math.random().toString(36).substring(2, 11);
     const testBaseUrl = baseUrl || 'https://generativelanguage.googleapis.com/v1';
     const startTime = Date.now();
@@ -1077,7 +1051,7 @@ class ProxyServer {
       const responseTime = Date.now() - startTime;
       
       // Store response data for viewing
-      this.storeResponseData(testId, {
+      if (!quiet) this.storeResponseData(testId, {
         method: 'GET',
         endpoint: testPath,
         apiType: 'Gemini',
@@ -1089,8 +1063,8 @@ class ProxyServer {
       });
       
       // Log with structured format
-      const error = !testResponse.ok ? `API test failed: ${testResponse.status} ${testResponse.statusText}` : null;
-      this.logApiRequest(testId, 'GET', testPath, 'gemini', testResponse.status, responseTime, error, 'admin-test');
+      const error = !testResponse.ok ? `API test failed: ${testResponse.status} ${upstreamErrorText(responseText) || testResponse.statusText}` : null;
+      if (!quiet) this.logApiRequest(testId, 'GET', testPath, 'gemini', testResponse.status, responseTime, error, 'admin-test');
       
       console.log(`[TEST-${testId}] GET ${testPath} (Gemini) → ${testResponse.status} ${testResponse.statusText} | ${contentType} ${responseText.length}b`);
       
@@ -1102,13 +1076,13 @@ class ProxyServer {
       const responseTime = Date.now() - startTime;
       
       console.log(`[TEST-${testId}] GET ${testPath} (Gemini) → ERROR: ${error.message}`);
-      this.logApiRequest(testId, 'GET', testPath, 'gemini', null, responseTime, error.message, 'admin-test');
+      if (!quiet) this.logApiRequest(testId, 'GET', testPath, 'gemini', null, responseTime, error.message, 'admin-test');
       
       return { success: false, error: error.message };
     }
   }
   
-  async testOpenaiKey(apiKey, baseUrl = null) {
+  async testOpenaiKey(apiKey, baseUrl = null, quiet = false) {
     const testId = Math.random().toString(36).substring(2, 11);
     const testBaseUrl = baseUrl || 'https://api.openai.com/v1';
     const startTime = Date.now();
@@ -1149,7 +1123,7 @@ class ProxyServer {
       const responseTime = Date.now() - startTime;
       
       // Store response data for viewing
-      this.storeResponseData(testId, {
+      if (!quiet) this.storeResponseData(testId, {
         method: 'GET',
         endpoint: testPath,
         apiType: 'OpenAI',
@@ -1161,8 +1135,8 @@ class ProxyServer {
       });
       
       // Log with structured format
-      const error = !keyAccepted ? `API test failed: ${testResponse.status} ${testResponse.statusText}` : null;
-      this.logApiRequest(testId, 'GET', testPath, 'openai', testResponse.status, responseTime, error, 'admin-test');
+      const error = !keyAccepted ? `API test failed: ${testResponse.status} ${upstreamErrorText(responseText) || testResponse.statusText}` : null;
+      if (!quiet) this.logApiRequest(testId, 'GET', testPath, 'openai', testResponse.status, responseTime, error, 'admin-test');
       
       console.log(`[TEST-${testId}] GET ${testPath} (OpenAI) → ${testResponse.status} ${testResponse.statusText} | ${contentType} ${responseText.length}b`);
       
@@ -1174,7 +1148,7 @@ class ProxyServer {
       const responseTime = Date.now() - startTime;
       
       console.log(`[TEST-${testId}] GET ${testPath} (OpenAI) → ERROR: ${error.message}`);
-      this.logApiRequest(testId, 'GET', testPath, 'openai', null, responseTime, error.message, 'admin-test');
+      if (!quiet) this.logApiRequest(testId, 'GET', testPath, 'openai', null, responseTime, error.message, 'admin-test');
       
       return { success: false, error: error.message };
     }
@@ -1985,17 +1959,21 @@ class ProxyServer {
           delete envVars.TELEGRAM_ALLOWED_USERS;
         }
       }
+      let rotatesOn = null;
       if (defaultStatusCodes !== undefined) {
-        // Parse, deduplicate, sort numerically
-        const codes = defaultStatusCodes
-          .split(',')
-          .map(s => s.trim())
-          .filter(s => /^\d+$/.test(s))
-          .map(Number)
-          .filter((v, i, a) => a.indexOf(v) === i)
-          .sort((a, b) => a - b);
-        if (codes.length > 0) {
-          envVars.DEFAULT_STATUS_CODES = codes.join(',');
+        // Codes, ranges and comparisons; refuse the save rather than silently drop a typo
+        const parsed = parseStatusCodes(defaultStatusCodes);
+        if (parsed.invalid.length > 0) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            success: false,
+            error: `Not a status code, range or comparison: ${parsed.invalid.join(', ')}. Use codes like 429, ranges like 420-429, or >=500.`
+          }));
+          return;
+        }
+        if (parsed.parts.length > 0) {
+          envVars.DEFAULT_STATUS_CODES = parsed.parts.join(',');
+          rotatesOn = { codes: describeStatusCodes(parsed.codes), count: parsed.codes.size };
         } else {
           delete envVars.DEFAULT_STATUS_CODES;
         }
@@ -2037,6 +2015,7 @@ class ProxyServer {
         success: true,
         botRunning: this.telegramBot.polling,
         defaultStatusCodes: envVars.DEFAULT_STATUS_CODES || '429',
+        rotatesOn,
         apiLogsMode: this.apiLogs.settings.mode,
         apiLogsRetentionDays: this.apiLogs.settings.retentionDays || 7
       }));

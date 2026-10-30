@@ -571,6 +571,16 @@
             background: linear-gradient(to top, var(--background) 70%, transparent);
         }
 
+        /* Key check results */
+        .key-status { width: 0.5rem; height: 0.5rem; border-radius: var(--radius-full); flex-shrink: 0; }
+        .key-status:not(.ok):not(.limited):not(.fail) { display: none; } /* untested: no dot */
+        .key-status.ok { background: var(--success); }
+        .key-status.limited { background: var(--warning); }
+        .key-status.fail { background: var(--destructive); }
+        .test-ok { color: var(--success); }
+        .test-limited { color: var(--warning); }
+        .test-fail { color: var(--destructive); }
+
         /* Value tags on a key stay on one line, trimmed if the row is narrow */
         .key-tag { white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; display: inline-block; }
 
@@ -1093,12 +1103,21 @@
                             <span id="toggleAllProvidersLabel" class="hidden sm:inline">Expand all</span>
                         </button>
                         <button
+                            id="testAllBtn"
+                            onclick="testAllKeys()"
+                            class="btn btn-secondary btn-md"
+                            title="Check every key of every provider (no tokens are spent)"
+                        >
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                            <span id="testAllLabel">Test all</span>
+                        </button>
+                        <button
                             onclick="exportConfiguration()"
                             class="btn btn-secondary btn-md"
                             title="Copy all configuration as .env format to clipboard"
                         >
                             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
-                            Copy .env
+                            <span class="hidden sm:inline">Copy .env</span>
                         </button>
                         <button onclick="openAddProviderDialog()" class="btn btn-primary btn-md">
                             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.25" d="M12 5v14M5 12h14"/></svg>
@@ -1347,7 +1366,7 @@
                             <div>
                                 <label class="field-label" for="defaultStatusCodes">Rotate to the next key on these status codes</label>
                                 <input type="text" id="defaultStatusCodes" class="input-field w-full max-w-xs px-3 py-2 rounded-md text-sm font-mono" placeholder="429" value="429">
-                                <p class="field-hint">Comma-separated, like <code>429, 402</code>. Used in the cURL commands this panel generates.</p>
+                                <p class="field-hint">Codes, ranges and comparisons, comma-separated: <code>429</code>, <code>420-429</code>, <code>&gt;=500</code> — e.g. <code>403, 420-429, &gt;=500</code>. Used in the cURL commands this panel generates.</p>
                             </div>
                         </div>
                     </div>
@@ -2116,7 +2135,9 @@
                 const method = ((init && init.method) || 'GET').toUpperCase();
                 const match = _PENDING_LABELS.find(([m, prefix]) => m === method && url.startsWith(prefix));
 
-                if (!match) return nativeFetch(input, init);
+                // { background: true } opts out: no busy toast, no locked control (e.g. the
+                // many checks of "Test all", whose button must stay clickable to stop it)
+                if (!match || (init && init.background)) return nativeFetch(input, init);
 
                 // Lock the control that started this, so an impatient second click
                 // can't submit the same save twice
@@ -2656,7 +2677,7 @@
                                     ${isProviderDisabled ? '<span class="badge badge-error">Off</span>' : ''}
                                 </div>
                                 <p class="text-xs text-muted-foreground mt-0.5 truncate">
-                                    <span class="tabular-nums">${enabledKeyCount}/${totalKeyCount}</span> keys on<span class="opacity-50"> · </span><span class="tabular-nums">${requestCount}</span> request${requestCount === 1 ? '' : 's'}${provider.defaultModel ? `<span class="opacity-50"> · </span><span class="font-mono">${escapeHtml(provider.defaultModel)}</span>` : ''}
+                                    <span class="tabular-nums">${enabledKeyCount}/${totalKeyCount}</span> keys on<span id="providerTest_${pk}">${providerTestSummaryHtml(pk, provider.keys.map(k => k.key))}</span><span class="opacity-50"> · </span><span class="tabular-nums">${requestCount}</span> request${requestCount === 1 ? '' : 's'}${provider.defaultModel ? `<span class="opacity-50"> · </span><span class="font-mono">${escapeHtml(provider.defaultModel)}</span>` : ''}
                                 </p>
                             </div>
                             <div class="flex items-center gap-1.5 flex-shrink-0">
@@ -2924,6 +2945,7 @@
                                             <span class="toggle-slider"></span>
                                         </label>
                                         <!-- Key value -->
+                                        ${keyStatusDotHtml(pk, keyIndex, keyVal)}
                                         <div class="flex-1 min-w-0 font-mono text-xs text-foreground bg-muted px-2 py-1 rounded${isKeyDisabled ? ' line-through' : ''}">
                                             ${keyLabelHtml(keyVal, valueNames, toggleEdit)}
                                         </div>
@@ -4275,36 +4297,133 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
         });
 
         async function testProviderKey(apiType, providerName, apiKey, keyIndex) {
-            // Get provider's base URL
-            const baseUrlVar = `${apiType.toUpperCase()}_${providerName.toUpperCase()}_BASE_URL`;
-            const baseUrl = envVars[baseUrlVar] || null;
-            
             const maskedKey = maskKeyForDisplay(apiKey);
             showInfoToast(`Testing API key ${maskedKey}...`);
-            
+            const { state, error } = await testOneKey(apiType, providerName, apiKey, false);
+            if (state === 'ok') showSuccessToast(`API key ${maskedKey} works`);
+            else if (state === 'limited') showWarningToast(`API key ${maskedKey} is rate-limited right now: ${error}`);
+            else showErrorToast(`API key ${maskedKey} failed: ${error}`);
+        }
+
+        // ---- Key checks: results shown as a dot per key and a note per provider ----
+        const keyTestResults = new Map(); // "<apiType>_<name>|<stored key>" -> { state: ok | limited | fail, error }
+
+        async function testOneKey(apiType, providerName, rawKey, quiet) {
+            const pk = `${apiType}_${providerName}`;
+            const baseUrl = envVars[`${apiType.toUpperCase()}_${providerName.toUpperCase()}_BASE_URL`] || null;
+            let result;
             try {
-                const response = await fetch('/admin/api/test', {
+                const res = await fetch('/admin/api/test', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
-                        apiType: apiType, 
-                        apiKey: apiKey,
-                        baseUrl: baseUrl
-                    })
+                    body: JSON.stringify({ apiType, apiKey: rawKey, baseUrl, quiet }),
+                    background: quiet
                 });
-                
-                const result = await response.json();
-                
-                if (result.success) {
-                    showSuccessToast(`API key ${maskedKey} is valid!`);
-                } else {
-                    showErrorToast(`API key ${maskedKey} test failed: ${result.error || 'Invalid key'}`);
-                }
-            } catch (error) {
-                showErrorToast(`API key test failed: ${error.message}`);
+                const data = await res.json();
+                const error = data.error || (data.success ? '' : 'Invalid key');
+                result = data.success ? { state: 'ok', error: '' }
+                    : /\b429\b|rate.?limit/i.test(error) ? { state: 'limited', error }
+                    : { state: 'fail', error };
+            } catch (e) {
+                result = { state: 'fail', error: e.message };
             }
+            keyTestResults.set(`${pk}|${rawKey}`, result);
+            refreshKeyTestUi(apiType, providerName);
+            return result;
         }
-        
+
+        const KEY_STATE_LABEL = { ok: 'Works', limited: 'Rate-limited right now', fail: 'Failed' };
+
+        function keyStatusDotHtml(pk, index, rawKey) {
+            const r = keyTestResults.get(`${pk}|${rawKey}`);
+            const title = r ? `${KEY_STATE_LABEL[r.state]}${r.error ? ': ' + r.error : ''}` : 'Not tested yet';
+            return `<span id="keyStatus_${pk}_${index}" class="key-status${r ? ' ' + r.state : ''}" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}"></span>`;
+        }
+
+        function providerTestSummaryHtml(pk, rawKeys) {
+            const results = rawKeys.map(k => keyTestResults.get(`${pk}|${k}`)).filter(Boolean);
+            if (!results.length) return '';
+            const count = (st) => results.filter(r => r.state === st).length;
+            const fail = count('fail'), limited = count('limited');
+            const sep = '<span class="opacity-50"> · </span>';
+            if (!fail && !limited) return `${sep}<span class="test-ok">${results.length === rawKeys.length ? 'all keys work' : `${results.length} tested, all work`}</span>`;
+            return sep + [
+                fail ? `<span class="test-fail">${fail} failed</span>` : '',
+                limited ? `<span class="test-limited">${limited} rate-limited</span>` : ''
+            ].filter(Boolean).join(', ');
+        }
+
+        // Update one provider's dots and note in place (a full re-render would wipe half-typed inputs)
+        function refreshKeyTestUi(apiType, providerName) {
+            const pk = `${apiType}_${providerName}`;
+            const rawKeys = (envVars[`${apiType.toUpperCase()}_${providerName.toUpperCase()}_API_KEYS`] || '')
+                .split(',').map(k => k.trim()).filter(Boolean).map(k => k.replace(/^~/, ''));
+            rawKeys.forEach((k, i) => {
+                const dot = document.getElementById(`keyStatus_${pk}_${i}`);
+                if (dot) dot.outerHTML = keyStatusDotHtml(pk, i, k);
+            });
+            const note = document.getElementById(`providerTest_${pk}`);
+            if (note) note.innerHTML = providerTestSummaryHtml(pk, rawKeys);
+        }
+
+        let testAllRun = null;
+
+        function updateTestAllButton() {
+            const label = document.getElementById('testAllLabel');
+            if (!label) return;
+            label.textContent = testAllRun ? (testAllRun.cancelled ? 'Stopping…' : `Stop · ${testAllRun.done}/${testAllRun.total}`) : 'Test all';
+            document.getElementById('testAllBtn').title = testAllRun ? 'Stop testing' : 'Check every key of every provider (no tokens are spent)';
+        }
+
+        // Every key of every provider, turned-off ones too. A few providers at a time,
+        // one key at a time within each, so nobody's rate limit is hammered.
+        async function testAllKeys() {
+            if (testAllRun) { testAllRun.cancelled = true; updateTestAllButton(); return; }
+            const providers = [];
+            for (const [envKey, value] of Object.entries(envVars)) {
+                const m = envKey.match(/^(OPENAI|GEMINI)_(.+)_API_KEYS$/);
+                if (!m || !value) continue;
+                const keys = value.split(',').map(k => k.trim()).filter(Boolean).map(k => k.replace(/^~/, ''));
+                if (keys.length) providers.push({ apiType: m[1].toLowerCase(), name: m[2].toLowerCase(), keys });
+            }
+            const total = providers.reduce((n, p) => n + p.keys.length, 0);
+            if (!total) { showInfoToast('No keys to test yet'); return; }
+
+            const run = testAllRun = { cancelled: false, done: 0, total };
+            updateTestAllButton();
+            const queue = [...providers];
+            const worker = async () => {
+                while (!run.cancelled && queue.length) {
+                    const p = queue.shift();
+                    for (const key of p.keys) {
+                        if (run.cancelled) break;
+                        await testOneKey(p.apiType, p.name, key, true);
+                        run.done++;
+                        updateTestAllButton();
+                    }
+                }
+            };
+            await Promise.all(Array.from({ length: Math.min(4, providers.length) }, worker));
+            testAllRun = null;
+            updateTestAllButton();
+
+            let ok = 0, fail = 0, limited = 0;
+            const broken = [];
+            for (const p of providers) {
+                const states = p.keys.map(k => keyTestResults.get(`${p.apiType}_${p.name}|${k}`)?.state);
+                ok += states.filter(s => s === 'ok').length;
+                limited += states.filter(s => s === 'limited').length;
+                const f = states.filter(s => s === 'fail').length;
+                fail += f;
+                if (f) broken.push(p.name);
+            }
+            const tested = ok + fail + limited;
+            const head = `${run.cancelled ? 'Stopped. ' : ''}${ok} of ${tested} key${tested === 1 ? '' : 's'} work`;
+            const tail = [limited ? `${limited} rate-limited` : '', fail ? `${fail} failed (${broken.join(', ')})` : ''].filter(Boolean).join(', ');
+            if (fail) showWarningToast(`${head}. ${tail}.`, 12000);
+            else showSuccessToast(tail ? `${head}. ${tail}.` : `${head}.`, 8000);
+        }
+
         function showDeleteKeyConfirmation(apiType, providerName, keyIndex) {
             const dialog = document.getElementById('confirmDialog');
             const message = document.getElementById('confirmMessage');
@@ -7096,9 +7215,12 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 } else {
                     statusEl.innerHTML = '<span class="text-muted-foreground">Settings saved - Bot stopped (no token)</span>';
                 }
-                showSuccessToast('Settings saved');
+                showSuccessToast(data.rotatesOn
+                    ? `Settings saved. Rotates on ${data.rotatesOn.codes} (${data.rotatesOn.count} code${data.rotatesOn.count === 1 ? '' : 's'})`
+                    : 'Settings saved');
             } else {
-                statusEl.innerHTML = '<span class="text-red-500 font-medium">Failed to save</span>';
+                statusEl.innerHTML = '<span class="text-red-500 font-medium">Not saved</span>';
+                showErrorToast(data.error || 'Failed to save settings');
             }
         } catch (err) {
             statusEl.innerHTML = '<span class="text-red-500 font-medium">Error: ' + err.message + '</span>';

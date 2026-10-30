@@ -79,4 +79,27 @@ assert.deepStrictEqual(ids([{ model: 'm1' }, { model: 'm1' }]), ['m1']);        
 assert.deepStrictEqual(ids({ page: 1, things: [{ name: 'x' }] }), ['x']);                                                // first array of objects
 assert.deepStrictEqual(ids({ error: 'nope' }), []);
 
+// Status codes that rotate: codes, ranges, comparisons, mixed
+const { parseStatusCodes, describeStatusCodes } = require('../src/statusCodes');
+const sc = (spec) => [...parseStatusCodes(spec).codes].sort((a, b) => a - b);
+assert.deepStrictEqual(sc('429'), [429]);
+assert.deepStrictEqual(sc('420-429, 403'), [403, 420, 421, 422, 423, 424, 425, 426, 427, 428, 429]);
+assert.deepStrictEqual(sc('400 - 402'), [400, 401, 402]);                  // spaces are fine
+assert.strictEqual(sc('>=400').length, 200);                               // 400..599
+assert.deepStrictEqual(sc('>=598'), [598, 599]);
+assert.deepStrictEqual(sc('>598'), [599]);
+assert.deepStrictEqual(sc('<=101'), [100, 101]);
+assert.deepStrictEqual(sc('<102'), [100, 101]);
+assert.deepStrictEqual(parseStatusCodes('400+, 400=+').invalid, ['400+', '400=+']);   // old spellings are gone
+assert.deepStrictEqual(sc('429, 420-430, >=429'), sc('>=420'));            // overlaps merge
+assert.deepStrictEqual(parseStatusCodes('429, abc, 450-440, 700, >=999, 42').invalid, ['abc', '450-440', '700', '>=999', '42']);
+assert.deepStrictEqual(parseStatusCodes(' 403 , 420 - 429 ,>= 500, 403').parts, ['403', '420-429', '>=500']); // tidied, de-duplicated
+assert.strictEqual(describeStatusCodes(parseStatusCodes('403, 420-429, >=500').codes), '403, 420–429, 500–599');
+// the header uses the same rules
+const hdr = ProxyServer.prototype.parseStatusCodesFromAuth;
+assert.deepStrictEqual([...hdr('Bearer [STATUS_CODES:420-429, 403][ACCESS_KEY:x]')].sort((a, b) => a - b), sc('420-429, 403'));
+assert.strictEqual(hdr('Bearer [STATUS_CODES:>=400]').size, 200);
+assert.strictEqual(hdr('Bearer sk-abc'), null);
+assert.strictEqual(hdr('Bearer [STATUS_CODES:nope]'), null);
+
 console.log('All tests passed');
