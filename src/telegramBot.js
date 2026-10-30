@@ -1,5 +1,4 @@
 const https = require('https');
-const http = require('http');
 const { Readable } = require('stream');
 
 class TelegramBot {
@@ -12,8 +11,6 @@ class TelegramBot {
     this.pollTimeout = null;
     this.consecutiveErrors = 0;
     this.maxBackoff = 30000; // Max 30s between retries
-    this.keepAliveTimer = null;
-    this.keepAliveInterval = 10 * 60 * 1000; // 10 minutes
 
     // Per-user state
     this.userModels = new Map();       // chatId -> { provider, model, apiType }
@@ -47,7 +44,6 @@ class TelegramBot {
     console.log(`[TELEGRAM] Bot starting with ${this.allowedUsers.size} allowed user(s)`);
     this.registerCommands();
     this.poll();
-    this.startKeepAlive();
   }
 
   async registerCommands() {
@@ -73,10 +69,6 @@ class TelegramBot {
       clearTimeout(this.pollTimeout);
       this.pollTimeout = null;
     }
-    if (this.keepAliveTimer) {
-      clearInterval(this.keepAliveTimer);
-      this.keepAliveTimer = null;
-    }
     // Abort in-flight getUpdates request
     if (this._activePollingReq) {
       this._activePollingReq.destroy();
@@ -91,39 +83,6 @@ class TelegramBot {
       }
     }
     console.log('[TELEGRAM] Bot stopped');
-  }
-
-  setKeepAliveInterval(minutes) {
-    this.keepAliveInterval = minutes > 0 ? minutes * 60 * 1000 : 0;
-    // Restart keep-alive if bot is currently polling
-    if (this.polling) {
-      this.startKeepAlive();
-    }
-  }
-
-  startKeepAlive() {
-    if (this.keepAliveTimer) {
-      clearInterval(this.keepAliveTimer);
-      this.keepAliveTimer = null;
-    }
-    if (this.keepAliveInterval <= 0) {
-      console.log('[TELEGRAM] Keep-alive disabled');
-      return;
-    }
-    const minutes = Math.round(this.keepAliveInterval / 60000);
-    console.log(`[TELEGRAM] Keep-alive enabled (every ${minutes} min)`);
-    this.keepAliveTimer = setInterval(() => {
-      if (!this.polling) return;
-      const port = this.server.config.getPort();
-      const req = http.get(`http://127.0.0.1:${port}/`, (res) => {
-        res.resume(); // drain response
-      });
-      req.on('error', () => {}); // ignore errors
-      req.setTimeout(5000, () => req.destroy());
-      console.log('[TELEGRAM] Keep-alive ping sent');
-    }, this.keepAliveInterval);
-    // Don't let the timer prevent process exit
-    if (this.keepAliveTimer.unref) this.keepAliveTimer.unref();
   }
 
   async poll() {
@@ -412,11 +371,28 @@ class TelegramBot {
       throw new Error(parsed.error?.message || `HTTP ${res.statusCode}`);
     }
 
-    if (provider.apiType === 'gemini') {
-      return (parsed.models || []).map(m => m.name.replace('models/', '')).sort();
-    } else {
-      return (parsed.data || []).map(m => m.id).sort();
+    return TelegramBot.modelIdsFrom(parsed);
+  }
+
+  /**
+   * Model names from any list reply - same rules as the admin panel's models
+   * browser: the list may sit under data / models / result / results / items
+   * (or be the first array of objects), and the name is model / id / name,
+   * skipping internal UUID ids.
+   */
+  static modelIdsFrom(parsed) {
+    const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    let list = Array.isArray(parsed) ? parsed : null;
+    if (!list && parsed && typeof parsed === 'object') {
+      list = ['data', 'models', 'result', 'results', 'items'].map(k => parsed[k]).find(Array.isArray)
+        || Object.values(parsed).find(v => Array.isArray(v) && v.some(x => x && typeof x === 'object'));
     }
+    const ids = (list || [])
+      .filter(m => m && typeof m === 'object')
+      .map(m => [m.model, m.id, m.name].find(v => typeof v === 'string' && v && !UUID.test(v)) || '')
+      .map(id => id.replace(/^models\//, ''))
+      .filter(Boolean);
+    return [...new Set(ids)].sort();
   }
 
   /**

@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const ProxyManager = require('./proxyManager');
+const { maskKey } = require('./keyValues');
 
 class Config {
   constructor() {
@@ -155,7 +156,7 @@ class Config {
     // Parse {API_TYPE}_{PROVIDER}_API_KEYS, {API_TYPE}_{PROVIDER}_BASE_URL, and {API_TYPE}_{PROVIDER}_ACCESS_KEY format
     const providerConfigs = new Map();
 
-    const defaultConfig = () => ({ apiType: null, keys: [], allKeys: [], baseUrl: null, accessKey: null, defaultModel: null, disabled: false, proxy: null });
+    const defaultConfig = () => ({ apiType: null, keys: [], allKeys: [], baseUrl: null, accessKey: null, defaultModel: null, modelsUrl: null, disabled: false, proxy: null });
 
     for (const [key, value] of Object.entries(envVars)) {
       if (key.endsWith('_API_KEYS') && value) {
@@ -209,6 +210,19 @@ class Config {
           }
 
           providerConfigs.get(provider).defaultModel = value.trim();
+        }
+      } else if (key.endsWith('_MODELS_URL') && value) {
+        // Where this provider lists its models, when that isn't {base}/models
+        const parts = key.replace('_MODELS_URL', '').split('_');
+        if (parts.length >= 1) {
+          const apiType = parts[0].toLowerCase();
+          const provider = parts.length === 1 ? apiType : parts.slice(1).join('_').toLowerCase();
+
+          if (!providerConfigs.has(provider)) {
+            providerConfigs.set(provider, defaultConfig());
+          }
+
+          providerConfigs.get(provider).modelsUrl = value.trim();
         }
       } else if (key.endsWith('_PROXY') && value) {
         const parts = key.replace('_PROXY', '').split('_');
@@ -423,8 +437,7 @@ class Config {
   }
 
   maskApiKey(key) {
-    if (!key || key.length < 8) return '***';
-    return key.substring(0, 4) + '...' + key.substring(key.length - 4);
+    return maskKey(key);
   }
 
   // New provider methods

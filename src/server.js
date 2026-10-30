@@ -8,6 +8,22 @@ const TelegramBot = require('./telegramBot');
 const ProxyManager = require('./proxyManager');
 const ApiLogStore = require('./apiLogStore');
 const ProxyPool = require('./proxyPool');
+const { resolveKey } = require('./keyValues');
+const { parseStatusCodes, describeStatusCodes } = require('./statusCodes');
+
+// The provider's own reason from an error body ({error:{message}}, {error:"..."},
+// {message}, Cloudflare's {errors:[{message}]}), so a failed key check says why
+function upstreamErrorText(body) {
+  try {
+    const d = JSON.parse(body);
+    const e = d.error;
+    const msg = (e && typeof e === 'object' ? (e.message || e.code) : e)
+      || d.message || (Array.isArray(d.errors) && d.errors[0] && d.errors[0].message) || '';
+    return String(msg).slice(0, 200);
+  } catch (err) {
+    return '';
+  }
+}
 
 class ProxyServer {
   constructor(config, geminiClient = null, openaiClient = null) {
@@ -271,7 +287,7 @@ class ProxyServer {
         console.log(`[REQ-${requestId}] Streaming request detected`);
       }
 
-      response = await client.makeRequest(req.method, path, upstreamBody, headers, customStatusCodes, isStreaming);
+      response = await client.makeRequest(req.method, this.upstreamPath(req.method, path, provider), upstreamBody, headers, customStatusCodes, isStreaming);
 
       // Extract key info from response
       const keyInfo = response._keyInfo || null;
@@ -434,6 +450,20 @@ class ProxyServer {
   }
 
 
+  /**
+   * A provider can list its models somewhere other than {base}/models. Its
+   * MODELS_URL is then used for GET /models: a path (joined to the base URL like
+   * any other path) or a full https:// URL. The request's own query string is
+   * kept unless the models URL brings one.
+   */
+  upstreamPath(method, path, provider) {
+    const modelsUrl = provider && provider.modelsUrl;
+    if (method !== 'GET' || !modelsUrl) return path;
+    const [pathname, query] = path.split('?');
+    if (!/^\/models\/?$/.test(pathname)) return path;
+    return query && !modelsUrl.includes('?') ? `${modelsUrl}?${query}` : modelsUrl;
+  }
+
   async getProviderClient(providerName, provider, legacy = false) {
     // Handle legacy clients
     if (legacy) {
@@ -490,52 +520,10 @@ class ProxyServer {
   }
 
   parseStatusCodesFromAuth(authHeader) {
-    // Extract [STATUS_CODES:...] from the Authorization header
+    // [STATUS_CODES:403, 420-429, >=500] in the Authorization header (syntax in statusCodes.js)
     const match = authHeader?.match(/\[STATUS_CODES:([^\]]+)\]/i);
     if (!match) return null;
-
-    const statusCodeStr = match[1];
-    const codes = new Set();
-
-    // Parse each part (e.g., "429", "400-420", "500+", "400=+")
-    const parts = statusCodeStr.split(',').map(s => s.trim());
-
-    for (const part of parts) {
-      if (part.includes('-')) {
-        // Range: 400-420
-        const [start, end] = part.split('-').map(n => parseInt(n.trim()));
-        if (!isNaN(start) && !isNaN(end)) {
-          for (let i = start; i <= end; i++) {
-            codes.add(i);
-          }
-        }
-      } else if (part.endsWith('=+')) {
-        // Equal or greater: 400=+
-        const base = parseInt(part.slice(0, -2).trim());
-        if (!isNaN(base)) {
-          // Add codes from base to 599 (reasonable upper limit for HTTP status codes)
-          for (let i = base; i <= 599; i++) {
-            codes.add(i);
-          }
-        }
-      } else if (part.endsWith('+')) {
-        // Greater than: 400+
-        const base = parseInt(part.slice(0, -1).trim());
-        if (!isNaN(base)) {
-          // Add codes from base+1 to 599
-          for (let i = base + 1; i <= 599; i++) {
-            codes.add(i);
-          }
-        }
-      } else {
-        // Single code: 429
-        const code = parseInt(part.trim());
-        if (!isNaN(code)) {
-          codes.add(code);
-        }
-      }
-    }
-
+    const { codes } = parseStatusCodes(match[1]);
     return codes.size > 0 ? codes : null;
   }
 
@@ -990,7 +978,7 @@ class ProxyServer {
           if (apiKeysKey in finalEnvVars) {
             finalEnvVars[key] = value;
           }
-        } else if (key.startsWith('TELEGRAM_') || key.startsWith('PROXY_') || key === 'DEFAULT_STATUS_CODES' || key === 'KEEP_ALIVE_MINUTES' || key === 'API_LOGS') {
+        } else if (key.startsWith('TELEGRAM_') || key.startsWith('PROXY_') || key === 'DEFAULT_STATUS_CODES' || key === 'API_LOGS') {
           finalEnvVars[key] = value;
         }
       }
@@ -1008,15 +996,26 @@ class ProxyServer {
   
   async handleTestApiKey(res, body) {
     try {
-      const { apiType, apiKey, baseUrl } = JSON.parse(body);
+      const parsed = JSON.parse(body);
       let testResult = { success: false, error: 'Unknown API type' };
-      
+
+      // Test with the key's own values filled into the base URL
+      let apiKey, baseUrl;
+      try {
+        ({ token: apiKey, baseUrl } = resolveKey(parsed.apiKey, parsed.baseUrl));
+      } catch (error) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: error.message }));
+        return;
+      }
+      const { apiType } = parsed;
+
       if (apiType === 'gemini') {
         // Test Gemini API key with custom base URL if provided
-        testResult = await this.testGeminiKey(apiKey, baseUrl);
+        testResult = await this.testGeminiKey(apiKey, baseUrl, parsed.quiet);
       } else if (apiType === 'openai') {
         // Test OpenAI API key with custom base URL if provided
-        testResult = await this.testOpenaiKey(apiKey, baseUrl);
+        testResult = await this.testOpenaiKey(apiKey, baseUrl, parsed.quiet);
       }
       
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -1026,7 +1025,8 @@ class ProxyServer {
     }
   }
   
-  async testGeminiKey(apiKey, baseUrl = null) {
+  // quiet: a bulk "Test all" run - don't fill the request log with key checks
+  async testGeminiKey(apiKey, baseUrl = null, quiet = false) {
     const testId = Math.random().toString(36).substring(2, 11);
     const testBaseUrl = baseUrl || 'https://generativelanguage.googleapis.com/v1';
     const startTime = Date.now();
@@ -1051,7 +1051,7 @@ class ProxyServer {
       const responseTime = Date.now() - startTime;
       
       // Store response data for viewing
-      this.storeResponseData(testId, {
+      if (!quiet) this.storeResponseData(testId, {
         method: 'GET',
         endpoint: testPath,
         apiType: 'Gemini',
@@ -1063,8 +1063,8 @@ class ProxyServer {
       });
       
       // Log with structured format
-      const error = !testResponse.ok ? `API test failed: ${testResponse.status} ${testResponse.statusText}` : null;
-      this.logApiRequest(testId, 'GET', testPath, 'gemini', testResponse.status, responseTime, error, 'admin-test');
+      const error = !testResponse.ok ? `API test failed: ${testResponse.status} ${upstreamErrorText(responseText) || testResponse.statusText}` : null;
+      if (!quiet) this.logApiRequest(testId, 'GET', testPath, 'gemini', testResponse.status, responseTime, error, 'admin-test');
       
       console.log(`[TEST-${testId}] GET ${testPath} (Gemini) → ${testResponse.status} ${testResponse.statusText} | ${contentType} ${responseText.length}b`);
       
@@ -1076,13 +1076,13 @@ class ProxyServer {
       const responseTime = Date.now() - startTime;
       
       console.log(`[TEST-${testId}] GET ${testPath} (Gemini) → ERROR: ${error.message}`);
-      this.logApiRequest(testId, 'GET', testPath, 'gemini', null, responseTime, error.message, 'admin-test');
+      if (!quiet) this.logApiRequest(testId, 'GET', testPath, 'gemini', null, responseTime, error.message, 'admin-test');
       
       return { success: false, error: error.message };
     }
   }
   
-  async testOpenaiKey(apiKey, baseUrl = null) {
+  async testOpenaiKey(apiKey, baseUrl = null, quiet = false) {
     const testId = Math.random().toString(36).substring(2, 11);
     const testBaseUrl = baseUrl || 'https://api.openai.com/v1';
     const startTime = Date.now();
@@ -1099,16 +1099,31 @@ class ProxyServer {
     }
     
     try {
-      const testResponse = await fetch(fullUrl, {
+      let testResponse = await fetch(fullUrl, {
         headers: { 'Authorization': `Bearer ${apiKey}` }
       });
-      
+
+      // Some providers (Cloudflare Workers AI) have no /models. Send an empty chat
+      // request instead: a bad key gets 401/403, a good one 400 for the missing
+      // fields - no tokens spent either way.
+      let validStatuses = [];
+      if (testResponse.status === 404 || testResponse.status === 405) {
+        testPath = testPath.replace(/models$/, 'chat/completions');
+        testResponse = await fetch(fullUrl.replace(/models$/, 'chat/completions'), {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+          body: '{}'
+        });
+        validStatuses = [400, 422];
+      }
+      const keyAccepted = testResponse.ok || validStatuses.includes(testResponse.status);
+
       const responseText = await testResponse.text();
       const contentType = testResponse.headers.get('content-type') || 'unknown';
       const responseTime = Date.now() - startTime;
       
       // Store response data for viewing
-      this.storeResponseData(testId, {
+      if (!quiet) this.storeResponseData(testId, {
         method: 'GET',
         endpoint: testPath,
         apiType: 'OpenAI',
@@ -1120,20 +1135,20 @@ class ProxyServer {
       });
       
       // Log with structured format
-      const error = !testResponse.ok ? `API test failed: ${testResponse.status} ${testResponse.statusText}` : null;
-      this.logApiRequest(testId, 'GET', testPath, 'openai', testResponse.status, responseTime, error, 'admin-test');
+      const error = !keyAccepted ? `API test failed: ${testResponse.status} ${upstreamErrorText(responseText) || testResponse.statusText}` : null;
+      if (!quiet) this.logApiRequest(testId, 'GET', testPath, 'openai', testResponse.status, responseTime, error, 'admin-test');
       
       console.log(`[TEST-${testId}] GET ${testPath} (OpenAI) → ${testResponse.status} ${testResponse.statusText} | ${contentType} ${responseText.length}b`);
       
       return { 
-        success: testResponse.ok, 
+        success: keyAccepted, 
         error: error
       };
     } catch (error) {
       const responseTime = Date.now() - startTime;
       
       console.log(`[TEST-${testId}] GET ${testPath} (OpenAI) → ERROR: ${error.message}`);
-      this.logApiRequest(testId, 'GET', testPath, 'openai', null, responseTime, error.message, 'admin-test');
+      if (!quiet) this.logApiRequest(testId, 'GET', testPath, 'openai', null, responseTime, error.message, 'admin-test');
       
       return { success: false, error: error.message };
     }
@@ -1722,8 +1737,8 @@ class ProxyServer {
 
       if (key === 'PORT' || key === 'ADMIN_PASSWORD') {
         basicConfig[key] = value;
-      } else if (key.endsWith('_API_KEYS') || key.endsWith('_BASE_URL') || key.endsWith('_ACCESS_KEY') || key.endsWith('_DEFAULT_MODEL') || key.endsWith('_MODEL_HISTORY') || key.endsWith('_DISABLED') || key.endsWith('_PROXY')) {
-        const match = key.match(/^(.+?)_(.+?)_(API_KEYS|BASE_URL|ACCESS_KEY|DEFAULT_MODEL|MODEL_HISTORY|DISABLED|PROXY)$/);
+      } else if (key.endsWith('_API_KEYS') || key.endsWith('_BASE_URL') || key.endsWith('_MODELS_URL') || key.endsWith('_ACCESS_KEY') || key.endsWith('_DEFAULT_MODEL') || key.endsWith('_MODEL_HISTORY') || key.endsWith('_DISABLED') || key.endsWith('_PROXY')) {
+        const match = key.match(/^(.+?)_(.+?)_(API_KEYS|BASE_URL|MODELS_URL|ACCESS_KEY|DEFAULT_MODEL|MODEL_HISTORY|DISABLED|PROXY)$/);
         if (match) {
           const apiType = match[1];
           const provName = match[2];
@@ -1731,11 +1746,12 @@ class ProxyServer {
           const providerKey = `${apiType}_${provName}`;
 
           if (!providers[providerKey]) {
-            providers[providerKey] = { apiType, providerName: provName, keys: '', baseUrl: '', accessKey: '', defaultModel: '', modelHistory: '', disabled: '', proxy: '' };
+            providers[providerKey] = { apiType, providerName: provName, keys: '', baseUrl: '', modelsUrl: '', accessKey: '', defaultModel: '', modelHistory: '', disabled: '', proxy: '' };
           }
 
           if (keyType === 'API_KEYS') providers[providerKey].keys = value;
           else if (keyType === 'BASE_URL') providers[providerKey].baseUrl = value;
+          else if (keyType === 'MODELS_URL') providers[providerKey].modelsUrl = value;
           else if (keyType === 'ACCESS_KEY') providers[providerKey].accessKey = value;
           else if (keyType === 'DEFAULT_MODEL') providers[providerKey].defaultModel = value;
           else if (keyType === 'MODEL_HISTORY') providers[providerKey].modelHistory = value;
@@ -1763,6 +1779,7 @@ class ProxyServer {
         for (const p of list) {
           if (p.keys) envContent += `${p.apiType}_${p.providerName}_API_KEYS=${p.keys}\n`;
           if (p.baseUrl) envContent += `${p.apiType}_${p.providerName}_BASE_URL=${p.baseUrl}\n`;
+          if (p.modelsUrl) envContent += `${p.apiType}_${p.providerName}_MODELS_URL=${p.modelsUrl}\n`;
           if (p.accessKey) envContent += `${p.apiType}_${p.providerName}_ACCESS_KEY=${p.accessKey}\n`;
           if (p.defaultModel) envContent += `${p.apiType}_${p.providerName}_DEFAULT_MODEL=${p.defaultModel}\n`;
           if (p.modelHistory) envContent += `${p.apiType}_${p.providerName}_MODEL_HISTORY=${p.modelHistory}\n`;
@@ -1890,10 +1907,6 @@ class ProxyServer {
         ? envVars.TELEGRAM_ALLOWED_USERS.split(',').map(s => s.trim()).filter(Boolean)
         : [];
 
-      // Apply keep-alive setting
-      const kaMinutes = envVars.KEEP_ALIVE_MINUTES ? parseInt(envVars.KEEP_ALIVE_MINUTES) : 10;
-      this.telegramBot.setKeepAliveInterval(kaMinutes);
-
       if (token) {
         await this.telegramBot.start(token, allowedUsers);
       }
@@ -1908,9 +1921,6 @@ class ProxyServer {
       const envContent = fs.readFileSync(envPath, 'utf8');
       const envVars = this.config.parseEnvFile(envContent);
 
-      const keepAliveRaw = envVars.KEEP_ALIVE_MINUTES;
-      const keepAliveMinutes = keepAliveRaw != null ? parseInt(keepAliveRaw) : 10;
-
       const apiLogs = this.apiLogs.settings;
 
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -1918,7 +1928,6 @@ class ProxyServer {
         botToken: envVars.TELEGRAM_BOT_TOKEN || '',
         allowedUsers: envVars.TELEGRAM_ALLOWED_USERS || '',
         defaultStatusCodes: envVars.DEFAULT_STATUS_CODES || '429',
-        keepAliveMinutes,
         apiLogsMode: apiLogs.mode,
         apiLogsRetentionDays: apiLogs.retentionDays || 7,
         apiLogsStoredEntries: this.apiLogs.isFileMode() ? this.apiLogs.storedCount : this.apiLogs.buffer.length,
@@ -1931,7 +1940,7 @@ class ProxyServer {
 
   async handleUpdateTelegramSettings(res, body) {
     try {
-      const { botToken, allowedUsers, defaultStatusCodes, keepAliveMinutes, apiLogsMode, apiLogsRetentionDays } = JSON.parse(body);
+      const { botToken, allowedUsers, defaultStatusCodes, apiLogsMode, apiLogsRetentionDays } = JSON.parse(body);
       const envPath = path.join(process.cwd(), '.env');
       const envContent = fs.readFileSync(envPath, 'utf8');
       const envVars = this.config.parseEnvFile(envContent);
@@ -1950,29 +1959,27 @@ class ProxyServer {
           delete envVars.TELEGRAM_ALLOWED_USERS;
         }
       }
+      let rotatesOn = null;
       if (defaultStatusCodes !== undefined) {
-        // Parse, deduplicate, sort numerically
-        const codes = defaultStatusCodes
-          .split(',')
-          .map(s => s.trim())
-          .filter(s => /^\d+$/.test(s))
-          .map(Number)
-          .filter((v, i, a) => a.indexOf(v) === i)
-          .sort((a, b) => a - b);
-        if (codes.length > 0) {
-          envVars.DEFAULT_STATUS_CODES = codes.join(',');
+        // Codes, ranges and comparisons; refuse the save rather than silently drop a typo
+        const parsed = parseStatusCodes(defaultStatusCodes);
+        if (parsed.invalid.length > 0) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            success: false,
+            error: `Not a status code, range or comparison: ${parsed.invalid.join(', ')}. Use codes like 429, ranges like 420-429, or >=500.`
+          }));
+          return;
+        }
+        if (parsed.parts.length > 0) {
+          envVars.DEFAULT_STATUS_CODES = parsed.parts.join(',');
+          rotatesOn = { codes: describeStatusCodes(parsed.codes), count: parsed.codes.size };
         } else {
           delete envVars.DEFAULT_STATUS_CODES;
         }
       }
-      if (keepAliveMinutes !== undefined) {
-        const val = parseInt(keepAliveMinutes);
-        if (val > 0) {
-          envVars.KEEP_ALIVE_MINUTES = String(val);
-        } else {
-          delete envVars.KEEP_ALIVE_MINUTES;
-        }
-      }
+      // Keep-alive pings were removed; drop the old setting if it's still there
+      delete envVars.KEEP_ALIVE_MINUTES;
 
       if (apiLogsMode !== undefined) {
         // API_LOGS only chooses where request logs live - it can't switch logging off
@@ -1997,10 +2004,6 @@ class ProxyServer {
         ? envVars.TELEGRAM_ALLOWED_USERS.split(',').map(s => s.trim()).filter(Boolean)
         : [];
 
-      // Apply keep-alive setting
-      const kaMinutes = envVars.KEEP_ALIVE_MINUTES ? parseInt(envVars.KEEP_ALIVE_MINUTES) : 0;
-      this.telegramBot.setKeepAliveInterval(kaMinutes);
-
       if (token) {
         await this.telegramBot.start(token, users);
       } else {
@@ -2012,7 +2015,7 @@ class ProxyServer {
         success: true,
         botRunning: this.telegramBot.polling,
         defaultStatusCodes: envVars.DEFAULT_STATUS_CODES || '429',
-        keepAliveMinutes: kaMinutes,
+        rotatesOn,
         apiLogsMode: this.apiLogs.settings.mode,
         apiLogsRetentionDays: this.apiLogs.settings.retentionDays || 7
       }));
