@@ -542,18 +542,20 @@
             #logs .ds-table, #logs .ds-table tbody { display: block; }
             #logs .ds-table tbody tr {
                 display: grid;
-                grid-template-columns: auto 1fr auto;
-                grid-template-areas: "status provider time" "req req req" "key key key" "lat proxy view";
-                gap: 0.375rem 0.5rem; align-items: center;
-                padding: var(--space-3);
+                grid-template-columns: auto minmax(0, 1fr) auto auto;
+                grid-template-areas: "status provider provider time" "req req req req" "key key lat view" "proxy proxy proxy proxy";
+                gap: 0.25rem 0.5rem; align-items: center;
+                padding: 0.625rem 0.75rem;
                 border-bottom: 1px solid var(--border);
             }
+            /* "direct" on every row is noise; only show the proxy when one was used */
+            #logs .ds-table tbody td:nth-child(7):has(span[title^="Sent directly"]) { display: none; }
             #logs .ds-table tbody td { padding: 0; white-space: normal; min-width: 0; }
             #logs .ds-table tbody td:nth-child(1) { grid-area: time; text-align: right; }
             #logs .ds-table tbody td:nth-child(2) { grid-area: req; overflow-wrap: anywhere; }
             #logs .ds-table tbody td:nth-child(3) { grid-area: provider; }
             #logs .ds-table tbody td:nth-child(4) { grid-area: status; }
-            #logs .ds-table tbody td:nth-child(5) { grid-area: lat; text-align: left; }
+            #logs .ds-table tbody td:nth-child(5) { grid-area: lat; text-align: right; }
             #logs .ds-table tbody td:nth-child(6) { grid-area: key; overflow-wrap: anywhere; }
             #logs .ds-table tbody td:nth-child(7) { grid-area: proxy; }
             #logs .ds-table tbody td:nth-child(8) { grid-area: view; }
@@ -569,10 +571,71 @@
             background: linear-gradient(to top, var(--background) 70%, transparent);
         }
 
+        /* Value tags on a key stay on one line, trimmed if the row is narrow */
+        .key-tag { white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; display: inline-block; }
+
         /* Key row actions: inline on wide screens, own line under the key on phones */
         .key-actions { display: flex; align-items: center; gap: var(--space-1); flex-shrink: 0; }
+        /* Very narrow phones: the brand line alone, so the header stays one row */
+        @media (max-width: 380px) { header h1 + p { display: none; } }
+
+        /* ---- Phones: same layout, sized for a small screen ---- */
         @media (max-width: 639px) {
-            .key-actions { flex-basis: 100%; justify-content: flex-end; margin-top: -0.125rem; }
+            .key-tag { font-size: 0.6875rem; }
+
+            /* page header actions stay on one line */
+            .page-actions { width: 100%; }
+            .page-actions .btn { font-size: var(--text-xs); padding: 0.375rem 0.625rem; }
+            .page-actions .btn-primary { margin-left: auto; }
+            .page-actions #toggleAllProvidersBtn { background: var(--secondary); border: 1px solid var(--border); color: var(--foreground); }
+
+            /* provider rows and bodies: tighter */
+            .provider-head { padding: 0.625rem 0.75rem; gap: 0.625rem; }
+            .provider-body { padding: 0.75rem; gap: var(--space-4); }
+
+            /* key rows: one line, icon-only actions */
+            .key-row-line { gap: 0.375rem; }
+            .key-row-line .key-action { padding: 0.25rem 0.375rem; }
+            .key-actions { gap: 0; }
+            [id^="newKeyRow_"] > input[data-key-token] { flex-basis: 100%; }
+            [id^="newKeyRow_"] > [data-value-name] { flex: 1 1 0; min-width: 0; width: auto; }
+
+            /* logs: search, then filters, then actions; stats scroll sideways */
+            #logToolbar { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.375rem; }
+            #logToolbar > .relative { grid-column: 1 / -1; min-width: 0; }
+            #logToolbar > select { width: 100%; min-width: 0; }
+            #logToolbar > .log-actions { grid-column: 1 / -1; justify-content: space-between; }
+            #logStats { display: flex; overflow-x: auto; gap: 0.5rem; margin-left: calc(-1 * var(--container-pad)); margin-right: calc(-1 * var(--container-pad)); padding: 0 var(--container-pad) 0.25rem; scrollbar-width: none; }
+            #logStats::-webkit-scrollbar { display: none; }
+            #logStats > .stat-card { flex: 0 0 auto; min-width: 6.5rem; }
+            #logStorageNote { display: none; }
+
+            /* models browser filters: search, then a compact grid */
+            #mdToolbar { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.375rem; padding: 0.5rem 0.75rem; }
+            #mdToolbar > #mdSearch { grid-column: 1 / -1; min-width: 0; }
+            #mdToolbar > select { width: 100%; min-width: 0; }
+            #mdFacetBar { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.375rem; padding: 0.5rem 0.75rem; }
+            #mdFacetBar > select { width: 100%; max-width: none; min-width: 0; }
+            #mdFacetBar > #mdActiveFilters { grid-column: 1 / -1; }
+            #mdActiveFilters:empty { display: none; }
+
+            /* big dialogs go full-screen: every pixel for the content */
+            #modelsDialog, #responseDialog, #modelJsonDialog, #addProviderDialog { padding: 0; }
+            #modelsDialog > .ds-dialog-panel, #responseDialog > .ds-dialog-panel, #modelJsonDialog > .ds-dialog-panel {
+                height: 100dvh; max-width: none; border: 0; border-radius: 0;
+            }
+            #addProviderDialog > .ds-dialog-panel {
+                margin: 0; min-height: 100dvh; max-width: none; border: 0; border-radius: 0;
+                display: flex; flex-direction: column;
+            }
+            #addProviderDialog > .ds-dialog-panel > .space-y-4 { flex: 1; }
+            #addProviderDialog > .ds-dialog-panel > div:last-child { position: sticky; bottom: 0; background: var(--card); }
+
+            /* toasts: edge to edge with a gutter, right under the tab bar (they set inline sizes for desktop) */
+            #singleNotification, #expandedNotifications {
+                left: 0.75rem !important; right: 0.75rem !important; top: 7.25rem !important;
+                min-width: 0 !important; max-width: none !important;
+            }
         }
 
         /* Drag to reorder keys */
@@ -620,6 +683,7 @@
             user-select: none;
         }
         .btn:active { transform: translateY(0.5px) scale(0.99); }
+        .btn { white-space: nowrap; }
         .btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--background), 0 0 0 4px var(--ring); }
         .btn:disabled { opacity: 0.5; cursor: not-allowed; pointer-events: none; }
         .btn-sm { font-size: var(--text-xs); padding: var(--space-1) var(--space-3); border-radius: var(--radius-sm); }
@@ -1018,7 +1082,16 @@
                         <h2 class="text-lg font-semibold text-foreground">Providers</h2>
                         <p id="providersSummary" class="text-muted-foreground text-xs mt-1">&nbsp;</p>
                     </div>
-                    <div class="flex items-center gap-2">
+                    <div class="page-actions flex flex-wrap items-center gap-2">
+                        <button
+                            id="toggleAllProvidersBtn"
+                            onclick="toggleAllProviders()"
+                            class="btn btn-ghost btn-md hidden"
+                            title="Open or close every provider"
+                        >
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path id="toggleAllProvidersIcon" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l4-4 4 4M16 15l-4 4-4-4"/></svg>
+                            <span id="toggleAllProvidersLabel" class="hidden sm:inline">Expand all</span>
+                        </button>
                         <button
                             onclick="exportConfiguration()"
                             class="btn btn-secondary btn-md"
@@ -1056,7 +1129,7 @@
 
                 <div class="section">
                     <!-- Toolbar: search + filters + actions -->
-                    <div class="flex flex-wrap items-center gap-2 mb-3">
+                    <div id="logToolbar" class="flex flex-wrap items-center gap-2 mb-3">
                         <div class="relative flex-1 min-w-[200px]">
                             <svg class="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
@@ -1078,6 +1151,7 @@
                             <option value="proxy">Via proxy</option>
                             <option value="direct">Direct</option>
                         </select>
+                        <div class="log-actions flex items-center gap-2">
                         <label class="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none px-1" title="Auto-refresh every 5s">
                             <input type="checkbox" id="logAutoRefresh" onchange="toggleLogAutoRefresh()" class="w-3.5 h-3.5"> Live
                         </label>
@@ -1095,6 +1169,7 @@
                             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
                             Clear
                         </button>
+                        </div>
                     </div>
 
                     <div class="flex items-center justify-between mb-2 text-xs text-muted-foreground">
@@ -1192,7 +1267,7 @@
                         </h3>
                         <div class="space-y-3">
                             <p class="text-xs text-muted-foreground">Proxying is per provider. Anything left off connects directly, so you can route only the provider that is rate-limiting you.</p>
-                            <div id="proxyProviderList" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2"></div>
+                            <div id="proxyProviderList" class="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2"></div>
                             <p id="proxyProviderEmpty" class="text-xs text-muted-foreground hidden">No providers configured yet.</p>
                         </div>
                     </div>
@@ -1273,11 +1348,6 @@
                                 <label class="field-label" for="defaultStatusCodes">Rotate to the next key on these status codes</label>
                                 <input type="text" id="defaultStatusCodes" class="input-field w-full max-w-xs px-3 py-2 rounded-md text-sm font-mono" placeholder="429" value="429">
                                 <p class="field-hint">Comma-separated, like <code>429, 402</code>. Used in the cURL commands this panel generates.</p>
-                            </div>
-                            <div>
-                                <label class="field-label" for="keepAliveMinutes">Keep-alive ping, in minutes</label>
-                                <input type="number" id="keepAliveMinutes" class="input-field w-28 px-3 py-2 rounded-md text-sm tabular-nums" placeholder="10" value="10" min="0" step="1">
-                                <p class="field-hint">Stops free hosting platforms from putting the server to sleep. 0 turns it off.</p>
                             </div>
                         </div>
                     </div>
@@ -1622,7 +1692,7 @@
                 </div>
             </div>
 
-            <div class="flex items-center gap-2 px-4 py-2 border-b border-border flex-shrink-0 bg-muted/30 flex-wrap">
+            <div id="mdToolbar" class="flex items-center gap-2 px-4 py-2 border-b border-border flex-shrink-0 bg-muted/30 flex-wrap">
                 <input id="mdSearch" type="text" placeholder="Search models…" oninput="renderModelsList()"
                        class="input-field flex-1 min-w-[180px] px-3 py-1.5 text-xs rounded font-mono">
                 <select id="mdOwner" onchange="renderModelsList()" class="input-field px-2 py-1.5 text-xs rounded">
@@ -1643,7 +1713,7 @@
             </div>
 
             <!-- Filter builder — fields and values come from the provider's own response -->
-            <div class="flex items-center gap-2 px-4 py-2 border-b border-border flex-shrink-0 bg-muted/30 flex-wrap">
+            <div id="mdFacetBar" class="flex items-center gap-2 px-4 py-2 border-b border-border flex-shrink-0 bg-muted/30 flex-wrap">
                 <select id="mdFacetField" onchange="onFacetFieldChange()" class="input-field px-2 py-1.5 text-xs rounded max-w-[16rem]">
                     <option value="">More filters…</option>
                 </select>
@@ -2260,6 +2330,31 @@
             head.setAttribute('aria-expanded', open);
             head.querySelector('.provider-chevron').classList.toggle('rotate-90', open);
             head.nextElementSibling.classList.toggle('hidden', !open);
+            updateToggleAllButton();
+        }
+
+        function providerHeads() {
+            return [...document.querySelectorAll('#providersContainer .provider-head')];
+        }
+
+        // One button: "Expand all" while anything is closed, "Collapse all" once everything is open
+        function updateToggleAllButton() {
+            const btn = document.getElementById('toggleAllProvidersBtn');
+            if (!btn) return;
+            const heads = providerHeads();
+            btn.classList.toggle('hidden', heads.length < 2);
+            const allOpen = heads.length > 0 && heads.every(h => h.getAttribute('aria-expanded') === 'true');
+            const label = allOpen ? 'Collapse all' : 'Expand all';
+            document.getElementById('toggleAllProvidersLabel').textContent = label;
+            btn.title = label;
+            btn.setAttribute('aria-label', label);
+            document.getElementById('toggleAllProvidersIcon').setAttribute('d', allOpen ? 'M8 4l4 4 4-4M16 20l-4-4-4 4' : 'M8 9l4-4 4 4M16 15l-4 4-4-4');
+        }
+
+        function toggleAllProviders() {
+            const heads = providerHeads();
+            const open = !heads.every(h => h.getAttribute('aria-expanded') === 'true');
+            heads.forEach(h => setProviderExpanded(h.getAttribute('onclick').match(/'([^']+)'/)[1], open));
         }
 
         function toggleProviderExpanded(pk, event) {
@@ -2290,6 +2385,7 @@
             el.textContent = cards.length
                 ? `${cards.length} provider${cards.length === 1 ? '' : 's'} · ${keys} key${keys === 1 ? '' : 's'} · click a provider to see its settings`
                 : 'Add a provider to get an endpoint that rotates its keys for you.';
+            updateToggleAllButton();
         }
 
         // Remembers provider display order for the current page session (see sorting below).
@@ -2814,7 +2910,7 @@
                                     const usageDisplay = usageEntry ? usageEntry.usageCount : 0;
                                     return `
                                     <div class="key-item" data-key-pos="${keyIndex}">
-                                    <div class="flex flex-wrap sm:flex-nowrap items-center gap-2${isKeyDisabled ? ' opacity-50' : ''}">
+                                    <div class="key-row-line flex items-center gap-2${isKeyDisabled ? ' opacity-50' : ''}">
                                         <!-- Drag to reorder (arrow keys work too) -->
                                         ${provider.keys.length > 1 ? `<button type="button" class="drag-handle"
                                             title="Drag to reorder" aria-label="Reorder key ${keyIndex + 1} of ${provider.keys.length}: drag, or use the arrow keys"
@@ -2828,29 +2924,31 @@
                                             <span class="toggle-slider"></span>
                                         </label>
                                         <!-- Key value -->
-                                        <div class="flex-1 min-w-0 basis-40 font-mono text-xs text-foreground bg-muted px-2 py-1 rounded${isKeyDisabled ? ' line-through' : ''}">
+                                        <div class="flex-1 min-w-0 font-mono text-xs text-foreground bg-muted px-2 py-1 rounded${isKeyDisabled ? ' line-through' : ''}">
                                             ${keyLabelHtml(keyVal, valueNames, toggleEdit)}
                                         </div>
                                         <div class="key-actions">
                                         <!-- Usage count -->
-                                        <span class="text-xs text-muted-foreground whitespace-nowrap tabular-nums" title="Successful requests with this key since the server started">${usageDisplay} use${usageDisplay === 1 ? '' : 's'}</span>
+                                        <span class="hidden sm:inline text-xs text-muted-foreground whitespace-nowrap tabular-nums" title="Successful requests with this key since the server started">${usageDisplay} use${usageDisplay === 1 ? '' : 's'}</span>
                                         <button
                                             onclick="testProviderKey('${provider.apiType}', '${provider.name}', '${keyVal}', ${keyIndex})"
-                                            class="btn btn-ghost btn-sm"
-                                            title="Check this key still works"
+                                            class="btn btn-ghost btn-sm key-action"
+                                            title="Check this key still works" aria-label="Test key"
                                         >
-                                            Test
+                                            <svg class="w-3.5 h-3.5 sm:hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                                            <span class="hidden sm:inline">Test</span>
                                         </button>
                                         ${hasValues ? `<button
                                             onclick="${toggleEdit}"
-                                            class="btn btn-ghost btn-sm"
-                                            title="Edit this key's values"
+                                            class="btn btn-ghost btn-sm key-action"
+                                            title="Edit this key's values" aria-label="Edit key values"
                                         >
-                                            Edit
+                                            <svg class="w-3.5 h-3.5 sm:hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>
+                                            <span class="hidden sm:inline">Edit</span>
                                         </button>` : ''}
                                         <button
                                             onclick="showDeleteKeyConfirmation('${provider.apiType}', '${provider.name}', ${keyIndex})"
-                                            class="btn btn-ghost btn-sm px-1.5 hover:!text-destructive"
+                                            class="btn btn-ghost btn-sm key-action px-1.5 hover:!text-destructive"
                                             title="Delete key" aria-label="Delete key"
                                         >
                                             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
@@ -4348,8 +4446,8 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             const { token, values } = splitKeyValues(key);
             const all = [...new Set([...names, ...Object.keys(values)])];
             const tags = all.map(n => values[n]
-                ? `<span class="inline-flex items-center px-1.5 rounded border border-border bg-background text-muted-foreground" title="${escapeHtml(placeholderLabel(n))}: ${escapeHtml(values[n])}">${escapeHtml(placeholderLabel(n))} ${escapeHtml(values[n].substring(0, 6))}…</span>`
-                : `<button type="button" onclick="${editTarget}" class="inline-flex items-center px-1.5 rounded border border-destructive/50 text-destructive" title="This key needs its own ${escapeHtml(placeholderLabel(n))} - click to add it">${escapeHtml(placeholderLabel(n))} missing</button>`);
+                ? `<span class="key-tag inline-flex items-center px-1.5 rounded border border-border bg-background text-muted-foreground" title="${escapeHtml(placeholderLabel(n))}: ${escapeHtml(values[n])}">${escapeHtml(placeholderLabel(n))} ${escapeHtml(values[n].substring(0, 6))}…</span>`
+                : `<button type="button" onclick="${editTarget}" class="key-tag inline-flex items-center px-1.5 rounded border border-destructive/50 text-destructive" title="This key needs its own ${escapeHtml(placeholderLabel(n))} - click to add it">${escapeHtml(placeholderLabel(n))} missing</button>`);
             return `<span>${escapeHtml(maskToken(token))}</span>${tags.length ? ` <span class="inline-flex flex-wrap gap-1 ml-1 align-middle">${tags.join('')}</span>` : ''}`;
         }
 
@@ -6404,11 +6502,13 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 _proxyProviderState[p.name] = !!p.proxy;
 
                 const row = document.createElement('div');
-                row.className = 'flex items-center justify-between gap-3 border border-border rounded-md px-3 py-2';
+                // Turned-off providers: "Off" badge on wide screens, just dimmed on phones so names fit
+                row.className = `flex items-center justify-between gap-3 border border-border rounded-md px-3 py-2${p.disabled ? ' opacity-60 sm:opacity-100' : ''}`;
+                row.title = p.disabled ? `${p.name} is turned off` : '';
                 row.innerHTML = `
                     <div class="min-w-0 flex items-center gap-2">
                         <span class="text-xs font-medium text-foreground truncate">${escapeHtml(p.name)}</span>
-                        ${p.disabled ? '<span class="badge badge-error">Off</span>' : ''}
+                        ${p.disabled ? '<span class="hidden sm:inline"><span class="badge badge-error">Off</span></span>' : ''}
                     </div>
                     <label class="toggle-switch toggle-sm flex-shrink-0" title="Route ${escapeHtml(p.name)} through the proxy">
                         <input type="checkbox" ${p.proxy ? 'checked' : ''}>
@@ -6949,7 +7049,6 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             document.getElementById('telegramBotToken').value = data.botToken || '';
             document.getElementById('telegramAllowedUsers').value = data.allowedUsers || '';
             document.getElementById('defaultStatusCodes').value = data.defaultStatusCodes || '429';
-            document.getElementById('keepAliveMinutes').value = data.keepAliveMinutes != null ? data.keepAliveMinutes : 10;
             document.getElementById('apiLogsMode').value = data.apiLogsMode === 'file' ? 'file' : 'memory';
             document.getElementById('apiLogsRetentionDays').value = data.apiLogsRetentionDays || 7;
             updateApiLogsMode();
@@ -6972,7 +7071,6 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
         const botToken = document.getElementById('telegramBotToken').value.trim();
         const allowedUsers = document.getElementById('telegramAllowedUsers').value.trim();
         const statusCodesInput = document.getElementById('defaultStatusCodes').value.trim() || '429';
-        const keepAliveMinutes = parseInt(document.getElementById('keepAliveMinutes').value) || 0;
         const apiLogsMode = document.getElementById('apiLogsMode').value;
         const apiLogsRetentionDays = parseInt(document.getElementById('apiLogsRetentionDays').value) || 7;
         const statusEl = document.getElementById('telegramBotStatus');
@@ -6981,7 +7079,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             const response = await fetch('/admin/api/telegram', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ botToken, allowedUsers, defaultStatusCodes: statusCodesInput, keepAliveMinutes, apiLogsMode, apiLogsRetentionDays })
+                body: JSON.stringify({ botToken, allowedUsers, defaultStatusCodes: statusCodesInput, apiLogsMode, apiLogsRetentionDays })
             });
 
             const data = await response.json();

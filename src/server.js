@@ -1005,7 +1005,7 @@ class ProxyServer {
           if (apiKeysKey in finalEnvVars) {
             finalEnvVars[key] = value;
           }
-        } else if (key.startsWith('TELEGRAM_') || key.startsWith('PROXY_') || key === 'DEFAULT_STATUS_CODES' || key === 'KEEP_ALIVE_MINUTES' || key === 'API_LOGS') {
+        } else if (key.startsWith('TELEGRAM_') || key.startsWith('PROXY_') || key === 'DEFAULT_STATUS_CODES' || key === 'API_LOGS') {
           finalEnvVars[key] = value;
         }
       }
@@ -1933,10 +1933,6 @@ class ProxyServer {
         ? envVars.TELEGRAM_ALLOWED_USERS.split(',').map(s => s.trim()).filter(Boolean)
         : [];
 
-      // Apply keep-alive setting
-      const kaMinutes = envVars.KEEP_ALIVE_MINUTES ? parseInt(envVars.KEEP_ALIVE_MINUTES) : 10;
-      this.telegramBot.setKeepAliveInterval(kaMinutes);
-
       if (token) {
         await this.telegramBot.start(token, allowedUsers);
       }
@@ -1951,9 +1947,6 @@ class ProxyServer {
       const envContent = fs.readFileSync(envPath, 'utf8');
       const envVars = this.config.parseEnvFile(envContent);
 
-      const keepAliveRaw = envVars.KEEP_ALIVE_MINUTES;
-      const keepAliveMinutes = keepAliveRaw != null ? parseInt(keepAliveRaw) : 10;
-
       const apiLogs = this.apiLogs.settings;
 
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -1961,7 +1954,6 @@ class ProxyServer {
         botToken: envVars.TELEGRAM_BOT_TOKEN || '',
         allowedUsers: envVars.TELEGRAM_ALLOWED_USERS || '',
         defaultStatusCodes: envVars.DEFAULT_STATUS_CODES || '429',
-        keepAliveMinutes,
         apiLogsMode: apiLogs.mode,
         apiLogsRetentionDays: apiLogs.retentionDays || 7,
         apiLogsStoredEntries: this.apiLogs.isFileMode() ? this.apiLogs.storedCount : this.apiLogs.buffer.length,
@@ -1974,7 +1966,7 @@ class ProxyServer {
 
   async handleUpdateTelegramSettings(res, body) {
     try {
-      const { botToken, allowedUsers, defaultStatusCodes, keepAliveMinutes, apiLogsMode, apiLogsRetentionDays } = JSON.parse(body);
+      const { botToken, allowedUsers, defaultStatusCodes, apiLogsMode, apiLogsRetentionDays } = JSON.parse(body);
       const envPath = path.join(process.cwd(), '.env');
       const envContent = fs.readFileSync(envPath, 'utf8');
       const envVars = this.config.parseEnvFile(envContent);
@@ -2008,14 +2000,8 @@ class ProxyServer {
           delete envVars.DEFAULT_STATUS_CODES;
         }
       }
-      if (keepAliveMinutes !== undefined) {
-        const val = parseInt(keepAliveMinutes);
-        if (val > 0) {
-          envVars.KEEP_ALIVE_MINUTES = String(val);
-        } else {
-          delete envVars.KEEP_ALIVE_MINUTES;
-        }
-      }
+      // Keep-alive pings were removed; drop the old setting if it's still there
+      delete envVars.KEEP_ALIVE_MINUTES;
 
       if (apiLogsMode !== undefined) {
         // API_LOGS only chooses where request logs live - it can't switch logging off
@@ -2040,10 +2026,6 @@ class ProxyServer {
         ? envVars.TELEGRAM_ALLOWED_USERS.split(',').map(s => s.trim()).filter(Boolean)
         : [];
 
-      // Apply keep-alive setting
-      const kaMinutes = envVars.KEEP_ALIVE_MINUTES ? parseInt(envVars.KEEP_ALIVE_MINUTES) : 0;
-      this.telegramBot.setKeepAliveInterval(kaMinutes);
-
       if (token) {
         await this.telegramBot.start(token, users);
       } else {
@@ -2055,7 +2037,6 @@ class ProxyServer {
         success: true,
         botRunning: this.telegramBot.polling,
         defaultStatusCodes: envVars.DEFAULT_STATUS_CODES || '429',
-        keepAliveMinutes: kaMinutes,
         apiLogsMode: this.apiLogs.settings.mode,
         apiLogsRetentionDays: this.apiLogs.settings.retentionDays || 7
       }));
