@@ -102,4 +102,12 @@ assert.strictEqual(hdr('Bearer [STATUS_CODES:>=400]').size, 200);
 assert.strictEqual(hdr('Bearer sk-abc'), null);
 assert.strictEqual(hdr('Bearer [STATUS_CODES:nope]'), null);
 
+// The model shown in the request log
+const { requestModel } = require('../src/server');
+assert.strictEqual(requestModel('{"model":"gpt-4o-mini","messages":[]}', '/groq/chat/completions'), 'gpt-4o-mini');   // OpenAI body
+assert.strictEqual(requestModel('{"contents":[]}', '/gemini/models/gemini-2.5-flash:generateContent'), 'gemini-2.5-flash'); // Gemini path
+assert.strictEqual(requestModel(null, '/gemini/v1beta/models/gemini-2.5-pro:streamGenerateContent?alt=sse'), 'gemini-2.5-pro');
+assert.strictEqual(requestModel(null, '/groq/models'), null);                  // listing models: no model
+assert.strictEqual(requestModel('not json', '/groq/chat/completions'), null);
+
 console.log('All tests passed');

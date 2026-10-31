@@ -542,23 +542,26 @@
             #logs .ds-table, #logs .ds-table tbody { display: block; }
             #logs .ds-table tbody tr {
                 display: grid;
-                grid-template-columns: auto minmax(0, 1fr) auto auto;
-                grid-template-areas: "status provider provider time" "req req req req" "key key lat view" "proxy proxy proxy proxy";
+                grid-template-columns: auto auto minmax(0, 1fr) auto auto;
+                grid-template-areas: "status provider model model time" "req req req req req" "key key key lat view" "proxy proxy proxy proxy proxy";
                 gap: 0.25rem 0.5rem; align-items: center;
                 padding: 0.625rem 0.75rem;
                 border-bottom: 1px solid var(--border);
             }
             /* "direct" on every row is noise; only show the proxy when one was used */
-            #logs .ds-table tbody td:nth-child(7):has(span[title^="Sent directly"]) { display: none; }
+            #logs .ds-table tbody td:nth-child(8):has(span[title^="Sent directly"]) { display: none; }
             #logs .ds-table tbody td { padding: 0; white-space: normal; min-width: 0; }
             #logs .ds-table tbody td:nth-child(1) { grid-area: time; text-align: right; }
             #logs .ds-table tbody td:nth-child(2) { grid-area: req; overflow-wrap: anywhere; }
             #logs .ds-table tbody td:nth-child(3) { grid-area: provider; }
-            #logs .ds-table tbody td:nth-child(4) { grid-area: status; }
-            #logs .ds-table tbody td:nth-child(5) { grid-area: lat; text-align: right; }
-            #logs .ds-table tbody td:nth-child(6) { grid-area: key; overflow-wrap: anywhere; }
-            #logs .ds-table tbody td:nth-child(7) { grid-area: proxy; }
-            #logs .ds-table tbody td:nth-child(8) { grid-area: view; }
+            #logs .ds-table tbody td:nth-child(4) { grid-area: model; }
+            #logs .ds-table tbody td:nth-child(4) span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+            #logs .ds-table tbody td:nth-child(4):has(> .text-muted-foreground) { display: none; }
+            #logs .ds-table tbody td:nth-child(5) { grid-area: status; }
+            #logs .ds-table tbody td:nth-child(6) { grid-area: lat; text-align: right; }
+            #logs .ds-table tbody td:nth-child(7) { grid-area: key; overflow-wrap: anywhere; }
+            #logs .ds-table tbody td:nth-child(8) { grid-area: proxy; }
+            #logs .ds-table tbody td:nth-child(9) { grid-area: view; }
             #logs .ds-table tbody td:empty { display: none; }
             #logs .ds-table tbody .lat-track { display: none; }
         }
@@ -570,6 +573,16 @@
             padding: var(--space-3) 0;
             background: linear-gradient(to top, var(--background) 70%, transparent);
         }
+
+        /* Behind an open dialog the page stays put: no scrolling, and the scrollbar's
+           space is always reserved so it appearing can't shift a centred dialog */
+        html { scrollbar-gutter: stable; }
+        html:has(.ds-overlay:not(.hidden)), html:has(#confirmDialog:not(.hidden)) { overflow: hidden; }
+
+        /* Logs: long model names get trimmed, full name on hover */
+        .log-model > span, .log-key { display: inline-block; max-width: 11rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; font-size: var(--text-xs); }
+
+        .log-request { min-width: 10rem; }
 
         /* Key check results */
         .key-status { width: 0.5rem; height: 0.5rem; border-radius: var(--radius-full); flex-shrink: 0; }
@@ -1205,6 +1218,7 @@
                                         <th class="sortable" onclick="setLogSort('time')" data-sort="time">Time <span class="sort-ind"></span></th>
                                         <th>Request</th>
                                         <th class="sortable" onclick="setLogSort('provider')" data-sort="provider">Provider <span class="sort-ind"></span></th>
+                                        <th class="sortable" onclick="setLogSort('model')" data-sort="model">Model <span class="sort-ind"></span></th>
                                         <th class="sortable" onclick="setLogSort('status')" data-sort="status">Status <span class="sort-ind"></span></th>
                                         <th class="sortable text-right" onclick="setLogSort('latency')" data-sort="latency">Latency <span class="sort-ind"></span></th>
                                         <th>Key</th>
@@ -5072,6 +5086,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 status: (log.status === 0 || log.status) ? log.status : null,
                 responseTime: log.responseTime != null ? log.responseTime : null,
                 error: log.error || null,
+                model: log.model || null,
                 keyUsed: log.keyUsed || null,
                 failedKeys: Array.isArray(log.failedKeys) ? log.failedKeys : [],
                 proxyUsed: log.proxyUsed || null,
@@ -5084,7 +5099,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             if (!body) return;
             const cell = (w) => `<td><span class="skeleton block h-3.5" style="width:${w}"></span></td>`;
             body.innerHTML = Array.from({ length: n }, () =>
-                `<tr>${cell('60px')}${cell('180px')}${cell('70px')}${cell('40px')}${cell('80px')}${cell('90px')}${cell('60px')}${cell('30px')}</tr>`
+                `<tr>${cell('60px')}${cell('180px')}${cell('70px')}${cell('120px')}${cell('40px')}${cell('80px')}${cell('90px')}${cell('60px')}${cell('30px')}</tr>`
             ).join('');
             document.getElementById('logsEmpty')?.classList.add('hidden');
         }
@@ -5248,13 +5263,13 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             } else {
                 const method = log.method
                     ? `<span class="chip mr-1.5"><span class="chip-v">${escapeHtml(log.method)}</span></span>` : '';
-                requestCell = `${method}<span class="font-mono text-foreground align-middle inline-block max-w-[320px] truncate" title="${escapeHtml(log.endpoint)}">${escapeHtml(log.endpoint || '—')}</span>`;
+                requestCell = `${method}<span class="font-mono text-foreground align-middle inline-block max-w-[14rem] truncate" title="${escapeHtml(log.endpoint)}">${escapeHtml(log.endpoint || '—')}</span>`;
             }
 
             // Key cell
             let keyCell = '<span class="text-muted-foreground">—</span>';
             if (log.keyUsed) {
-                keyCell = `<span class="font-mono" style="color:var(--success)" title="Key used">${escapeHtml(log.keyUsed)}</span>`;
+                keyCell = `<span class="font-mono log-key" style="color:var(--success)" title="Key used: ${escapeHtml(log.keyUsed)}">${escapeHtml(log.keyUsed)}</span>`;
             }
             if (log.failedKeys && log.failedKeys.length > 0) {
                 const failedList = log.failedKeys.map(fk => `${fk.key} (${fk.status || 'err'})`).join(', ');
@@ -5282,8 +5297,9 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
 
             return `<tr ${rowClick}>
                 <td class="whitespace-nowrap text-muted-foreground tabular-nums" title="${escapeHtml(rt.title)}">${escapeHtml(rt.text)}</td>
-                <td>${requestCell}${errorRow}</td>
+                <td class="log-request">${requestCell}${errorRow}</td>
                 <td class="whitespace-nowrap">${providerPill(log.provider)}</td>
+                <td class="log-model">${log.model ? `<span class="font-mono" title="${escapeHtml(log.model)}">${escapeHtml(log.model)}</span>` : '<span class="text-muted-foreground">—</span>'}</td>
                 <td class="whitespace-nowrap">${statusBadge(log.status)}</td>
                 <td class="whitespace-nowrap text-right">${latencyCell(log.responseTime)}</td>
                 <td class="whitespace-nowrap">${keyCell}</td>
@@ -5305,7 +5321,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 if (proxyFilter === 'proxy' && !log.proxyUsed) continue;
                 if (proxyFilter === 'direct' && log.proxyUsed) continue;
                 if (q) {
-                    const hay = [log.endpoint, log.method, log.provider, log.status, log.keyUsed,
+                    const hay = [log.endpoint, log.method, log.provider, log.model, log.status, log.keyUsed,
                         log.proxyUsed, log.error, (log.failedKeys || []).map(f => f.key).join(' ')].join(' ').toLowerCase();
                     if (!hay.includes(q)) continue;
                 }
@@ -5319,6 +5335,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 else if (key === 'status') { av = a.status || 0; bv = b.status || 0; }
                 else if (key === 'latency') { av = a.responseTime || 0; bv = b.responseTime || 0; }
                 else if (key === 'provider') { av = a.provider || ''; bv = b.provider || ''; return av.localeCompare(bv) * mul; }
+                else if (key === 'model') { av = a.model || ''; bv = b.model || ''; return av.localeCompare(bv) * mul; }
                 return (av - bv) * mul;
             });
             return out;
@@ -5434,7 +5451,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             const on = document.getElementById('logAutoRefresh')?.checked;
             if (_logAutoRefreshTimer) { clearInterval(_logAutoRefreshTimer); _logAutoRefreshTimer = null; }
             if (on) {
-                _logAutoRefreshTimer = setInterval(refreshLogs, 5000);
+                _logAutoRefreshTimer = setInterval(liveRefreshLogs, 5000);
                 refreshLogs();
             }
         }
@@ -5668,6 +5685,20 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
 
         function closeResponseDialog() {
             document.getElementById('responseDialog').classList.add('hidden');
+            // Catch up on anything Live held back while the dialog was open
+            if (_logsHeldBack && !isDialogOpen()) { _logsHeldBack = false; refreshLogs(); }
+        }
+
+        // An open dialog sits on a blurred view of the page; rebuilding the page under
+        // it (Live logs, status bar) makes it flicker and can shift it, so those wait.
+        function isDialogOpen() {
+            return !!document.querySelector('.ds-overlay:not(.hidden), #confirmDialog:not(.hidden)');
+        }
+
+        let _logsHeldBack = false;
+        function liveRefreshLogs() {
+            if (isDialogOpen()) { _logsHeldBack = true; return; }
+            refreshLogs();
         }
 
         // ---- Models browser ----------------------------------------------------
@@ -6582,7 +6613,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             if (tabName === 'logs') {
                 refreshLogs();
                 if (document.getElementById('logAutoRefresh')?.checked && !_logAutoRefreshTimer) {
-                    _logAutoRefreshTimer = setInterval(refreshLogs, 5000);
+                    _logAutoRefreshTimer = setInterval(liveRefreshLogs, 5000);
                 }
             } else if (_logAutoRefreshTimer) {
                 clearInterval(_logAutoRefreshTimer);
@@ -6977,7 +7008,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
         }
         async function refreshStatusBar() {
             const el = document.getElementById('statusBar');
-            if (!el) return;
+            if (!el || isDialogOpen()) return;
             try {
                 const r = await fetch('/admin/api/status');
                 if (!r.ok) return;

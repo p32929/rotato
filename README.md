@@ -248,6 +248,7 @@ Old day directories are deleted at startup and hourly after that. `logs/` is git
 - **Custom models URL** — any provider can list its models from somewhere other than `{base URL}/models`; the models browser and Telegram bot read lists in any common shape
 - **Redesigned admin panel** — collapsible providers with expand/collapse all, an Add provider dialog, drag-to-reorder keys, and a full phone layout
 - **Test all** — one button checks every key of every provider without spending tokens; each key gets a status dot and each provider a summary
+- Request logs show the model each request asked for (searchable and sortable)
 - Keys are validated even for providers without a `/models` endpoint
 - Removed the keep-alive ping setting: it pinged the server from inside itself, so it couldn't keep a free host awake
 

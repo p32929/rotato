@@ -11,6 +11,17 @@ const ProxyPool = require('./proxyPool');
 const { resolveKey } = require('./keyValues');
 const { parseStatusCodes, describeStatusCodes } = require('./statusCodes');
 
+// The model a request asked for: the body's "model" (OpenAI style), else the
+// /models/<name>:<action> path segment (Gemini style). Null when there isn't one.
+function requestModel(body, url) {
+  try {
+    const model = body && JSON.parse(body).model;
+    if (typeof model === 'string' && model) return model.slice(0, 200);
+  } catch (e) { /* not JSON */ }
+  const m = String(url || '').split('?')[0].match(/\/models\/([^/:]+)(?::[^/]*)?$/);
+  return m ? decodeURIComponent(m[1]).slice(0, 200) : null;
+}
+
 // The provider's own reason from an error body ({error:{message}}, {error:"..."},
 // {message}, Cloudflare's {errors:[{message}]}), so a failed key check says why
 function upstreamErrorText(body) {
@@ -133,8 +144,10 @@ class ProxyServer {
       : `adm-${Math.random().toString(36).substring(2, 8)}`;
     console.log(`[REQ-${requestId}] ${req.method} ${req.url} from ${clientIp}`);
 
+    let model = null; // shown in the request log
     try {
       const body = await this.readRequestBody(req);
+      if (isApiCall) model = requestModel(body, req.url);
 
       // Serve static files from public directory
       if (req.url === '/tailwind-3.4.17.js' && (req.method === 'GET' || req.method === 'HEAD')) {
@@ -199,7 +212,7 @@ class ProxyServer {
         
         if (isApiCall) {
           const responseTime = Date.now() - startTime;
-          this.logApiRequest(requestId, req.method, req.url, 'unknown', 400, responseTime, 'Invalid API path', clientIp);
+          this.logApiRequest(requestId, req.method, req.url, 'unknown', 400, responseTime, 'Invalid API path', clientIp, null, null, model);
         }
         
         this.sendError(res, 400, 'Invalid API path. Use /{provider}/* format');
@@ -213,7 +226,7 @@ class ProxyServer {
         console.log(`[REQ-${requestId}] Provider '${providerName}' is disabled`);
         if (isApiCall) {
           const responseTime = Date.now() - startTime;
-          this.logApiRequest(requestId, req.method, path, providerName, 503, responseTime, `Provider '${providerName}' is disabled`, clientIp);
+          this.logApiRequest(requestId, req.method, path, providerName, 503, responseTime, `Provider '${providerName}' is disabled`, clientIp, null, null, model);
         }
         this.sendError(res, 503, `Provider '${providerName}' is currently disabled`);
         return;
@@ -235,7 +248,7 @@ class ProxyServer {
 
         if (isApiCall) {
           const responseTime = Date.now() - startTime;
-          this.logApiRequest(requestId, req.method, path, providerName, 401, responseTime, 'Invalid or missing ACCESS_KEY', clientIp);
+          this.logApiRequest(requestId, req.method, path, providerName, 401, responseTime, 'Invalid or missing ACCESS_KEY', clientIp, null, null, model);
         }
 
         this.sendError(res, 401, `Invalid or missing ACCESS_KEY for provider '${providerName}'`);
@@ -265,7 +278,7 @@ class ProxyServer {
 
         if (isApiCall) {
           const responseTime = Date.now() - startTime;
-          this.logApiRequest(requestId, req.method, path, providerName, 503, responseTime, `Provider '${providerName}' not configured`, clientIp);
+          this.logApiRequest(requestId, req.method, path, providerName, 503, responseTime, `Provider '${providerName}' not configured`, clientIp, null, null, model);
         }
 
         this.sendError(res, 503, `Provider '${providerName}' not configured`);
@@ -343,7 +356,7 @@ class ProxyServer {
           if (isApiCall) {
             const responseTime = Date.now() - startTime;
             const error = response.statusCode >= 400 ? `HTTP ${response.statusCode}` : null;
-            this.logApiRequest(requestId, req.method, path, providerName, response.statusCode, responseTime, error, clientIp, keyInfo, proxyUsed);
+            this.logApiRequest(requestId, req.method, path, providerName, response.statusCode, responseTime, error, clientIp, keyInfo, proxyUsed, model);
           }
           console.log(`[REQ-${requestId}] Streaming response completed`);
         });
@@ -365,7 +378,7 @@ class ProxyServer {
         if (isApiCall) {
           const responseTime = Date.now() - startTime;
           const error = response.statusCode >= 400 ? `HTTP ${response.statusCode}` : null;
-          this.logApiRequest(requestId, req.method, path, providerName, response.statusCode, responseTime, error, clientIp, keyInfo, proxyUsed);
+          this.logApiRequest(requestId, req.method, path, providerName, response.statusCode, responseTime, error, clientIp, keyInfo, proxyUsed, model);
         }
 
         this.sendResponse(res, response);
@@ -376,7 +389,7 @@ class ProxyServer {
       
       if (isApiCall) {
         const responseTime = Date.now() - startTime;
-        this.logApiRequest(requestId, req.method, req.url, 'unknown', 500, responseTime, error.message, clientIp);
+        this.logApiRequest(requestId, req.method, req.url, 'unknown', 500, responseTime, error.message, clientIp, null, null, model);
       }
       
       this.sendError(res, 500, 'Internal server error');
@@ -1256,7 +1269,7 @@ class ProxyServer {
     }
   }
 
-  logApiRequest(requestId, method, endpoint, provider, status = null, responseTime = null, error = null, clientIp = null, keyInfo = null, proxyUsed = null) {
+  logApiRequest(requestId, method, endpoint, provider, status = null, responseTime = null, error = null, clientIp = null, keyInfo = null, proxyUsed = null, model = null) {
     const logEntry = {
       timestamp: new Date().toISOString(),
       requestId: requestId || 'unknown',
@@ -1269,7 +1282,8 @@ class ProxyServer {
       clientIp: clientIp,
       keyUsed: keyInfo ? keyInfo.keyUsed : null,
       failedKeys: keyInfo ? keyInfo.failedKeys : [],
-      proxyUsed: proxyUsed || null
+      proxyUsed: proxyUsed || null,
+      model: model || null
     };
 
     this.totalApiRequests++;
@@ -2035,3 +2049,4 @@ class ProxyServer {
 }
 
 module.exports = ProxyServer;
+module.exports.requestModel = requestModel;
