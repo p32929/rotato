@@ -271,7 +271,12 @@ class Config {
     // is somewhere for proxies to come from.
     this.proxyEnabled = proxied.length > 0 && (this.proxyUrls.length > 0 || this.proxyAutoFetch);
 
-    this.proxyManager = new ProxyManager(this.proxyUrls, this.proxyEnabled);
+    // Green/red line and tries per request, both editable in the Proxy tab
+    const int = (v, min, max) => { const n = parseInt(v, 10); return n >= min && n <= max ? n : undefined; };
+    this.proxyManager = new ProxyManager(this.proxyUrls, this.proxyEnabled, {
+      goodMs: int(envVars.PROXY_GOOD_MS, 100, 30000),
+      maxTries: int(envVars.PROXY_MAX_TRIES, 1, 50),
+    });
 
     if (proxied.length === 0) {
       if (this.proxyUrls.length > 0) {

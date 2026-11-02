@@ -143,6 +143,84 @@ assert.strictEqual(ProxyServer.prototype.parseRoute.call({ config: { getProvider
   assert.strictEqual(pool.live.length, 2);
   assert.strictEqual(pool.refreshing, false);
 
+  // Green/red picking: random, no reuse until all have had a turn, never twice per request
+  {
+    const pm = new ProxyManager([], true, { goodMs: 1000, maxTries: 3 });
+    const urls = ['a', 'b', 'c', 'd', 'e'].map((h, i) => `socks5://10.0.0.${i + 1}:1080`);
+    pm.setAutoProxies(urls.map((url, i) => ({ url, ms: 200 + i * 100 })).concat([{ url: 'socks5://10.0.0.9:1080', ms: 1000 }]));
+    assert.strictEqual(pm.isGreen('socks5://10.0.0.9:1080'), false);                 // 1000ms is red (green is below)
+    assert.strictEqual(pm.getGreen().length, 5);
+    for (let round = 0; round < 20; round++) {
+      const seen = new Set();
+      for (let i = 0; i < 5; i++) seen.add(pm.pick().url);
+      assert.strictEqual(seen.size, 5);                                             // each green once per cycle
+      assert.ok(!seen.has('socks5://10.0.0.9:1080'));                               // red never picked
+    }
+    let last = pm.pick().url;                                                      // no back-to-back repeat across a reshuffle
+    for (let i = 0; i < 200; i++) { const u = pm.pick().url; assert.notStrictEqual(u, last); last = u; }
+    const tried = new Set();
+    for (let i = 0; i < 5; i++) assert.ok(pm.pick(tried));
+    assert.strictEqual(tried.size, 5);
+    assert.strictEqual(pm.pick(tried), null);                                       // this request tried them all
+    pm.recordLatency(urls[0], 5000); pm.recordLatency(urls[0], 5000); pm.recordLatency(urls[0], 5000);
+    assert.strictEqual(pm.isGreen(urls[0]), false);                                 // slowed down -> red
+    pm.recordCheck(urls[0], 100);
+    for (let i = 0; i < 3; i++) pm.reportFailure(urls[1]);
+    assert.ok(pm.isBenched(urls[1]) && !pm.isGreen(urls[1]));
+    pm.recordCheck(urls[1], 300);
+    assert.ok(pm.isGreen(urls[1]));                                                 // a passing check un-benches
+    const none = new ProxyManager([], true);
+    none.setAutoProxies([{ url: 'socks5://10.0.0.7:1', ms: 3000 }]);
+    assert.strictEqual(none.pick(), null);                                          // no green: go direct
+  }
+
+  // A request moves on to another proxy on failure or 403, up to maxTries, then gives up
+  {
+    const OpenAIClient = require('../src/openaiClient');
+    const pm = new ProxyManager([], true, { maxTries: 4 });
+    pm.setAutoProxies(['1', '2', '3', '4', '5', '6'].map(n => ({ url: `socks5://10.0.1.${n}:1`, ms: 100 })));
+    const c = new OpenAIClient(null, 'https://x', pm);
+    let calls = 0;
+    const fail = (tried) => { calls++; pm.pick(tried); const e = new Error('dead'); e._proxyFailure = true; return Promise.reject(e); };
+    await assert.rejects(c._withProxyRetry(fail), /dead/);
+    assert.strictEqual(calls, 4);
+    calls = 0;
+    const blocked = (tried) => { calls++; pm.pick(tried); return Promise.resolve({ statusCode: 403, _proxyBlocked: true }); };
+    assert.strictEqual((await c._withProxyRetry(blocked)).statusCode, 403);          // all blocked: provider's answer passed on
+    assert.strictEqual(calls, 4);
+    calls = 0;
+    const second = (tried) => { calls++; const t = tried.size; pm.pick(tried); return t ? Promise.resolve({ statusCode: 200 }) : Promise.reject(Object.assign(new Error('x'), { _proxyFailure: true })); };
+    assert.strictEqual((await c._withProxyRetry(second)).statusCode, 200);
+    assert.strictEqual(calls, 2);
+  }
+
+  // Background checker: checks while idle, un-benches what passes, stops on traffic
+  {
+    const ProxyChecker = require('../src/proxyChecker');
+    const pm = new ProxyManager([], true);
+    const urls = ['1', '2', '3', '4'].map(n => `socks5://10.0.2.${n}:1`);
+    pm.setAutoProxies(urls.map(url => ({ url, ms: 1100 })));                        // all just red
+    for (let i = 0; i < 3; i++) pm.reportFailure(urls[3]);                           // one benched
+    const modelChecked = [];
+    const ck = new ProxyChecker({
+      getManager: () => pm, getTargets: () => ['api.example.com'],
+      probe: async (url) => ({ ok: url !== urls[2], ms: 300 }),
+      modelCheck: async (url) => { modelChecked.push(url); },
+      modelGapMs: 0,
+    });
+    ck.start();
+    await ck.cycle();
+    assert.deepStrictEqual(urls.map(u => pm.isGreen(u)), [true, true, false, true]);  // re-measured; benched one is back
+    assert.strictEqual(modelChecked.length, 3);                                       // green ones got a models check
+    await ck.cycle();
+    assert.strictEqual(modelChecked.length, 3);                                       // not again within 10 min
+    pm.lastPickAt = Date.now();                                                       // traffic arrives
+    let probed = 0; ck.probe = async () => { probed++; return { ok: true, ms: 1 }; };
+    await ck.cycle();
+    assert.strictEqual(probed, 0);
+    ck.stop();
+  }
+
   // Dropped auto proxies don't keep their agents around
   const m = new ProxyManager([], true);
   m.setAutoProxies(['socks5://1.1.1.1:1']);

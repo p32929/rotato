@@ -1257,7 +1257,7 @@
                             <div class="flex items-start justify-between gap-4">
                                 <div>
                                     <div class="text-xs font-medium text-foreground">Automatically fetch free proxies</div>
-                                    <p class="text-xs text-muted-foreground mt-1">Pulls the SOCKS4 and SOCKS5 lists from <span class="text-foreground">monosans/proxy-list</span>, tests every entry against your provider, and keeps only the ones that answer. Re-checked every 30 minutes, and again whenever they have all stopped responding.</p>
+                                    <p class="text-xs text-muted-foreground mt-1">Pulls the SOCKS4 and SOCKS5 lists from <span class="text-foreground">monosans/proxy-list</span>, tests every entry against your provider, and keeps the ones that answer. The list is re-fetched every 30 minutes, and while rotato is idle every proxy is re-checked every couple of minutes.</p>
                                     <p class="text-xs text-muted-foreground mt-1">These are run by strangers. Your API keys stay encrypted inside the TLS tunnel, but whoever runs the proxy can see which hosts you reach and can stall or drop traffic.</p>
                                 </div>
                                 <label class="toggle-switch flex-shrink-0" title="Automatically fetch free proxies">
@@ -1278,7 +1278,7 @@
                             </div>
 
                             <div class="pt-3 border-t border-border">
-                                <label class="block text-xs font-medium text-muted-foreground mb-1">Your own proxy URLs <span class="font-normal">(one per line, rotated round-robin)</span></label>
+                                <label class="block text-xs font-medium text-muted-foreground mb-1">Your own proxy URLs <span class="font-normal">(one per line, picked at random along with the rest)</span></label>
                                 <textarea
                                     id="proxyUrls"
                                     rows="5"
@@ -1286,6 +1286,33 @@
                                     placeholder="http://user:pass@host:port&#10;https://host:port&#10;socks5://user:pass@host:1080"
                                 ></textarea>
                                 <p class="text-xs text-muted-foreground mt-1">Supported: <code>http://</code>, <code>https://</code>, <code>socks4://</code>, <code>socks5://</code> — with optional <code>user:pass@</code>. A bare <code>host:port</code> is treated as HTTP. These are always kept and are never removed automatically.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- How a proxy is chosen -->
+                    <div class="section" style="margin:0">
+                        <h3 class="text-sm font-medium text-foreground mb-3 flex items-center gap-2">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                            </svg>
+                            How a proxy is picked
+                        </h3>
+                        <p class="text-xs text-muted-foreground mb-3">Each request gets a random <span style="color:var(--success)">green</span> proxy that no other request is using, and none is reused until all the others have had a turn. If one fails, the same key moves on to the next proxy. With no green proxy at all, requests go direct.</p>
+                        <div class="flex flex-wrap gap-4">
+                            <div>
+                                <label for="proxyGoodMs" class="block text-xs font-medium text-muted-foreground mb-1">Green below</label>
+                                <div class="flex items-center gap-2">
+                                    <input type="number" id="proxyGoodMs" class="input-field w-28 px-3 py-2 rounded-md text-sm tabular-nums" min="100" max="30000" step="50" value="1000">
+                                    <span class="text-xs text-muted-foreground">ms — slower ones show red and aren't used</span>
+                                </div>
+                            </div>
+                            <div>
+                                <label for="proxyMaxTries" class="block text-xs font-medium text-muted-foreground mb-1">Proxies to try per request</label>
+                                <div class="flex items-center gap-2">
+                                    <input type="number" id="proxyMaxTries" class="input-field w-28 px-3 py-2 rounded-md text-sm tabular-nums" min="1" max="50" step="1" value="5">
+                                    <span class="text-xs text-muted-foreground">then the next API key is tried</span>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -2349,6 +2376,7 @@
             if (_statusTimer) { clearInterval(_statusTimer); _statusTimer = null; }
             if (_logAutoRefreshTimer) { clearInterval(_logAutoRefreshTimer); _logAutoRefreshTimer = null; }
             stopProxyProgressPolling();
+            stopProxyLiveRefresh();
             document.getElementById('loginForm').classList.remove('hidden');
             document.getElementById('adminPanel').classList.add('hidden');
             document.getElementById('password').value = '';
@@ -6609,9 +6637,12 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 _logAutoRefreshTimer = null;
             }
 
-            // Load proxy settings when the proxy tab is selected
+            // Load proxy settings when the proxy tab is selected; keep it live while open
             if (tabName === 'proxy') {
                 loadProxySettings();
+                startProxyLiveRefresh();
+            } else {
+                stopProxyLiveRefresh();
             }
 
             // Load settings when the settings tab is selected
@@ -6683,6 +6714,8 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 const data = await res.json();
                 proxyState = data;
                 document.getElementById('proxyAutoFetch').checked = !!data.autoFetch;
+                document.getElementById('proxyGoodMs').value = data.goodMs || 1000;
+                document.getElementById('proxyMaxTries').value = data.maxTries || 5;
                 renderProxyProviders(data.providers || []);
                 document.getElementById('proxyUrls').value = (data.proxies || []).map(p => p.url).join('\n');
                 renderProxyList(data.proxies || []);
@@ -6782,9 +6815,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                     statusEl.textContent = `Last refresh failed: ${auto.lastError}`;
                 } else if (auto.lastRefreshAt) {
                     const benched = pool.benched ? ` · ${pool.benched} benched` : '';
-                    const speed = pool.fastestMs != null ? ` · fastest ${pool.fastestMs}ms` : '';
-                    const rotating = pool.fastPool ? ` · rotating the ${pool.fastPool} quickest` : '';
-                    statusEl.textContent = `${auto.live} live of ${auto.tested} tested${speed}${rotating} · updated ${relativeTime(new Date(auto.lastRefreshAt).toISOString()).text}${benched}`;
+                    statusEl.textContent = `${pool.green || 0} green · ${pool.red || 0} red${benched} · ${auto.live} of ${auto.tested} answered the last fetch, ${relativeTime(new Date(auto.lastRefreshAt).toISOString()).text}`;
                 } else {
                     statusEl.textContent = 'Waiting for the first refresh…';
                 }
@@ -6799,31 +6830,66 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
 
             if (renderProxyProgress(auto) && !_proxyProgressTimer) startProxyProgressPolling();
 
-            const list = auto.proxies || [];
+            // Live state from the rotator: green (used), red (too slow), benched
+            const list = ((data && data.details) || []).filter(d => !d.manual);
             wrap.classList.toggle('hidden', list.length === 0);
             if (count) count.textContent = list.length ? `(${list.length})` : '';
 
             container.innerHTML = '';
-            const fastCount = (pool && pool.fastPool) || 0;
-            list.forEach((p, i) => {
-                const row = document.createElement('div');
-                row.className = 'flex items-center justify-between gap-3 border border-border rounded p-2 bg-muted/20';
-                // The rotator only uses the fastest slice, so mark which rows those are
-                const inFastPool = i < fastCount;
-                const speed = p.ms != null
-                    ? `<span class="text-xs tabular-nums whitespace-nowrap" style="color:${inFastPool ? 'var(--success)' : 'var(--muted-foreground)'}" title="${inFastPool ? 'In the rotation — among the fastest' : 'Measured, but slower than the ones in rotation'}">${p.ms}ms</span>`
-                    : '';
-                row.innerHTML = `
-                    <code class="text-xs text-foreground truncate flex-1" title="${escapeHtml(p.masked)}">${escapeHtml(p.masked)}</code>
-                    ${speed}
-                    <span class="proxy-test-result text-xs text-muted-foreground whitespace-nowrap"></span>
-                    <button class="btn btn-secondary px-2 py-1 text-xs font-medium flex-shrink-0">Test</button>
-                `;
-                const btn = row.querySelector('button');
-                const resultEl = row.querySelector('.proxy-test-result');
-                btn.onclick = () => testProxy(p.url, btn, resultEl);
-                container.appendChild(row);
-            });
+            list.forEach((p) => container.appendChild(proxyRow(p, p)));
+        }
+
+        // Test results survive the live redraw of the lists
+        const _proxyRowResults = new Map(); // url -> { text, cls }
+        const PROXY_STATUS = {
+            green: { color: 'var(--success)', title: (ms) => `Green — used for requests` },
+            red: { color: 'var(--destructive)', title: (ms) => `Red — slower than the green line, not used` },
+            benched: { color: 'var(--muted-foreground)', title: () => 'Benched after repeated failures — skipped until a check finds it working' },
+        };
+
+        // One proxy row: address, live speed coloured by status, Test button
+        function proxyRow(p, detail) {
+            const row = document.createElement('div');
+            row.className = 'flex items-center justify-between gap-3 border border-border rounded p-2 bg-muted/20';
+            const st = detail && PROXY_STATUS[detail.status];
+            const ms = detail && detail.latencyMs != null ? `${detail.latencyMs}ms` : (detail ? 'not measured' : '');
+            const speed = st
+                ? `<span class="text-xs tabular-nums whitespace-nowrap" style="color:${st.color}" title="${escapeHtml(st.title())}">${detail.status === 'benched' ? 'benched · ' : ''}${ms}</span>`
+                : '';
+            row.innerHTML = `
+                <code class="text-xs text-foreground truncate flex-1${detail && detail.status === 'benched' ? ' line-through opacity-60' : ''}" title="${escapeHtml(p.masked)}">${escapeHtml(p.masked)}</code>
+                ${speed}
+                <span class="proxy-test-result text-xs text-muted-foreground whitespace-nowrap"></span>
+                <button class="btn btn-secondary px-2 py-1 text-xs font-medium flex-shrink-0">Test</button>
+            `;
+            const btn = row.querySelector('button');
+            const resultEl = row.querySelector('.proxy-test-result');
+            const saved = _proxyRowResults.get(p.url);
+            if (saved) { resultEl.textContent = saved.text; resultEl.className = saved.cls; }
+            btn.onclick = () => testProxy(p.url, btn, resultEl);
+            return row;
+        }
+
+        // While the Proxy tab is open, redraw the lists every few seconds so the
+        // background checks' green/red changes show up
+        let _proxyLiveTimer = null;
+        function startProxyLiveRefresh() {
+            stopProxyLiveRefresh();
+            _proxyLiveTimer = setInterval(async () => {
+                if (_proxyProgressTimer || document.hidden) return; // a sweep has its own polling
+                try {
+                    const res = await fetch('/admin/api/proxy/status', { background: true });
+                    if (!res.ok) return;
+                    const data = await res.json();
+                    proxyState = { ...proxyState, auto: data.auto, pool: data.pool, details: data.details };
+                    renderProxyAuto(proxyState);
+                    renderProxyList(proxyState.proxies || []);
+                } catch (e) { /* next tick */ }
+            }, 5000);
+        }
+        function stopProxyLiveRefresh() {
+            if (_proxyLiveTimer) clearInterval(_proxyLiveTimer);
+            _proxyLiveTimer = null;
         }
 
         // Force a fresh fetch + validation sweep right now
@@ -6866,19 +6932,8 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 return;
             }
             empty.classList.add('hidden');
-            proxies.forEach((p) => {
-                const row = document.createElement('div');
-                row.className = 'flex items-center justify-between gap-3 border border-border rounded p-2 bg-muted/20';
-                row.innerHTML = `
-                    <code class="text-xs text-foreground truncate flex-1" title="${escapeHtml(p.masked)}">${escapeHtml(p.masked)}</code>
-                    <span class="proxy-test-result text-xs text-muted-foreground whitespace-nowrap"></span>
-                    <button class="btn btn-secondary px-2 py-1 text-xs font-medium flex-shrink-0">Test</button>
-                `;
-                const btn = row.querySelector('button');
-                const resultEl = row.querySelector('.proxy-test-result');
-                btn.onclick = () => testProxy(p.url, btn, resultEl);
-                container.appendChild(row);
-            });
+            const details = new Map(((proxyState && proxyState.details) || []).map(d => [d.url, d]));
+            proxies.forEach((p) => container.appendChild(proxyRow(p, details.get(p.url))));
         }
 
         // A JS string literal that is safe inside a double-quoted onclick="..."
@@ -6908,7 +6963,11 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             const res = await fetch('/admin/api/proxy', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ proxies, autoFetch, providerProxies: _proxyProviderState }),
+                body: JSON.stringify({
+                    proxies, autoFetch, providerProxies: _proxyProviderState,
+                    goodMs: Number(document.getElementById('proxyGoodMs').value) || 1000,
+                    maxTries: Number(document.getElementById('proxyMaxTries').value) || 5,
+                }),
             });
             const data = await res.json();
             if (!res.ok || !data.success) throw new Error(data.error || 'Failed to save');
@@ -6959,6 +7018,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 }
             } finally {
                 if (btn) { btn.disabled = false; btn.textContent = original; }
+                if (resultEl) _proxyRowResults.set(url, { text: resultEl.textContent, cls: resultEl.className });
             }
         }
 
@@ -7027,7 +7087,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 const item = (label, valueHtml) => `<span class="inline-flex items-center gap-1.5"><span class="opacity-60">${label}</span>${valueHtml}</span>`;
                 const sep = '<span class="opacity-30">•</span>';
                 const proxyHtml = s.proxyEnabled
-                    ? `${dot('var(--success)')}<span class="text-foreground">${s.proxyCount} proxy</span>`
+                    ? `${dot(s.proxyCount ? 'var(--success)' : 'var(--warning)')}<span class="text-foreground">${s.proxyCount} green ${s.proxyCount === 1 ? 'proxy' : 'proxies'}</span>`
                     : `${dot('var(--muted-foreground)')}<span>direct</span>`;
                 el.innerHTML = [
                     item('uptime', `<span class="text-foreground tabular-nums">${fmtUptime(s.uptimeMs)}</span>`),

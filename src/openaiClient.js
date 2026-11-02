@@ -39,7 +39,7 @@ class OpenAIClient {
 
       try {
         if (streaming) {
-          const response = await this._withProxyRetry(() => this.sendStreamingRequest(method, path, body, headers, apiKey));
+          const response = await this._withProxyRetry((tried) => this.sendStreamingRequest(method, path, body, headers, apiKey, tried));
 
           if (rotationStatusCodes.has(response.statusCode)) {
             console.log(`[OPENAI::${maskedKey}] Status ${response.statusCode} triggers rotation - trying next key`);
@@ -57,7 +57,7 @@ class OpenAIClient {
           response._keyInfo = { keyUsed: maskedKey, failedKeys };
           return response;
         } else {
-          const response = await this._withProxyRetry(() => this.sendRequest(method, path, body, headers, apiKey));
+          const response = await this._withProxyRetry((tried) => this.sendRequest(method, path, body, headers, apiKey, tried));
 
           if (rotationStatusCodes.has(response.statusCode)) {
             console.log(`[OPENAI::${maskedKey}] Status ${response.statusCode} triggers rotation - trying next key`);
@@ -113,7 +113,7 @@ class OpenAIClient {
     throw new Error('All API keys exhausted without clear error');
   }
 
-  _buildRequestOptions(method, path, body, headers, rawKey) {
+  _buildRequestOptions(method, path, body, headers, rawKey, tried = null) {
     // A full https:// URL (a provider's custom models URL) stands in for the base URL
     const absolute = /^https:\/\//i.test(path || '');
     const baseUrl = absolute ? path : this.baseUrl;
@@ -156,7 +156,7 @@ class OpenAIClient {
 
     // Route through a rotating proxy if one is configured and enabled
     if (this.proxyManager && this.proxyManager.isEnabled()) {
-      const picked = this.proxyManager.pick();
+      const picked = this.proxyManager.pick(tried);
       if (picked) {
         options.agent = picked.agent;
         options._proxyMasked = picked.maskedUrl;
@@ -170,9 +170,9 @@ class OpenAIClient {
     return options;
   }
 
-  sendRequest(method, path, body, headers, apiKey) {
+  sendRequest(method, path, body, headers, apiKey, tried = null) {
     return new Promise((resolve, reject) => {
-      const options = this._buildRequestOptions(method, path, body, headers, apiKey);
+      const options = this._buildRequestOptions(method, path, body, headers, apiKey, tried);
 
       const timeoutMs = this._responseTimeoutFor(options);
       let settled = false;
@@ -211,6 +211,7 @@ class OpenAIClient {
           resolve({
             statusCode: res.statusCode,
             headers: res.headers,
+            _proxyBlocked: !!options._proxyUrl && (res.statusCode === 403 || res.statusCode === 407),
             data: Buffer.concat(chunks).toString('utf8'),
             proxyUsed: options._proxyMasked || null
           });
@@ -237,9 +238,9 @@ class OpenAIClient {
     });
   }
 
-  sendStreamingRequest(method, path, body, headers, apiKey) {
+  sendStreamingRequest(method, path, body, headers, apiKey, tried = null) {
     return new Promise((resolve, reject) => {
-      const options = this._buildRequestOptions(method, path, body, headers, apiKey);
+      const options = this._buildRequestOptions(method, path, body, headers, apiKey, tried);
 
       const timeoutMs = this._responseTimeoutFor(options);
       let settled = false;
@@ -273,6 +274,7 @@ class OpenAIClient {
         resolve({
           statusCode: res.statusCode,
           headers: res.headers,
+          _proxyBlocked: !!options._proxyUrl && (res.statusCode === 403 || res.statusCode === 407),
           stream: res,
           proxyUsed: options._proxyMasked || null
         });
@@ -339,20 +341,34 @@ class OpenAIClient {
    * fastest proxy - and the dead one has already been benched by then.
    */
   async _withProxyRetry(send) {
-    let attempt = 0;
+    // Like key rotation, but for proxies: each attempt takes a different random
+    // green proxy (never one this request already tried), up to maxTries of them.
+    const tried = new Set();
+    const maxTries = (this.proxyManager && this.proxyManager.maxTries) || 1;
+    let attempt = 1;
     for (;;) {
+      const more = () => attempt < maxTries && this.proxyManager && this.proxyManager.isEnabled();
+      let response;
       try {
-        return await send();
+        response = await send(tried);
       } catch (error) {
-        const canRetry = error && error._proxyFailure
-          && this.proxyManager && this.proxyManager.isEnabled()
-          && attempt < OpenAIClient.MAX_PROXY_RETRIES;
-        if (!canRetry) throw error;
+        if (!(error && error._proxyFailure && more())) throw error;
+        console.log(`[OPENAI] Proxy attempt ${attempt}/${maxTries} failed - trying the same key through another proxy`);
         attempt += 1;
-        console.log(`[OPENAI] Proxy attempt ${attempt} failed - retrying the same key through another proxy`);
+        continue;
       }
+      // 403/407 through a proxy usually means the provider blocks that IP: try the
+      // next proxy. If they all get it, the provider's answer is passed on.
+      if (response._proxyBlocked && more()) {
+        if (response.stream) response.stream.destroy();
+        console.log(`[OPENAI] Proxy attempt ${attempt}/${maxTries} got HTTP ${response.statusCode} - trying the same key through another proxy`);
+        attempt += 1;
+        continue;
+      }
+      return response;
     }
   }
+
 
   _responseTimeoutFor(options) {
     return options._proxyUrl
@@ -368,7 +384,6 @@ class OpenAIClient {
 // A provider can legitimately take a while to answer a large non-streaming
 // completion, so the direct bound is generous. Through a proxy, silence is far
 // more likely to mean a dead proxy than a slow provider.
-OpenAIClient.MAX_PROXY_RETRIES = 2;
 OpenAIClient.DIRECT_TIMEOUT_MS = 120000;
 OpenAIClient.PROXIED_TIMEOUT_MS = 60000;
 

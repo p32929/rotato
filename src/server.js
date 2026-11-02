@@ -8,6 +8,7 @@ const TelegramBot = require('./telegramBot');
 const ProxyManager = require('./proxyManager');
 const ApiLogStore = require('./apiLogStore');
 const ProxyPool = require('./proxyPool');
+const ProxyChecker = require('./proxyChecker');
 const { resolveKey } = require('./keyValues');
 const { parseStatusCodes, describeStatusCodes } = require('./statusCodes');
 
@@ -68,6 +69,15 @@ class ProxyServer {
       getProbeTarget: () => this.getProxyProbeTarget(),
       onUpdate: () => this.config.getProxyManager().setAutoProxies(this.proxyPool.live),
     });
+
+    // Re-checks the proxies while idle, so green/red stays current
+    this.proxyChecker = new ProxyChecker({
+      getManager: () => this.config.getProxyManager(),
+      probe: (url, host) => this.proxyPool.probe(url, host),
+      getTargets: () => this.proxyedProviders().map(([, p]) => new URL(p.baseUrl).hostname),
+      modelCheck: (url) => this.proxyModelCheck(url),
+    });
+    this._modelCheckTurn = 0;
 
     // Telegram bot (started after server.listen in start())
     this.telegramBot = new TelegramBot(this);
@@ -1369,7 +1379,6 @@ class ProxyServer {
       const providers = this.config.getProviders();
       let total = 0, enabled = 0;
       for (const [, cfg] of providers.entries()) { total++; if (!cfg.disabled) enabled++; }
-      const proxyUrls = this.config.getProxyUrls ? this.config.getProxyUrls() : [];
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
         uptimeMs: Date.now() - this.startTime,
@@ -1377,7 +1386,7 @@ class ProxyServer {
         providers: total,
         providersEnabled: enabled,
         proxyEnabled: this.config.isProxyEnabled ? this.config.isProxyEnabled() : false,
-        proxyCount: Array.isArray(proxyUrls) ? proxyUrls.length : 0,
+        proxyCount: this.config.getProxyManager().getGreen().length, // usable right now, own + fetched
         telegramRunning: !!(this.telegramBot && this.telegramBot.isRunning && this.telegramBot.isRunning())
       }));
     } catch (error) {
@@ -1661,6 +1670,8 @@ class ProxyServer {
       res.end(JSON.stringify({
         enabled,
         autoFetch,
+        goodMs: this.config.getProxyManager().goodMs,
+        maxTries: this.config.getProxyManager().maxTries,
         proxies,
         providers,
         auto: this.proxyPool.getStatus(),
@@ -1678,7 +1689,15 @@ class ProxyServer {
    */
   async handleUpdateProxySettings(res, body) {
     try {
-      const { proxies, autoFetch, providerProxies } = JSON.parse(body);
+      const { proxies, autoFetch, providerProxies, goodMs, maxTries } = JSON.parse(body);
+
+      // Green/red line and tries per request
+      const numberIn = (v, min, max) => v === undefined || (Number.isInteger(Number(v)) && Number(v) >= min && Number(v) <= max);
+      if (!numberIn(goodMs, 100, 30000) || !numberIn(maxTries, 1, 50)) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'Green below must be 100–30000 ms and tries per request 1–50' }));
+        return;
+      }
 
       const list = Array.isArray(proxies)
         ? proxies.map(p => String(p).trim()).filter(p => p.length > 0)
@@ -1707,6 +1726,9 @@ class ProxyServer {
       } else {
         delete envVars.PROXY_URLS;
       }
+
+      if (goodMs !== undefined) envVars.PROXY_GOOD_MS = String(Number(goodMs));
+      if (maxTries !== undefined) envVars.PROXY_MAX_TRIES = String(Number(maxTries));
 
       const useAuto = !!autoFetch;
       if (useAuto) {
@@ -2026,12 +2048,70 @@ class ProxyServer {
     return 'api.openai.com';
   }
 
+  /** [name, provider] for enabled providers routed through the proxy, with a usable base URL. */
+  proxyedProviders() {
+    return [...this.config.getProviders().entries()].filter(([, p]) => {
+      if (!p.proxy || p.disabled || !p.keys.length) return false;
+      try { new URL(p.baseUrl); return true; } catch (e) { return false; }
+    });
+  }
+
+  /**
+   * Background check: list one provider's models through this proxy. Takes
+   * turns across proxied providers and their keys. Reaching the provider at all
+   * counts as working; 403/407 or no connection counts against the proxy.
+   */
+  proxyModelCheck(proxyUrl) {
+    const providers = this.proxyedProviders();
+    if (!providers.length) return Promise.resolve();
+    const turn = this._modelCheckTurn++;
+    const [, provider] = providers[turn % providers.length];
+    const key = provider.keys[Math.floor(turn / providers.length) % provider.keys.length];
+    const manager = this.config.getProxyManager();
+
+    let options;
+    try {
+      // A client without a proxy manager just builds the URL and auth headers;
+      // the agent is set here, so the shuffle bag isn't touched
+      const client = provider.apiType === 'gemini'
+        ? new this.GeminiClient(null, provider.baseUrl, null)
+        : new this.OpenAIClient(null, provider.baseUrl, null);
+      const upstream = this.upstreamPath('GET', '/models', provider);
+      options = provider.apiType === 'gemini'
+        ? client._buildRequestOptions('GET', upstream, null, {}, key, true)
+        : client._buildRequestOptions('GET', upstream, null, {}, key);
+    } catch (e) {
+      return Promise.resolve(); // e.g. a key missing a {placeholder} value - not the proxy's fault
+    }
+
+    return new Promise((resolve) => {
+      const req = https.request({ ...options, agent: manager.getAgentFor(proxyUrl), timeout: 15000 }, (r) => {
+        r.resume();
+        r.on('end', () => {
+          if (r.statusCode === 403 || r.statusCode === 407) manager.reportFailure(proxyUrl);
+          else manager.reportSuccess(proxyUrl);
+          resolve();
+        });
+      });
+      req.on('timeout', () => req.destroy(new Error('timed out')));
+      req.on('error', () => { manager.reportFailure(proxyUrl); resolve(); });
+      req.end();
+    });
+  }
+
   /**
    * Sync the proxy pool with the current settings and attach it to the live
    * ProxyManager. Called at boot and after every config reload.
    */
   applyProxySettings() {
     const manager = this.config.getProxyManager();
+
+    // A settings save builds a new manager; keep what the checks have learned
+    // (speeds, strikes, bench) instead of starting from scratch
+    if (this._proxyManager && this._proxyManager !== manager) {
+      for (const [url, entry] of this._proxyManager.health) manager.health.set(url, entry);
+    }
+    this._proxyManager = manager;
 
     // When every proxy is benched, go and fetch a fresh batch. The pool applies
     // its own minimum gap so a burst of failures can't hammer the source.
@@ -2046,6 +2126,9 @@ class ProxyServer {
     } else {
       this.proxyPool.stop();
     }
+
+    if (this.config.isProxyEnabled()) this.proxyChecker.start();
+    else this.proxyChecker.stop();
 
     manager.setAutoProxies(this.proxyPool.live);
   }
@@ -2182,6 +2265,7 @@ class ProxyServer {
   stop() {
     this.apiLogs.stop(); // Sync-flush the pending index lines before shutdown
     this.proxyPool.stop();
+    this.proxyChecker.stop();
     if (this.telegramBot) this.telegramBot.stop();
     if (this.server) {
       this.server.close();
