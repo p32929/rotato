@@ -2114,7 +2114,9 @@ class ProxyServer {
 
     // When every proxy is benched, go and fetch a fresh batch. The pool applies
     // its own minimum gap so a burst of failures can't hammer the source.
+    // Green running low: re-check the red/benched ones now, and fetch a fresh list
     manager.onPoolExhausted = () => {
+      this.proxyChecker.rescue();
       if (this.proxyPool.enabled) this.proxyPool.refresh('pool exhausted');
     };
 

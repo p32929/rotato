@@ -227,6 +227,37 @@ assert.strictEqual(ProxyServer.prototype.parseRoute.call({ config: { getProvider
     ck.stop();
   }
 
+  // Picks are spread across hosts: one big host never fills the start of a cycle
+  {
+    const list = [];
+    for (let p = 1; p <= 10; p++) list.push(`socks5://1.1.1.1:${p}`);
+    for (let p = 1; p <= 5; p++) list.push(`socks5://2.2.2.2:${p}`);
+    for (let p = 1; p <= 5; p++) list.push(`socks5://3.3.3.3:${p}`);
+    for (let i = 0; i < 50; i++) {
+      const order = ProxyManager.spreadByHost(list);
+      assert.strictEqual(new Set(order).size, 20);                                   // every proxy, once
+      const firstHalfBig = order.slice(0, 10).filter(u => u.includes('1.1.1.1')).length;
+      assert.ok(firstHalfBig >= 3 && firstHalfBig <= 7);                              // big host spread evenly
+    }
+  }
+
+  // Rescue: green ran low under traffic -> red/benched proxies re-checked at once
+  {
+    const ProxyChecker = require('../src/proxyChecker');
+    const pm = new ProxyManager([], true);
+    const urls = Array.from({ length: 12 }, (_, i) => `socks5://10.0.3.${i + 1}:1`);
+    pm.setAutoProxies(urls.map(url => ({ url, ms: 1800 })));                         // all red
+    pm.lastPickAt = Date.now();                                                       // busy: idle cycle won't run
+    const ck = new ProxyChecker({ getManager: () => pm, getTargets: () => ['h'], probe: async () => ({ ok: true, ms: 400 }), modelCheck: async () => {} });
+    ck.start();
+    await ck.rescue();
+    assert.ok(pm.getGreen().length >= 10);                                            // checks replace the average
+    for (const u of urls) pm.recordLatency(u, 9000), pm.recordLatency(u, 9000), pm.recordLatency(u, 9000);
+    await ck.rescue();
+    assert.ok(pm.getGreen().length < 10);                                             // at most once a minute
+    ck.stop();
+  }
+
   // Dropped auto proxies don't keep their agents around
   const m = new ProxyManager([], true);
   m.setAutoProxies(['socks5://1.1.1.1:1']);

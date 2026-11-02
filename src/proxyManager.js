@@ -566,16 +566,17 @@ class ProxyManager {
   }
 
   /**
-   * A background check passed: the proxy is back in play straight away (even if
-   * benched) and its timing is updated.
+   * A check passed: the proxy is back in play straight away (even if benched).
+   * A check measures the proxy on its own, without our traffic loading it, so
+   * its timing replaces the average rather than nudging it.
    */
   recordCheck(proxyUrl, ms) {
-    if (!proxyUrl) return;
+    if (!proxyUrl || !(ms >= 0)) return;
     const entry = this._entry(proxyUrl);
     entry.fails = 0;
     entry.deadUntil = 0;
     entry.checkedAt = Date.now();
-    this.recordLatency(proxyUrl, ms);
+    entry.latencyMs = ms;
   }
 
   /** Exponentially weighted average, so one slow request can't dominate. */
@@ -657,9 +658,9 @@ class ProxyManager {
         const url = this._bag.shift();
         if (candidates.has(url)) return this._picked(url, tried);
       }
-      // Bag used up: reshuffle the green ones. A proxy that turned green since
-      // the last shuffle simply joins here, at a random spot.
-      this._bag = ProxyManager.shuffle(green);
+      // Bag used up: reshuffle the green ones, spread across hosts. A proxy that
+      // turned green since the last shuffle simply joins here.
+      this._bag = ProxyManager.spreadByHost(green);
       if (this._bag.length > 1 && this._bag[0] === this._lastPicked) {
         this._bag.push(this._bag.shift());
       }
@@ -677,6 +678,29 @@ class ProxyManager {
       maskedUrl: ProxyManager.maskProxyUrl(url),
       agent: this.getAgentFor(url),
     };
+  }
+
+  /**
+   * Random order with proxies on the same host spaced apart. Free lists often
+   * carry dozens of ports on one IP; picking those back to back piles every
+   * concurrent request onto one machine, which then slows down for all of them.
+   * Each host's proxies are shuffled and spread evenly over the whole cycle
+   * (the k-th of n lands near position k/n), so a big host is interleaved with
+   * the small ones instead of bunching up at the end.
+   */
+  static spreadByHost(list) {
+    const byHost = new Map();
+    for (const url of list) {
+      let host = url;
+      try { host = parseProxyUrl(url).hostname; } catch (e) { /* keep the url as its own host */ }
+      if (!byHost.has(host)) byHost.set(host, []);
+      byHost.get(host).push(url);
+    }
+    const keyed = [];
+    for (const urls of byHost.values()) {
+      ProxyManager.shuffle(urls).forEach((url, k) => keyed.push([(k + Math.random()) / urls.length, url]));
+    }
+    return keyed.sort((a, b) => a[0] - b[0]).map(([, url]) => url);
   }
 
   static shuffle(list) {

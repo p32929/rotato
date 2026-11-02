@@ -13,6 +13,11 @@
  *      and unlike a handshake it catches a provider blocking the proxy's IP.
  *
  * It stops the moment real traffic shows up, so it never competes with it.
+ *
+ * The one exception is rescue(): when green proxies run short during traffic,
+ * red and benched ones get an immediate handshake check (no API calls), so
+ * proxies that were only slow under load come back instead of requests going
+ * direct.
  */
 class ProxyChecker {
   constructor(options) {
@@ -27,8 +32,13 @@ class ProxyChecker {
     this.modelEveryMs = options.modelEveryMs || 10 * 60 * 1000;
     this.modelGapMs = options.modelGapMs != null ? options.modelGapMs : 3000;
 
+    this.rescueEveryMs = options.rescueEveryMs != null ? options.rescueEveryMs : 60 * 1000;
+    this.rescueTarget = options.rescueTarget || 10; // stop once this many are green
+
     this.timer = null;
     this.running = false;
+    this.rescuing = false;
+    this.lastRescueAt = 0;
   }
 
   start() {
@@ -57,18 +67,7 @@ class ProxyChecker {
     const go = () => this.timer && this.getManager() === manager && this.isIdle(manager);
     let ok = 0, failed = 0, models = 0;
     try {
-      const checkedAt = (url) => (manager.health.get(url) || {}).checkedAt || 0;
-      const queue = manager.proxyUrls.slice().sort((a, b) => checkedAt(a) - checkedAt(b));
-      let n = 0;
-      const worker = async () => {
-        while (queue.length && go()) {
-          const url = queue.shift();
-          const result = await this.probe(url, targets[n++ % targets.length]);
-          if (!go()) return;
-          if (result.ok) { manager.recordCheck(url, result.ms); ok++; } else { manager.reportFailure(url); failed++; }
-        }
-      };
-      await Promise.all(Array.from({ length: this.concurrency }, worker));
+      ({ ok, failed } = await this.handshakePass(manager, manager.proxyUrls, targets, go));
       if (ok + failed) {
         const stats = manager.getStats();
         console.log(`[PROXY-CHECK] Handshake pass: ${ok} ok, ${failed} failed - ${stats.green} green, ${stats.red} red, ${stats.benched} benched`);
@@ -91,6 +90,44 @@ class ProxyChecker {
     if (models) {
       const stats = manager.getStats();
       console.log(`[PROXY-CHECK] Models pass: ${models} checked - ${stats.green} green, ${stats.red} red, ${stats.benched} benched`);
+    }
+  }
+
+  async handshakePass(manager, urls, targets, go) {
+    // Least recently checked first, `concurrency` at a time, until done or go() says stop
+    const checkedAt = (url) => (manager.health.get(url) || {}).checkedAt || 0;
+    const queue = urls.slice().sort((a, b) => checkedAt(a) - checkedAt(b));
+    let n = 0, ok = 0, failed = 0;
+    const worker = async () => {
+      while (queue.length && go()) {
+        const url = queue.shift();
+        const result = await this.probe(url, targets[n++ % targets.length]);
+        if (!go()) return;
+        if (result.ok) { manager.recordCheck(url, result.ms); ok++; } else { manager.reportFailure(url); failed++; }
+      }
+    };
+    await Promise.all(Array.from({ length: this.concurrency }, worker));
+    return { ok, failed };
+  }
+
+  /** Green is running out: re-check the red and benched ones right away, even under traffic. */
+  async rescue() {
+    const manager = this.getManager();
+    if (!this.timer || this.rescuing || !manager || !manager.isEnabled()) return;
+    if (Date.now() - this.lastRescueAt < this.rescueEveryMs) return;
+    const targets = this.getTargets();
+    if (!targets.length) return;
+
+    this.rescuing = true;
+    this.lastRescueAt = Date.now();
+    const enoughGreen = () => manager.getGreen().length >= this.rescueTarget;
+    const go = () => this.timer && this.getManager() === manager && !enoughGreen();
+    try {
+      const notGreen = manager.proxyUrls.filter((url) => !manager.isGreen(url));
+      const { ok, failed } = await this.handshakePass(manager, notGreen, targets, go);
+      console.log(`[PROXY-CHECK] Green ran low - rescue checked ${ok + failed} (${ok} ok): now ${manager.getGreen().length} green`);
+    } finally {
+      this.rescuing = false;
     }
   }
 }

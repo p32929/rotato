@@ -182,9 +182,9 @@ Expect heavy attrition: typically a quarter to a third of the entries answer, an
 
 ### Green, red, and how a proxy is picked
 
-Every proxy has a live average round-trip time, seeded by the fetch check and updated by real requests and background checks. Below the line (`PROXY_GOOD_MS`, default 1000ms) it is **green** and used; at or above it, **red** and only shown. The Proxy tab colours the list accordingly and keeps it live while open.
+Every proxy has a live speed: how long it takes to open the tunnel and finish the TLS handshake with the provider — the part the proxy controls, not the provider's own response time. A check (fetch, background, rescue) sets it; real requests blend their connect times in. Below the line (`PROXY_GOOD_MS`, default 1000ms) it is **green** and used; at or above it, **red** and only shown. The Proxy tab colours the list accordingly and keeps it live while open.
 
-Each request gets a **random green proxy**. Proxies come out of a shuffled list, so concurrent requests never share one and none is reused until every other green proxy has had a turn. If a proxy fails, the **same key moves on to the next proxy**, never one this request already tried, up to `PROXY_MAX_TRIES` (default 5) — then the next API key gets its own fresh proxies. With no green proxy at all, the request goes direct.
+Each request gets a **random green proxy**. Proxies come out of a shuffled list, so concurrent requests never share one and none is reused until every other green proxy has had a turn. The shuffle spreads proxies on the same IP evenly through the cycle — free lists often carry dozens of ports on one machine, and picking those back to back would overload it. If a proxy fails, the **same key moves on to the next proxy**, never one this request already tried, up to `PROXY_MAX_TRIES` (default 5) — then the next API key gets its own fresh proxies. With no green proxy at all, the request goes direct.
 
 ```env
 PROXY_GOOD_MS=1000     # green below this many ms
@@ -198,6 +198,7 @@ Both are editable in the Proxy tab.
 While no proxied request has gone out for 30 seconds, rotato re-checks the list every couple of minutes, least recently checked first, and stops the moment real traffic arrives:
 
 - **Every proxy** gets a handshake check: tunnel + TLS handshake to a proxied provider's host, then hang up. No request, no API key. The timing feeds the live average, so proxies move between green and red, and a benched proxy that passes is back in play at once.
+- **When green runs low** (fewer than 5) even during traffic, red and benched proxies get an immediate handshake check — at most once a minute, until 10 are green again — so proxies that were only slow under load come back instead of requests going direct.
 - **Green proxies** also list a provider's models through the proxy, each at most once every 10 minutes, one call every few seconds, taking turns across proxied providers and their keys. Listing models is free, and unlike a handshake it catches a provider blocking the proxy's IP (a 403/407 counts against it).
 
 ### Timeouts and recovery
