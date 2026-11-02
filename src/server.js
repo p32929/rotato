@@ -1095,13 +1095,26 @@ class ProxyServer {
       }
       const { apiType } = parsed;
 
+      // viaProxy: send the check the way real traffic goes - through a proxy
+      // picked exactly as a request would pick one
+      let via = null;
+      if (parsed.viaProxy) {
+        via = this.config.getProxyManager().pick();
+        if (!via) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'No working proxy right now - add proxy URLs or turn on auto-fetch and wait for the list' }));
+          return;
+        }
+      }
+
       if (apiType === 'gemini') {
         // Test Gemini API key with custom base URL if provided
-        testResult = await this.testGeminiKey(apiKey, baseUrl, parsed.quiet);
+        testResult = await this.testGeminiKey(apiKey, baseUrl, parsed.quiet, via);
       } else if (apiType === 'openai') {
         // Test OpenAI API key with custom base URL if provided
-        testResult = await this.testOpenaiKey(apiKey, baseUrl, parsed.quiet);
+        testResult = await this.testOpenaiKey(apiKey, baseUrl, parsed.quiet, via);
       }
+      if (via) testResult.proxy = via.maskedUrl;
       
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(testResult));
@@ -1110,8 +1123,48 @@ class ProxyServer {
     }
   }
   
+  /**
+   * fetch() for key checks. Direct uses the built-in fetch; through a proxy it
+   * goes over https.request with the proxy's agent (fetch can't take one) and
+   * returns the same small Response-like shape. The proxy's health is fed back
+   * like a real request's, so a dead one gets benched.
+   */
+  testFetch(url, opts = {}, via = null) {
+    if (!via) return fetch(url, opts);
+    const manager = this.config.getProxyManager();
+    const startedAt = Date.now();
+    return new Promise((resolve, reject) => {
+      const req = https.request(url, { method: opts.method || 'GET', headers: opts.headers || {}, agent: via.agent, timeout: 20000 }, (r) => {
+        const chunks = [];
+        r.on('data', (c) => chunks.push(c));
+        r.on('end', () => {
+          // Same rule as real requests: 403/407 usually means the provider blocks this proxy's IP
+          if (r.statusCode === 403 || r.statusCode === 407) manager.reportFailure(via.url);
+          else manager.reportSuccess(via.url, Date.now() - startedAt);
+          const text = Buffer.concat(chunks).toString('utf8');
+          resolve({
+            status: r.statusCode,
+            statusText: http.STATUS_CODES[r.statusCode] || '',
+            ok: r.statusCode >= 200 && r.statusCode < 300,
+            headers: { get: (h) => r.headers[h.toLowerCase()] || null },
+            text: async () => text,
+          });
+        });
+      });
+      const fail = (err) => {
+        manager.reportFailure(via.url);
+        reject(new Error(`via proxy ${via.maskedUrl}: ${err.message}`));
+      };
+      req.on('timeout', () => req.destroy(new Error('timed out after 20s')));
+      req.on('error', fail);
+      if (opts.body) req.write(opts.body);
+      req.end();
+    });
+  }
+
   // quiet: a bulk "Test all" run - don't fill the request log with key checks
-  async testGeminiKey(apiKey, baseUrl = null, quiet = false) {
+  async testGeminiKey(apiKey, baseUrl = null, quiet = false, via = null) {
+    const fetch = (url, opts) => this.testFetch(url, opts, via);
     const testId = Math.random().toString(36).substring(2, 11);
     const testBaseUrl = baseUrl || 'https://generativelanguage.googleapis.com/v1';
     const startTime = Date.now();
@@ -1167,7 +1220,8 @@ class ProxyServer {
     }
   }
   
-  async testOpenaiKey(apiKey, baseUrl = null, quiet = false) {
+  async testOpenaiKey(apiKey, baseUrl = null, quiet = false, via = null) {
+    const fetch = (url, opts) => this.testFetch(url, opts, via);
     const testId = Math.random().toString(36).substring(2, 11);
     const testBaseUrl = baseUrl || 'https://api.openai.com/v1';
     const startTime = Date.now();

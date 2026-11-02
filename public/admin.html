@@ -1297,6 +1297,7 @@
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
                             </svg>
                             Providers using the proxy
+                            <button id="proxySelectAllBtn" type="button" onclick="toggleAllProxyProviders()" class="btn btn-secondary btn-sm ml-auto hidden">Select all</button>
                         </h3>
                         <div class="space-y-3">
                             <p class="text-xs text-muted-foreground">Proxying is per provider. Anything left off connects directly, so you can route only the provider that is rate-limiting you.</p>
@@ -1702,6 +1703,21 @@
                 <button onclick="closeAddProviderDialog()" class="btn btn-secondary btn-md">Cancel</button>
                 <button onclick="addNewProvider()" class="btn btn-primary btn-md">Test keys &amp; add</button>
             </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Test through the proxy or directly? -->
+    <div id="testRouteDialog" class="ds-overlay hidden fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-modal" onclick="if(event.target===this)answerTestRoute(null)" role="dialog" aria-modal="true" aria-labelledby="testRouteTitle">
+        <div class="ds-dialog-panel bg-card border border-border rounded-xl w-full max-w-md shadow-xl">
+            <div class="px-5 pt-4 pb-3 border-b border-border">
+                <h3 id="testRouteTitle" class="text-base font-semibold text-foreground">Test through the proxy?</h3>
+                <p id="testRouteMessage" class="text-xs text-muted-foreground mt-1"></p>
+            </div>
+            <div class="flex flex-wrap items-center justify-end gap-2 px-5 py-3">
+                <button onclick="answerTestRoute(null)" class="btn btn-ghost btn-md mr-auto">Cancel</button>
+                <button onclick="answerTestRoute('direct')" class="btn btn-secondary btn-md">Directly</button>
+                <button id="testRouteProxyBtn" onclick="answerTestRoute('proxy')" class="btn btn-primary btn-md">Through the proxy</button>
             </div>
         </div>
     </div>
@@ -4251,18 +4267,45 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
         });
 
         async function testProviderKey(apiType, providerName, apiKey, keyIndex) {
+            let viaProxy = false;
+            if (providerUsesProxy(apiType, providerName)) {
+                const route = await askTestRoute(`${providerName} is set to use the proxy, so its real requests go through one. Test this key the same way, or straight from the server?`);
+                if (!route) return;
+                viaProxy = route === 'proxy';
+            }
             const maskedKey = maskKeyForDisplay(apiKey);
-            showInfoToast(`Testing API key ${maskedKey}...`);
-            const { state, error } = await testOneKey(apiType, providerName, apiKey, false);
-            if (state === 'ok') showSuccessToast(`API key ${maskedKey} works`);
-            else if (state === 'limited') showWarningToast(`API key ${maskedKey} is rate-limited right now: ${error}`);
-            else showErrorToast(`API key ${maskedKey} failed: ${error}`);
+            showInfoToast(`Testing API key ${maskedKey}${viaProxy ? ' through the proxy' : ''}...`);
+            const { state, error, proxy } = await testOneKey(apiType, providerName, apiKey, false, viaProxy);
+            const how = proxy ? ` (via ${proxy})` : '';
+            if (state === 'ok') showSuccessToast(`API key ${maskedKey} works${how}`);
+            else if (state === 'limited') showWarningToast(`API key ${maskedKey} is rate-limited right now${how}: ${error}`);
+            else showErrorToast(`API key ${maskedKey} failed${how}: ${error}`);
+        }
+
+        function providerUsesProxy(apiType, providerName) {
+            return String(envVars[`${apiType.toUpperCase()}_${providerName.toUpperCase()}_PROXY`] || '').toLowerCase() === 'true';
+        }
+
+        // Resolves 'proxy', 'direct', or null if cancelled
+        let _testRouteResolve = null;
+        function askTestRoute(message) {
+            document.getElementById('testRouteMessage').textContent = message;
+            document.getElementById('testRouteDialog').classList.remove('hidden');
+            document.getElementById('testRouteProxyBtn').focus();
+            return new Promise(resolve => { _testRouteResolve = resolve; });
+        }
+
+        function answerTestRoute(choice) {
+            document.getElementById('testRouteDialog').classList.add('hidden');
+            const resolve = _testRouteResolve;
+            _testRouteResolve = null;
+            if (resolve) resolve(choice);
         }
 
         // ---- Key checks: results shown as a dot per key and a note per provider ----
         const keyTestResults = new Map(); // "<apiType>_<name>|<stored key>" -> { state: ok | limited | fail, error }
 
-        async function testOneKey(apiType, providerName, rawKey, quiet) {
+        async function testOneKey(apiType, providerName, rawKey, quiet, viaProxy = false) {
             const pk = `${apiType}_${providerName}`;
             const baseUrl = envVars[`${apiType.toUpperCase()}_${providerName.toUpperCase()}_BASE_URL`] || null;
             let result;
@@ -4270,7 +4313,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 const res = await fetch('/admin/api/test', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ apiType, apiKey: rawKey, baseUrl, quiet }),
+                    body: JSON.stringify({ apiType, apiKey: rawKey, baseUrl, quiet, viaProxy }),
                     background: quiet
                 });
                 const data = await res.json();
@@ -4278,6 +4321,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 result = data.success ? { state: 'ok', error: '' }
                     : /\b429\b|rate.?limit/i.test(error) ? { state: 'limited', error }
                     : { state: 'fail', error };
+                if (data.proxy) result.proxy = data.proxy;
             } catch (e) {
                 result = { state: 'fail', error: e.message };
             }
@@ -4290,7 +4334,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
 
         function keyStatusDotHtml(pk, index, rawKey) {
             const r = keyTestResults.get(`${pk}|${rawKey}`);
-            const title = r ? `${KEY_STATE_LABEL[r.state]}${r.error ? ': ' + r.error : ''}` : 'Not tested yet';
+            const title = r ? `${KEY_STATE_LABEL[r.state]}${r.proxy ? ` via ${r.proxy}` : ''}${r.error ? ': ' + r.error : ''}` : 'Not tested yet';
             return `<span id="keyStatus_${pk}_${index}" class="key-status${r ? ' ' + r.state : ''}" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}"></span>`;
         }
 
@@ -4343,6 +4387,15 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             const total = providers.reduce((n, p) => n + p.keys.length, 0);
             if (!total) { showInfoToast('No keys to test yet'); return; }
 
+            // One question for the whole run; it only applies to providers set to use the proxy
+            const proxied = providers.filter(p => providerUsesProxy(p.apiType, p.name));
+            if (proxied.length) {
+                const names = proxied.map(p => p.name).join(', ');
+                const route = await askTestRoute(`${proxied.length === 1 ? `${names} is` : `${proxied.length} providers (${names}) are`} set to use the proxy. Test ${proxied.length === 1 ? 'its' : 'their'} keys through it, like real requests, or directly? Every other provider is tested directly.`);
+                if (!route) return;
+                proxied.forEach(p => { p.viaProxy = route === 'proxy'; });
+            }
+
             const run = testAllRun = { cancelled: false, done: 0, total };
             updateTestAllButton();
             const queue = [...providers];
@@ -4351,7 +4404,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                     const p = queue.shift();
                     for (const key of p.keys) {
                         if (run.cancelled) break;
-                        await testOneKey(p.apiType, p.name, key, true);
+                        await testOneKey(p.apiType, p.name, key, true, !!p.viaProxy);
                         run.done++;
                         updateTestAllButton();
                     }
@@ -6512,7 +6565,9 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
         // Esc closes the topmost open dialog
         document.addEventListener('keydown', (e) => {
             if (e.key !== 'Escape') return;
-            if (!document.getElementById('modelJsonDialog').classList.contains('hidden')) {
+            if (!document.getElementById('testRouteDialog').classList.contains('hidden')) {
+                answerTestRoute(null);
+            } else if (!document.getElementById('modelJsonDialog').classList.contains('hidden')) {
                 closeModelJsonDialog();
             } else if (!document.getElementById('modelsDialog').classList.contains('hidden')) {
                 closeModelsDialog();
@@ -6599,9 +6654,26 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                         <span class="toggle-slider"></span>
                     </label>
                 `;
-                row.querySelector('input').onchange = (e) => { _proxyProviderState[p.name] = e.target.checked; };
+                row.querySelector('input').onchange = (e) => { _proxyProviderState[p.name] = e.target.checked; updateProxySelectAllButton(); };
                 container.appendChild(row);
             });
+            updateProxySelectAllButton();
+        }
+
+        // One button: "Select all" until every provider is on, then "Select none"
+        function updateProxySelectAllButton() {
+            const btn = document.getElementById('proxySelectAllBtn');
+            if (!btn) return;
+            const states = Object.values(_proxyProviderState);
+            btn.classList.toggle('hidden', states.length === 0);
+            btn.textContent = states.length && states.every(Boolean) ? 'Select none' : 'Select all';
+        }
+
+        function toggleAllProxyProviders() {
+            const on = !Object.values(_proxyProviderState).every(Boolean);
+            for (const name of Object.keys(_proxyProviderState)) _proxyProviderState[name] = on;
+            document.querySelectorAll('#proxyProviderList input[type=checkbox]').forEach(cb => { cb.checked = on; });
+            updateProxySelectAllButton();
         }
 
         async function loadProxySettings() {
