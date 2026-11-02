@@ -6980,10 +6980,20 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             try {
                 const data = await persistProxySettings();
                 await loadProxySettings();
+                // Say what will actually happen, not how many URLs were typed in
                 const n = data.proxiedProviders;
-                const who = n === 0 ? 'no providers' : `${n} provider${n === 1 ? '' : 's'}`;
-                const autoNote = data.autoFetch ? ', auto-fetch on' : '';
-                showSuccessToast(`Saved ${data.count} proxy(ies) — routing ${who}${autoNote}`);
+                const who = n === 0 ? 'No provider uses the proxy' : `${n} provider${n === 1 ? '' : 's'} use${n === 1 ? 's' : ''} the proxy`;
+                const sources = [
+                    data.count ? `${data.count} of your own` : '',
+                    data.autoFetch ? 'auto-fetched free proxies' : '',
+                ].filter(Boolean).join(' + ');
+                const pool = proxyState.pool || {};
+                const green = pool.green ? ` (${pool.green} green right now)`
+                    : proxyState.auto && proxyState.auto.refreshing ? ' (checking the list now…)' : '';
+                const msg = !sources ? `Saved. ${who}, but there are no proxies yet — add your own or turn on auto-fetch`
+                    : n === 0 ? `Saved. No provider uses the proxy yet — turn one on below`
+                    : `Saved. ${who}: ${sources}${green}`;
+                (sources && n ? showSuccessToast : showWarningToast)(msg);
             } catch (e) {
                 showErrorToast('Failed to save proxy settings: ' + e.message);
             }
