@@ -2,6 +2,17 @@ const https = require('https');
 const { URL } = require('url');
 const { resolveKey, maskKey } = require('./keyValues');
 
+
+// Read a (small) upstream response body in full; '' if it fails
+function readBody(stream) {
+  return new Promise((resolve) => {
+    const chunks = [];
+    stream.on('data', (c) => chunks.push(c));
+    stream.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    stream.on('error', () => resolve(''));
+  });
+}
+
 class OpenAIClient {
   constructor(keyRotator, baseUrl = 'https://api.openai.com', proxyManager = null) {
     this.keyRotator = keyRotator;
@@ -32,10 +43,12 @@ class OpenAIClient {
 
           if (rotationStatusCodes.has(response.statusCode)) {
             console.log(`[OPENAI::${maskedKey}] Status ${response.statusCode} triggers rotation - trying next key`);
-            response.stream.resume();
+            // Keep the error body: if every key fails this is what the caller gets,
+            // and an empty body under the upstream's content-length would hang them
+            const data = await readBody(response.stream);
             requestContext.markKeyAsRateLimited(apiKey);
             failedKeys.push({ key: maskedKey, status: response.statusCode, reason: 'rate_limited' });
-            lastResponse = { statusCode: response.statusCode, headers: response.headers, data: '' };
+            lastResponse = { statusCode: response.statusCode, headers: response.headers, data, proxyUsed: response.proxyUsed };
             continue;
           }
 
@@ -74,7 +87,9 @@ class OpenAIClient {
     const lastFailedKey = requestContext.getLastFailedKey();
     this.keyRotator.updateLastFailedKey(lastFailedKey);
 
-    if (requestContext.allTriedKeysRateLimited()) {
+    // Some keys rate-limited and others failed outright: the provider's real
+    // answer beats a generic error
+    if (requestContext.allTriedKeysRateLimited() || lastResponse) {
       console.log('[OPENAI] All keys rate limited for this request - returning 429');
       const response = lastResponse || {
         statusCode: 429,
@@ -184,11 +199,9 @@ class OpenAIClient {
 
       req = https.request(options, (res) => {
         if (settled) { res.resume(); return; }
-        let data = '';
-
-        res.on('data', (chunk) => {
-          data += chunk;
-        });
+        // Decoded once at the end - per-chunk decoding garbles multi-byte characters
+        const chunks = [];
+        res.on('data', (chunk) => chunks.push(chunk));
 
         res.on('end', () => {
           if (settled) return;
@@ -198,7 +211,7 @@ class OpenAIClient {
           resolve({
             statusCode: res.statusCode,
             headers: res.headers,
-            data: data,
+            data: Buffer.concat(chunks).toString('utf8'),
             proxyUsed: options._proxyMasked || null
           });
         });

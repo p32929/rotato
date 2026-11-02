@@ -478,6 +478,9 @@ class ProxyManager {
       if (!keep.has(url) && !this.manualUrls.includes(url)) this.health.delete(url);
     }
     this.autoUrls = next.filter((u) => !this.manualUrls.includes(u));
+    for (const url of [...this._agentCache.keys()]) {
+      if (!keep.has(url) && !this.manualUrls.includes(url)) this._agentCache.delete(url);
+    }
   }
 
   getAutoProxies() {

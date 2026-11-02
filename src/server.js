@@ -11,6 +11,9 @@ const ProxyPool = require('./proxyPool');
 const { resolveKey } = require('./keyValues');
 const { parseStatusCodes, describeStatusCodes } = require('./statusCodes');
 
+// A provider's own settings: {TYPE}_{NAME}_{SUFFIX}, or legacy {TYPE}_{SUFFIX}
+const PROVIDER_VAR_RE = /^[^_]+(?:_.+?)?_(API_KEYS|BASE_URL|MODELS_URL|ACCESS_KEY|DEFAULT_MODEL|MODEL_HISTORY|DISABLED|PROXY)$/;
+
 // The model a request asked for: the body's "model" (OpenAI style), else the
 // /models/<name>:<action> path segment (Gemini style). Null when there isn't one.
 function requestModel(body, url) {
@@ -50,9 +53,10 @@ class ProxyServer {
     // API request logging - memory vs. per-request files, driven by API_LOGS in .env
     this.apiLogs = new ApiLogStore();
 
-    // Rate limiting for login
-    this.failedLoginAttempts = 0;
-    this.loginBlockedUntil = null;
+    // Rate limiting for login, per client address - a global counter would let
+    // anyone keep the real admin locked out
+    this.loginAttempts = new Map(); // ip -> { fails, blockedUntil }
+    this.adminSessionIssuedAt = 0;
 
     // Store required classes for reinitialization
     this.KeyRotator = require('./keyRotator');
@@ -86,7 +90,12 @@ class ProxyServer {
     this.applyProxySettings();
 
     this.server = http.createServer((req, res) => {
-      this.handleRequest(req, res);
+      // A stray throw in one request must never take the whole proxy down
+      this.handleRequest(req, res).catch((err) => {
+        console.log(`[SERVER] Unhandled request error: ${err && err.message}`);
+        if (!res.headersSent) this.sendError(res, 500, 'Internal server error');
+        else res.destroy();
+      });
     });
 
     this.server.listen(this.config.getPort(), () => {
@@ -192,7 +201,7 @@ class ProxyServer {
       }
 
       // Handle admin routes
-      if (req.url.startsWith('/admin')) {
+      if (/^\/admin(\/|\?|$)/.test(req.url)) {
         await this.handleAdminRequest(req, res, body);
         return;
       }
@@ -295,7 +304,7 @@ class ProxyServer {
       const upstreamBody = this.sanitizeRequestBody(body);
 
       // Detect streaming request
-      const isStreaming = this.isStreamingRequest(body);
+      const isStreaming = this.isStreamingRequest(body, path);
       if (isStreaming) {
         console.log(`[REQ-${requestId}] Streaming request detected`);
       }
@@ -332,6 +341,23 @@ class ProxyServer {
 
         response.stream.pipe(res);
 
+        let clientGone = false;
+        let logged = false;
+        const logStream = (status, error) => {
+          if (logged || !isApiCall) return;
+          logged = true;
+          this.logApiRequest(requestId, req.method, path, providerName, status, Date.now() - startTime, error, clientIp, keyInfo, proxyUsed, model);
+        };
+
+        // Client went away: stop the upstream too, or it keeps generating (and billing)
+        res.on('close', () => {
+          if (res.writableFinished || clientGone) return;
+          clientGone = true;
+          response.stream.destroy();
+          console.log(`[REQ-${requestId}] Client disconnected mid-stream`);
+          logStream(499, 'Client disconnected mid-stream');
+        });
+
         response.stream.on('end', () => {
           let streamedData = Buffer.concat(streamChunks).toString('utf8');
           if (truncated) {
@@ -353,19 +379,18 @@ class ProxyServer {
             keyInfo: keyInfo
           });
 
-          if (isApiCall) {
-            const responseTime = Date.now() - startTime;
-            const error = response.statusCode >= 400 ? `HTTP ${response.statusCode}` : null;
-            this.logApiRequest(requestId, req.method, path, providerName, response.statusCode, responseTime, error, clientIp, keyInfo, proxyUsed, model);
-          }
+          logStream(response.statusCode, response.statusCode >= 400 ? `HTTP ${response.statusCode}` : null);
           console.log(`[REQ-${requestId}] Streaming response completed`);
         });
 
         response.stream.on('error', (err) => {
+          if (clientGone) return; // already logged as a disconnect
           console.log(`[REQ-${requestId}] Streaming error: ${err.message}`);
-          if (!res.headersSent) {
-            this.sendError(res, 502, 'Streaming error');
-          }
+          logStream(502, `Upstream stream failed: ${err.message}`);
+          // pipe() doesn't end the client response on a source error - cut it
+          // so the caller sees the failure instead of hanging
+          if (!res.headersSent) this.sendError(res, 502, 'Streaming error');
+          else res.destroy(err);
         });
       } else {
         // Non-streaming response. logApiResponse() stages the full payload and
@@ -384,36 +409,43 @@ class ProxyServer {
         this.sendResponse(res, response);
       }
     } catch (error) {
+      // Upstream unreachable or silent is the provider's side (502/504), not ours
+      const status = /did not (respond|start streaming)/.test(error.message) ? 504
+        : (error.code || error._proxyFailure) ? 502 : 500;
       console.log(`[REQ-${requestId}] Request handling error: ${error.message}`);
-      console.log(`[REQ-${requestId}] Response: 500 Internal Server Error`);
-      
+      console.log(`[REQ-${requestId}] Response: ${status}`);
+
       if (isApiCall) {
         const responseTime = Date.now() - startTime;
-        this.logApiRequest(requestId, req.method, req.url, 'unknown', 500, responseTime, error.message, clientIp, null, null, model);
+        this.logApiRequest(requestId, req.method, req.url, 'unknown', status, responseTime, error.message, clientIp, null, null, model);
       }
-      
-      this.sendError(res, 500, 'Internal server error');
+
+      this.sendError(res, status, status === 500 ? 'Internal server error' : `Upstream request failed: ${error.message}`);
     }
   }
 
   readRequestBody(req) {
     return new Promise((resolve) => {
-      let body = '';
-      
-      req.on('data', (chunk) => {
-        body += chunk;
-      });
-      
-      req.on('end', () => {
-        resolve(body || null);
-      });
+      // Decode once at the end: decoding chunk by chunk splits multi-byte
+      // characters that straddle two chunks into garbage
+      const chunks = [];
+      const done = () => resolve(chunks.length ? Buffer.concat(chunks).toString('utf8') || null : null);
+      req.on('data', (chunk) => chunks.push(chunk));
+      req.on('end', done);
+      req.on('error', done);   // client dropped mid-upload: don't leave this pending
+      req.on('aborted', done);
     });
   }
 
   parseRoute(url) {
     if (!url) return null;
-    
-    const urlObj = new URL(url, 'http://localhost');
+
+    let urlObj;
+    try {
+      urlObj = new URL(url, 'http://localhost');
+    } catch (e) {
+      return null; // e.g. "//[" - not a route, and must not throw
+    }
     const path = urlObj.pathname;
     
     // Parse new provider format: /{provider}/* (no version required)
@@ -618,6 +650,7 @@ class ProxyServer {
 
   sendError(res, statusCode, message) {
     console.log(`[SERVER] Sending error response: ${statusCode} - ${message}`);
+    if (res.headersSent) { res.destroy(); return; } // mid-response: all we can do is cut it
 
     const errorResponse = {
       error: {
@@ -657,7 +690,9 @@ class ProxyServer {
   /**
    * Detect if a request body contains stream: true
    */
-  isStreamingRequest(body) {
+  isStreamingRequest(body, path = '') {
+    // Gemini's native streaming is chosen by the endpoint, not the body
+    if (/:streamGenerateContent\b/.test(path)) return true;
     if (!body) return false;
     try {
       const parsed = typeof body === 'string' ? JSON.parse(body) : body;
@@ -736,6 +771,20 @@ class ProxyServer {
   async handleAdminRequest(req, res, body) {
     const url = new URL(req.url, 'http://localhost');
     const path = url.pathname;
+
+    // Another site can't drive the panel through the admin's browser: a
+    // cross-origin POST (which a browser sends with its Origin) is refused
+    if (req.method !== 'GET' && req.headers.origin) {
+      let sameOrigin = false;
+      try {
+        const host = new URL(req.headers.origin).host;
+        sameOrigin = host === req.headers.host || host === req.headers['x-forwarded-host']; // behind a reverse proxy
+      } catch (e) { /* "null" etc. */ }
+      if (!sameOrigin) {
+        this.sendError(res, 403, 'Cross-origin request refused');
+        return;
+      }
+    }
     
     // Check if admin password is configured
     const adminPassword = this.getAdminPassword();
@@ -761,13 +810,14 @@ class ProxyServer {
     // Check login rate limit status
     if (path === '/admin/api/login-status' && req.method === 'GET') {
       const now = Date.now();
-      const isBlocked = this.loginBlockedUntil && now < this.loginBlockedUntil;
+      const st = this.loginState(req);
+      const isBlocked = !!(st.blockedUntil && now < st.blockedUntil);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
         blocked: isBlocked,
-        blockedUntil: this.loginBlockedUntil,
-        remainingSeconds: isBlocked ? Math.ceil((this.loginBlockedUntil - now) / 1000) : 0,
-        failedAttempts: this.failedLoginAttempts
+        blockedUntil: st.blockedUntil,
+        remainingSeconds: isBlocked ? Math.ceil((st.blockedUntil - now) / 1000) : 0,
+        failedAttempts: st.fails
       }));
       return;
     }
@@ -858,20 +908,37 @@ class ProxyServer {
   }
   
   isAdminAuthenticated(req) {
+    if (!this.adminSessionToken || Date.now() - this.adminSessionIssuedAt > ProxyServer.SESSION_MS) return false;
     const cookies = this.parseCookies(req.headers.cookie);
-    return cookies.adminSession === this.adminSessionToken && this.adminSessionToken !== null;
+    return ProxyServer.safeEqual(cookies.adminSession, this.adminSessionToken);
+  }
+
+  static safeEqual(a, b) {
+    if (typeof a !== 'string' || typeof b !== 'string') return false;
+    const x = Buffer.from(a), y = Buffer.from(b);
+    return x.length === y.length && crypto.timingSafeEqual(x, y);
+  }
+
+  loginState(req) {
+    const ip = (req.socket && req.socket.remoteAddress) || 'unknown';
+    if (!this.loginAttempts.has(ip)) {
+      if (this.loginAttempts.size > 1000) this.loginAttempts.clear(); // ponytail: crude cap, fine for a single-admin panel
+      this.loginAttempts.set(ip, { fails: 0, blockedUntil: null });
+    }
+    return this.loginAttempts.get(ip);
   }
 
   async handleAdminLogin(req, res, body) {
     try {
+      const st = this.loginState(req);
       // Check if login is currently blocked
-      if (this.loginBlockedUntil && Date.now() < this.loginBlockedUntil) {
-        const remainingSeconds = Math.ceil((this.loginBlockedUntil - Date.now()) / 1000);
+      if (st.blockedUntil && Date.now() < st.blockedUntil) {
+        const remainingSeconds = Math.ceil((st.blockedUntil - Date.now()) / 1000);
         const remainingMinutes = Math.ceil(remainingSeconds / 60);
         res.writeHead(429, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
           error: `Too many failed login attempts. Please wait ${remainingMinutes} minute(s).`,
-          blockedUntil: this.loginBlockedUntil,
+          blockedUntil: st.blockedUntil,
           remainingSeconds: remainingSeconds
         }));
         return;
@@ -880,28 +947,30 @@ class ProxyServer {
       const data = JSON.parse(body);
       const adminPassword = this.getAdminPassword();
 
-      if (data.password === adminPassword) {
+      if (ProxyServer.safeEqual(data && data.password, adminPassword)) {
         // Successful login - reset counters
-        this.failedLoginAttempts = 0;
-        this.loginBlockedUntil = null;
+        st.fails = 0;
+        st.blockedUntil = null;
         this.adminSessionToken = this.generateSessionToken();
+        this.adminSessionIssuedAt = Date.now();
 
         // Set session cookie (expires in 24 hours)
         const expires = new Date(Date.now() + 24 * 60 * 60 * 1000).toUTCString();
         res.writeHead(200, {
           'Content-Type': 'application/json',
-          'Set-Cookie': `adminSession=${this.adminSessionToken}; HttpOnly; Expires=${expires}; Path=/admin`
+          'Set-Cookie': `adminSession=${this.adminSessionToken}; HttpOnly; SameSite=Strict; Expires=${expires}; Path=/admin`
         });
         res.end(JSON.stringify({ success: true }));
       } else {
         // Failed login - increment counter
-        this.failedLoginAttempts++;
-        const attemptsRemaining = 5 - this.failedLoginAttempts;
+        st.fails++;
+        const attemptsRemaining = 5 - st.fails;
 
         // Block if reached 5 attempts
-        if (this.failedLoginAttempts >= 5) {
-          this.loginBlockedUntil = Date.now() + (5 * 60 * 1000); // 5 minutes
-          console.log('[SECURITY] Login blocked due to 5 failed attempts. Blocked until:', new Date(this.loginBlockedUntil).toISOString());
+        if (st.fails >= 5) {
+          st.fails = 0;
+          st.blockedUntil = Date.now() + (5 * 60 * 1000); // 5 minutes
+          console.log('[SECURITY] Login blocked due to 5 failed attempts. Blocked until:', new Date(st.blockedUntil).toISOString());
           res.writeHead(429, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({
             error: 'Too many failed login attempts. Please wait 5 minutes.',
@@ -909,7 +978,7 @@ class ProxyServer {
             remainingSeconds: 300
           }));
         } else {
-          console.log(`[SECURITY] Failed login attempt ${this.failedLoginAttempts}/5`);
+          console.log(`[SECURITY] Failed login attempt ${st.fails}/5`);
           res.writeHead(401, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({
             error: `Invalid password. ${attemptsRemaining} attempt(s) remaining.`,
@@ -957,9 +1026,9 @@ class ProxyServer {
       const envPath = path.join(process.cwd(), '.env');
       const envContent = fs.readFileSync(envPath, 'utf8');
       const envVars = this.config.parseEnvFile(envContent);
-      return envVars.ADMIN_PASSWORD;
+      return envVars.ADMIN_PASSWORD || process.env.ADMIN_PASSWORD || null;
     } catch (error) {
-      return null;
+      return process.env.ADMIN_PASSWORD || null;
     }
   }
   
@@ -967,31 +1036,34 @@ class ProxyServer {
   async handleUpdateEnvVars(res, body) {
     try {
       const envVars = JSON.parse(body);
+      if (!envVars || typeof envVars !== 'object' || Array.isArray(envVars)) {
+        this.sendError(res, 400, 'Expected a JSON object of settings');
+        return;
+      }
       const envPath = path.join(process.cwd(), '.env');
 
       // Read current env to preserve admin password and disabled states
       const currentEnvContent = fs.readFileSync(envPath, 'utf8');
       const currentEnvVars = this.config.parseEnvFile(currentEnvContent);
 
-      // Merge with new vars but preserve admin password
-      const finalEnvVars = { ...envVars };
-      if (currentEnvVars.ADMIN_PASSWORD) {
-        finalEnvVars.ADMIN_PASSWORD = currentEnvVars.ADMIN_PASSWORD;
+      // This endpoint only edits providers. Everything else (password, port,
+      // Settings, Telegram, proxy) has its own save and is kept from the file,
+      // so a panel holding an older copy can't quietly undo those saves.
+      const isProviderVar = (key) => PROVIDER_VAR_RE.test(key);
+      const finalEnvVars = {};
+      for (const [key, value] of Object.entries(currentEnvVars)) {
+        if (!isProviderVar(key)) finalEnvVars[key] = value;
+      }
+      for (const [key, value] of Object.entries(envVars)) {
+        if (isProviderVar(key)) finalEnvVars[key] = value;
       }
 
-      // Preserve _DISABLED, TELEGRAM_, and DEFAULT_STATUS_CODES entries from current env if not in new vars
+      // Keep a provider's _DISABLED/_PROXY flags when the payload leaves them out,
+      // but only while that provider still exists - otherwise a deleted
+      // provider's flag would resurrect it as a keyless ghost on reload.
       for (const [key, value] of Object.entries(currentEnvVars)) {
-        if (key in finalEnvVars) continue;
-
-        if (key.endsWith('_DISABLED') || key.endsWith('_PROXY')) {
-          // Only preserve a provider's flags if that provider still exists (i.e.
-          // its API keys are present in the new payload). Otherwise a deleted
-          // provider's flag would resurrect it as a keyless ghost on reload.
-          const apiKeysKey = key.replace(/_(DISABLED|PROXY)$/, '_API_KEYS');
-          if (apiKeysKey in finalEnvVars) {
-            finalEnvVars[key] = value;
-          }
-        } else if (key.startsWith('TELEGRAM_') || key.startsWith('PROXY_') || key === 'DEFAULT_STATUS_CODES' || key === 'API_LOGS') {
+        if (key in envVars || !/_(DISABLED|PROXY)$/.test(key)) continue;
+        if (key.replace(/_(DISABLED|PROXY)$/, '_API_KEYS') in finalEnvVars) {
           finalEnvVars[key] = value;
         }
       }
@@ -1679,9 +1751,11 @@ class ProxyServer {
         return;
       }
 
-      const status = await this.proxyPool.refresh('manual', true);
+      // A sweep takes minutes - longer than an HTTP request should stay open -
+      // so start it and answer now; the panel follows it via /proxy/status.
+      this.proxyPool.refresh('manual', true).catch((e) => console.log(`[PROXY-POOL] Refresh failed: ${e.message}`));
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: true, auto: status, pool: this.config.getProxyManager().getStats() }));
+      res.end(JSON.stringify({ success: true, auto: this.proxyPool.getStatus(), pool: this.config.getProxyManager().getStats() }));
     } catch (error) {
       this.sendError(res, 500, 'Failed to refresh proxy pool: ' + error.message);
     }
@@ -1736,8 +1810,16 @@ class ProxyServer {
   /**
    * Write env vars back to .env file (shared helper)
    */
-  writeEnvFile(envVars) {
+  writeEnvFile(rawVars) {
     const envPath = path.join(process.cwd(), '.env');
+
+    // One line per setting: a newline in a value would inject extra settings
+    // (e.g. a second ADMIN_PASSWORD), and a bad name would corrupt the file
+    const envVars = {};
+    for (const [key, value] of Object.entries(rawVars || {})) {
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
+      envVars[key] = String(value == null ? '' : value).replace(/[\r\n]+/g, '');
+    }
 
     let envContent = '# API Key Rotator Configuration\n';
     envContent += `# Last updated: ${new Date().toISOString()}\n\n`;
@@ -1878,8 +1960,11 @@ class ProxyServer {
    * proxy is only kept if it can reach a real provider.
    */
   getProxyProbeTarget() {
-    for (const [, provider] of this.config.getProviders().entries()) {
-      if (provider.disabled || !provider.baseUrl) continue;
+    // Prefer a provider that is actually routed through the pool
+    const providers = [...this.config.getProviders().values()]
+      .filter(p => !p.disabled && p.baseUrl)
+      .sort((a, b) => !!b.proxy - !!a.proxy);
+    for (const provider of providers) {
       try {
         return new URL(provider.baseUrl).hostname;
       } catch (e) { /* try the next provider */ }
@@ -1900,7 +1985,9 @@ class ProxyServer {
       if (this.proxyPool.enabled) this.proxyPool.refresh('pool exhausted');
     };
 
-    if (this.config.isProxyEnabled() && this.config.isProxyAutoFetchEnabled()) {
+    // Fetch whenever auto-fetch is on, even before any provider is routed
+    // through it - routing is per provider, so this only fills the list.
+    if (this.config.isProxyAutoFetchEnabled()) {
       this.proxyPool.start();
     } else {
       this.proxyPool.stop();
@@ -2047,6 +2134,8 @@ class ProxyServer {
     }
   }
 }
+
+ProxyServer.SESSION_MS = 24 * 60 * 60 * 1000; // matches the cookie's lifetime
 
 module.exports = ProxyServer;
 module.exports.requestModel = requestModel;

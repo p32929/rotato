@@ -110,4 +110,45 @@ assert.strictEqual(requestModel(null, '/gemini/v1beta/models/gemini-2.5-pro:stre
 assert.strictEqual(requestModel(null, '/groq/models'), null);                  // listing models: no model
 assert.strictEqual(requestModel('not json', '/groq/chat/completions'), null);
 
-console.log('All tests passed');
+// Provider vars: suffix is anchored, names with underscores and "proxy" in them parse right,
+// and one name can't be claimed by two API types
+const Config = require('../src/config');
+const cfg = Object.create(Config.prototype);
+cfg.providers = new Map();
+cfg.parseProviders({ OPENAI_PROXYAPI_API_KEYS: 'k', OPENAI_PROXYAPI_PROXY: 'true', OPENAI_FOO_BAR_API_KEYS: 'x',
+  OPENAI_DUP_API_KEYS: 'a', GEMINI_DUP_API_KEYS: 'b', GEMINI_API_KEYS: 'g' });
+assert.strictEqual(cfg.providers.get('proxyapi').proxy, true);
+assert.ok(cfg.providers.has('foo_bar'));
+assert.strictEqual(cfg.providers.get('dup').apiType, 'openai');
+assert.strictEqual(cfg.providers.get('gemini').apiType, 'gemini');
+
+// A malformed URL is not a route and must not throw (it used to crash the process)
+assert.strictEqual(ProxyServer.prototype.parseRoute.call({ config: { getProvider: () => null } }, '//['), null);
+
+// Proxy pool: turning auto-fetch off mid-sweep leaves it empty; back on refills at once
+(async () => {
+  const ProxyPool = require('../src/proxyPool');
+  const ProxyManager = require('../src/proxyManager');
+  const pool = new ProxyPool();
+  pool.timer = 1;                                                      // no interval in tests
+  pool.fetchCandidates = async () => ['socks5://1.1.1.1:1', 'socks5://2.2.2.2:2'];
+  pool.probe = () => new Promise(r => setTimeout(() => r({ ok: true, ms: 5 }), 30));
+  pool.start();
+  await new Promise(r => setTimeout(r, 10));
+  pool.stop();                                                          // mid-sweep
+  await new Promise(r => setTimeout(r, 100));
+  assert.strictEqual(pool.live.length, 0);
+  pool.start();                                                         // within the 5-minute gap
+  await pool._activeRefresh;
+  assert.strictEqual(pool.live.length, 2);
+  assert.strictEqual(pool.refreshing, false);
+
+  // Dropped auto proxies don't keep their agents around
+  const m = new ProxyManager([], true);
+  m.setAutoProxies(['socks5://1.1.1.1:1']);
+  m.getAgentFor('socks5://1.1.1.1:1');
+  m.setAutoProxies(['socks5://2.2.2.2:2']);
+  assert.strictEqual(m._agentCache.size, 0);
+
+  console.log('All tests passed');
+})().catch((e) => { console.error(e); process.exit(1); });

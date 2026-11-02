@@ -5,9 +5,9 @@ const ProxyManager = require('./proxyManager');
  * Auto-fetched pool of free public proxies.
  *
  * Lists come from monosans/proxy-list, which publishes small, frequently
- * regenerated SOCKS4 and SOCKS5 lists (a couple hundred entries between them,
- * versus ~10k in the big HTTP lists). Small enough that every entry can be
- * validated on each refresh instead of sampling.
+ * regenerated SOCKS4 and SOCKS5 lists (~1.5k entries between them, versus
+ * ~10k in the big HTTP lists). Small enough that every entry can be validated
+ * on each refresh instead of sampling.
  *
  * Nothing here is ever written to .env - the pool lives in memory only.
  *
@@ -31,7 +31,7 @@ class ProxyPool {
     this.onUpdate = options.onUpdate || (() => {});
 
     this.enabled = false;
-    this.concurrency = options.concurrency || 25;
+    this.concurrency = options.concurrency || 100;
     this.probeTimeoutMs = options.probeTimeoutMs || 6000;
     this.refreshIntervalMs = options.refreshIntervalMs || 30 * 60 * 1000;
     // Floor between refreshes so a burst of failures can't hammer GitHub
@@ -44,6 +44,8 @@ class ProxyPool {
     this.refreshing = false;
     this.timer = null;
     this._activeRefresh = null;   // in-flight sweep, shared by concurrent callers
+    this._activeGen = 0;
+    this.generation = 0;          // bumped on stop(), so a sweep from before is thrown away
 
     // Live counters for the panel - a sweep takes the better part of a minute,
     // so it has to be able to show something moving.
@@ -53,7 +55,8 @@ class ProxyPool {
   start() {
     if (this.enabled) return;
     this.enabled = true;
-    this.refresh('enabled');
+    // Forced: turning it back on soon after turning it off must still refill
+    this.refresh('enabled', true);
     if (!this.timer) {
       this.timer = setInterval(() => this.refresh('scheduled'), this.refreshIntervalMs);
       if (this.timer.unref) this.timer.unref();
@@ -62,11 +65,17 @@ class ProxyPool {
 
   stop() {
     this.enabled = false;
+    this.generation += 1;
+    this.refreshing = false;
+    this.progress = { phase: 'idle', tested: 0, total: 0, live: 0 };
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = null;
     }
     this.live = [];
+    this.lastRefreshAt = null;
+    this.lastTested = 0;
+    this.lastError = null;
     this.onUpdate(this);
   }
 
@@ -94,21 +103,28 @@ class ProxyPool {
   async refresh(reason = 'manual', force = false) {
     if (!this.enabled) return this.getStatus();
 
-    if (this._activeRefresh) return this._activeRefresh;
+    if (this._activeRefresh && this._activeGen === this.generation) return this._activeRefresh;
+    // A sweep from before a stop() is still winding down - let it finish first
+    if (this._activeRefresh) await this._activeRefresh.catch(() => {});
+    if (this._activeRefresh) return this._activeRefresh; // someone else started the new one
+    if (!this.enabled) return this.getStatus();
 
     if (!force && this.lastRefreshAt && Date.now() - this.lastRefreshAt < this.minRefreshGapMs) {
       return this.getStatus(); // too soon - a failure storm shouldn't spam the source
     }
 
-    this._activeRefresh = this._runRefresh(reason);
+    const run = this._runRefresh(reason, this.generation);
+    this._activeRefresh = run;
+    this._activeGen = this.generation;
     try {
-      return await this._activeRefresh;
+      return await run;
     } finally {
-      this._activeRefresh = null;
+      if (this._activeRefresh === run) this._activeRefresh = null;
     }
   }
 
-  async _runRefresh(reason) {
+  async _runRefresh(reason, gen) {
+    const stale = () => gen !== this.generation;
     this.refreshing = true;
     this.lastError = null;
     this.progress = { phase: 'fetching', tested: 0, total: 0, live: 0 };
@@ -122,7 +138,8 @@ class ProxyPool {
       const target = this.getProbeTarget() || 'api.openai.com';
       console.log(`[PROXY-POOL] ${reason}: validating ${candidates.length} proxies against ${target}...`);
 
-      const live = await this.validate(candidates, target);
+      const live = await this.validate(candidates, target, stale);
+      if (stale()) return this.getStatus(); // turned off mid-sweep - keep it empty
 
       this.live = live;
       this.lastTested = candidates.length;
@@ -130,13 +147,16 @@ class ProxyPool {
       const fastest = live.length ? `${live[0].ms}ms` : 'n/a';
       console.log(`[PROXY-POOL] ${live.length} of ${candidates.length} proxies alive (${Math.round((Date.now() - startedAt) / 1000)}s, fastest ${fastest})`);
     } catch (err) {
+      if (stale()) return this.getStatus();
       this.lastError = err.message;
       this.lastRefreshAt = Date.now();
       console.log(`[PROXY-POOL] Refresh failed: ${err.message}`);
     } finally {
-      this.refreshing = false;
-      this.progress = { ...this.progress, phase: 'idle' };
-      this.onUpdate(this);
+      if (!stale()) {
+        this.refreshing = false;
+        this.progress = { ...this.progress, phase: 'idle' };
+        this.onUpdate(this);
+      }
     }
 
     return this.getStatus();
@@ -178,14 +198,14 @@ class ProxyPool {
    * answer along with how long they took - that timing seeds the rotator's
    * ranking so the first request already picks a fast proxy.
    */
-  async validate(candidates, targetHost) {
+  async validate(candidates, targetHost, stale = () => false) {
     const live = [];
     let cursor = 0;
 
     const worker = async () => {
       while (cursor < candidates.length) {
         const url = candidates[cursor++];
-        if (!this.enabled) return; // turned off mid-run
+        if (stale()) return; // turned off mid-run
         const result = await this.probe(url, targetHost);
         this.progress.tested += 1;
         if (result.ok) {
