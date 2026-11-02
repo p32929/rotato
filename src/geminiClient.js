@@ -204,9 +204,10 @@ class GeminiClient {
         options.agent = picked.agent;
         options._proxyMasked = picked.maskedUrl;
         options._proxyUrl = picked.url;
-        options._proxyStartedAt = Date.now();
         const known = picked.latencyMs != null ? ` (~${picked.latencyMs}ms)` : '';
         console.log(`[GEMINI] Routing request via proxy ${picked.maskedUrl}${known}`);
+      } else {
+        console.log(`[GEMINI] No green proxy available - sending this request direct`);
       }
     }
 
@@ -361,8 +362,7 @@ class GeminiClient {
         this.proxyManager.reportFailure(url);
         return;
       }
-      const startedAt = options._proxyStartedAt;
-      this.proxyManager.reportSuccess(url, startedAt ? Date.now() - startedAt : null);
+      this.proxyManager.reportSuccess(url);
     } else {
       // A stall is conclusive - don't leave it in rotation for two more hangs
       this.proxyManager.reportFailure(url, stalled);

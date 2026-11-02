@@ -169,7 +169,13 @@ assert.strictEqual(ProxyServer.prototype.parseRoute.call({ config: { getProvider
     assert.ok(pm.isBenched(urls[1]) && !pm.isGreen(urls[1]));
     pm.recordCheck(urls[1], 300);
     assert.ok(pm.isGreen(urls[1]));                                                 // a passing check un-benches
-    const none = new ProxyManager([], true);
+    // A successful request doesn't touch the speed: that's connect time, recorded by the agent
+    const before = pm.latencyOf(urls[2]);
+    pm.reportSuccess(urls[2]);
+    assert.strictEqual(pm.latencyOf(urls[2]), before);
+    pm.getAgentFor(urls[2]).onConnected(before);                                     // agent reports its connect time
+    assert.strictEqual(pm.latencyOf(urls[2]), before);
+        const none = new ProxyManager([], true);
     none.setAutoProxies([{ url: 'socks5://10.0.0.7:1', ms: 3000 }]);
     assert.strictEqual(none.pick(), null);                                          // no green: go direct
   }

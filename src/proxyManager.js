@@ -353,6 +353,8 @@ class ProxyAgent extends https.Agent {
     this.proxy.timeoutMs = options.proxyTimeoutMs != null
       ? options.proxyTimeoutMs
       : ProxyAgent.DEFAULT_TIMEOUT_MS;
+    // Told how long tunnel + TLS handshake took - the part the proxy controls
+    this.onConnected = options.onConnected || null;
   }
 
   createConnection(options, callback) {
@@ -367,6 +369,7 @@ class ProxyAgent extends https.Agent {
     let settled = false;
     let raw = null;
     let secure = null;
+    const startedAt = Date.now();
 
     const done = (err, socket) => {
       if (settled) return;
@@ -377,6 +380,7 @@ class ProxyAgent extends https.Agent {
         try { if (secure) secure.destroy(); } catch (e) { /* ignore */ }
         return callback(err);
       }
+      if (this.onConnected) this.onConnected(Date.now() - startedAt);
       callback(null, socket);
     };
 
@@ -534,6 +538,9 @@ class ProxyManager {
     if (!this._agentCache.has(proxyUrl)) {
       this._agentCache.set(proxyUrl, new ProxyAgent(proxyUrl, {
         proxyTimeoutMs: this.connectTimeoutFor(proxyUrl),
+        // Speed = connect time only. Timing the whole request would count the
+        // provider's own thinking time against the proxy and turn it red.
+        onConnected: (ms) => this.recordLatency(proxyUrl, ms),
       }));
     }
     return this._agentCache.get(proxyUrl);
@@ -546,13 +553,16 @@ class ProxyManager {
     return this.health.get(proxyUrl);
   }
 
-  /** A proxy carried a request. Clears its failure streak and folds in the timing. */
-  reportSuccess(proxyUrl, latencyMs = null) {
+  /**
+   * A proxy carried a request: clear its failure streak. Its speed is recorded
+   * by the agent when the connection opens, not here - a full request includes
+   * the provider's own response time.
+   */
+  reportSuccess(proxyUrl) {
     if (!proxyUrl) return;
     const entry = this._entry(proxyUrl);
     entry.fails = 0;
     entry.deadUntil = 0;
-    if (latencyMs != null) this.recordLatency(proxyUrl, latencyMs);
   }
 
   /**

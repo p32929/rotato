@@ -1142,7 +1142,6 @@ class ProxyServer {
   testFetch(url, opts = {}, via = null) {
     if (!via) return fetch(url, opts);
     const manager = this.config.getProxyManager();
-    const startedAt = Date.now();
     return new Promise((resolve, reject) => {
       const req = https.request(url, { method: opts.method || 'GET', headers: opts.headers || {}, agent: via.agent, timeout: 20000 }, (r) => {
         const chunks = [];
@@ -1150,7 +1149,7 @@ class ProxyServer {
         r.on('end', () => {
           // Same rule as real requests: 403/407 usually means the provider blocks this proxy's IP
           if (r.statusCode === 403 || r.statusCode === 407) manager.reportFailure(via.url);
-          else manager.reportSuccess(via.url, Date.now() - startedAt);
+          else manager.reportSuccess(via.url);
           const text = Buffer.concat(chunks).toString('utf8');
           resolve({
             status: r.statusCode,
