@@ -5281,11 +5281,9 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             // Key cell
             let keyCell = '<span class="text-muted-foreground">—</span>';
             if (log.keyUsed) {
-                keyCell = `<span class="font-mono log-key" style="color:var(--success)" title="Key used: ${escapeHtml(log.keyUsed)}">${escapeHtml(log.keyUsed)}</span>`;
-            }
-            if (log.failedKeys && log.failedKeys.length > 0) {
-                const failedList = log.failedKeys.map(fk => `${fk.key} (${fk.status || 'err'})`).join(', ');
-                keyCell += ` <span class="badge badge-warning" title="Rotated past: ${escapeHtml(failedList)}">↻${log.failedKeys.length}</span>`;
+                const ok = log.status != null && log.status < 400;
+                const title = log._attempt ? `Key ${log.keyUsed} got ${log.status || 'an error'} - rotated to the next key` : `Key used: ${log.keyUsed}`;
+                keyCell = `<span class="font-mono log-key" style="color:${ok ? 'var(--success)' : 'var(--destructive)'}" title="${escapeHtml(title)}">${escapeHtml(log.keyUsed)}</span>`;
             }
 
             // Proxy cell
@@ -5301,7 +5299,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             const errorRow = log.error
                 ? `<div class="text-[11px] mt-0.5 break-all" style="color:var(--destructive)" title="${escapeHtml(log.error)}">${escapeHtml(log.error)}</div>` : '';
 
-            const canView = (log.requestId && log.requestId !== 'unknown' && log.requestId !== 'legacy');
+            const canView = !log._attempt && (log.requestId && log.requestId !== 'unknown' && log.requestId !== 'legacy');
             const detailsBtn = canView
                 ? `<button onclick="event.stopPropagation();viewResponse('${escapeHtml(log.requestId)}')" class="text-xs underline cursor-pointer whitespace-nowrap" style="color:var(--info)">View</button>`
                 : '';
@@ -5320,14 +5318,30 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             </tr>`;
         }
 
+        // One row per key a request went through: each key that got rotated
+        // (429 or whatever the provider rotates on) shows as its own row with its
+        // own status and proxy, under the row of the key that answered.
+        function keyAttemptRows(log) {
+            const failed = log.failedKeys || [];
+            if (!failed.length) return [log];
+            const rows = failed.map(fk => ({
+                ...log, _attempt: true, failedKeys: [],
+                timestamp: fk.at || log.timestamp, status: fk.status ?? null,
+                responseTime: fk.ms ?? null, keyUsed: fk.key, proxyUsed: fk.proxy || null,
+                error: fk.status ? null : (fk.reason || null)
+            }));
+            // Every key rotated: the last one's answer is what the caller got
+            const main = log.keyUsed ? { ...log, failedKeys: [] } : { ...rows.pop(), _attempt: false };
+            return [main, ...rows];
+        }
+
         function _filteredLogs() {
             const q = (document.getElementById('logSearch')?.value || '').toLowerCase().trim();
             const provFilter = document.getElementById('logProviderFilter')?.value || '';
             const statFilter = document.getElementById('logStatusFilter')?.value || '';
             const proxyFilter = document.getElementById('logProxyFilter')?.value || '';
             const out = [];
-            for (const raw of _logsCache) {
-                const log = normalizeLog(raw);
+            for (const log of _logsCache.flatMap(raw => keyAttemptRows(normalizeLog(raw)))) {
                 if (provFilter && log.provider !== provFilter) continue;
                 if (statFilter && !statusMatchesFilter(log.status, statFilter)) continue;
                 if (proxyFilter === 'proxy' && !log.proxyUsed) continue;
@@ -5377,7 +5391,8 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             }
             const count = document.getElementById('logCount');
             if (count) {
-                const filtered = logs.length !== _logsCache.length ? `${logs.length} shown · ` : '';
+                const shown = logs.filter(l => !l._attempt).length;
+                const filtered = shown !== _logsCache.length ? `${shown} shown · ` : '';
                 count.textContent = `${filtered}${_logsCache.length} request${_logsCache.length === 1 ? '' : 's'}`;
             }
             updateSortIndicators();
@@ -5597,8 +5612,8 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 if (data.contentType) chips.push(rvChip('content-type', data.contentType, 'default'));
                 if (size) chips.push(rvChip('size', size, 'default'));
                 if (data.keyInfo && data.keyInfo.keyUsed) chips.push(rvChip('key', data.keyInfo.keyUsed, 'green'));
-                if (data.keyInfo && data.keyInfo.failedKeys && data.keyInfo.failedKeys.length)
-                    chips.push(rvChip('rotated', '↻' + data.keyInfo.failedKeys.length, 'orange'));
+                for (const fk of (data.keyInfo && data.keyInfo.failedKeys) || [])
+                    chips.push(rvChip(fk.key, fk.status ? `got ${fk.status}` : 'failed', 'orange'));
                 if (data.proxyUsed) chips.push(rvChip('proxy', data.proxyUsed, 'purple'));
                 else chips.push(`<span class="inline-block px-1.5 py-0.5 rounded text-[11px] bg-muted text-muted-foreground">direct</span>`);
                 document.getElementById('rvMeta').innerHTML = chips.join('');

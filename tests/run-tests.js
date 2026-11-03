@@ -161,7 +161,9 @@ assert.strictEqual(ProxyServer.prototype.parseRoute.call({ config: { getProvider
     const tried = new Set();
     for (let i = 0; i < 5; i++) assert.ok(pm.pick(tried));
     assert.strictEqual(tried.size, 5);
-    assert.strictEqual(pm.pick(tried), null);                                       // this request tried them all
+    const lastTried = [...tried].pop();
+    const reused = pm.pick(tried);                                                  // tried them all: reuse one rather than go direct...
+    assert.ok(reused && reused.url !== lastTried);                                  // ...but not the one used last
     pm.recordLatency(urls[0], 5000); pm.recordLatency(urls[0], 5000); pm.recordLatency(urls[0], 5000);
     assert.strictEqual(pm.isGreen(urls[0]), false);                                 // slowed down -> red
     pm.recordCheck(urls[0], 100);
@@ -198,6 +200,31 @@ assert.strictEqual(ProxyServer.prototype.parseRoute.call({ config: { getProvider
     const second = (tried) => { calls++; const t = tried.size; pm.pick(tried); return t ? Promise.resolve({ statusCode: 200 }) : Promise.reject(Object.assign(new Error('x'), { _proxyFailure: true })); };
     assert.strictEqual((await c._withProxyRetry(second)).statusCode, 200);
     assert.strictEqual(calls, 2);
+  }
+
+  // A key that gets rotated hands the next key a different proxy, and each failed key is logged with its own status and proxy
+  {
+    const OpenAIClient = require('../src/openaiClient');
+    const KeyRotator = require('../src/keyRotator');
+    const pm = new ProxyManager([], true);
+    pm.setAutoProxies(['1', '2', '3', '4', '5', '6'].map(n => ({ url: `socks5://10.0.3.${n}:1`, ms: 100 })));
+    const c = new OpenAIClient(new KeyRotator(['sk-aaaaaaaaaaaa1', 'sk-bbbbbbbbbbbb2', 'sk-cccccccccccc3'], 'openai'), 'https://x', pm);
+    for (let round = 0; round < 20; round++) {
+      const via = [];
+      let n = 0;
+      c.sendRequest = (m, p, b, h, key, tried) => {
+        const picked = pm.pick(tried);
+        via.push(picked.url);
+        return Promise.resolve({ statusCode: ++n < 3 ? 429 : 200, data: '', proxyUsed: picked.maskedUrl });
+      };
+      const res = await c.makeRequest('POST', '/chat/completions', '{}', {});
+      assert.strictEqual(res.statusCode, 200);
+      assert.strictEqual(new Set(via).size, 3);                                     // three keys, three different proxies
+      const failed = res._keyInfo.failedKeys;
+      assert.strictEqual(failed.length, 2);
+      assert.deepStrictEqual(failed.map(f => f.status), [429, 429]);
+      assert.ok(failed.every(f => f.proxy && f.ms >= 0 && f.at && f.key !== res._keyInfo.keyUsed));
+    }
   }
 
   // Background checker: checks while idle, un-benches what passes, stops on traffic

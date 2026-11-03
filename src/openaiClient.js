@@ -25,7 +25,8 @@ class OpenAIClient {
     const requestContext = this.keyRotator.createRequestContext();
     let lastError = null;
     let lastResponse = null;
-    const failedKeys = []; // Track which keys failed and why
+    const failedKeys = []; // { key, status, reason, proxy, ms, at } - one log row each
+    const usedProxies = new Set(); // a rotated key never reuses the previous key's proxy // Track which keys failed and why
 
     // Determine which status codes should trigger rotation
     const rotationStatusCodes = customStatusCodes || new Set([429]);
@@ -35,11 +36,13 @@ class OpenAIClient {
     while ((apiKey = requestContext.getNextKey()) !== null) {
       const maskedKey = this.maskApiKey(apiKey);
 
+      const startedAt = Date.now();
+      const attempt = (status, reason, proxy) => ({ key: maskedKey, status, reason, proxy: proxy || null, ms: Date.now() - startedAt, at: new Date(startedAt).toISOString() });
       console.log(`[OPENAI::${maskedKey}] Attempting ${method} ${path}${streaming ? ' (streaming)' : ''}`);
 
       try {
         if (streaming) {
-          const response = await this._withProxyRetry((tried) => this.sendStreamingRequest(method, path, body, headers, apiKey, tried));
+          const response = await this._withProxyRetry((tried) => this.sendStreamingRequest(method, path, body, headers, apiKey, tried), usedProxies);
 
           if (rotationStatusCodes.has(response.statusCode)) {
             console.log(`[OPENAI::${maskedKey}] Status ${response.statusCode} triggers rotation - trying next key`);
@@ -47,7 +50,7 @@ class OpenAIClient {
             // and an empty body under the upstream's content-length would hang them
             const data = await readBody(response.stream);
             requestContext.markKeyAsRateLimited(apiKey);
-            failedKeys.push({ key: maskedKey, status: response.statusCode, reason: 'rate_limited' });
+            failedKeys.push(attempt(response.statusCode, 'rate_limited', response.proxyUsed));
             lastResponse = { statusCode: response.statusCode, headers: response.headers, data, proxyUsed: response.proxyUsed };
             continue;
           }
@@ -57,12 +60,12 @@ class OpenAIClient {
           response._keyInfo = { keyUsed: maskedKey, failedKeys };
           return response;
         } else {
-          const response = await this._withProxyRetry((tried) => this.sendRequest(method, path, body, headers, apiKey, tried));
+          const response = await this._withProxyRetry((tried) => this.sendRequest(method, path, body, headers, apiKey, tried), usedProxies);
 
           if (rotationStatusCodes.has(response.statusCode)) {
             console.log(`[OPENAI::${maskedKey}] Status ${response.statusCode} triggers rotation - trying next key`);
             requestContext.markKeyAsRateLimited(apiKey);
-            failedKeys.push({ key: maskedKey, status: response.statusCode, reason: 'rate_limited' });
+            failedKeys.push(attempt(response.statusCode, 'rate_limited', response.proxyUsed));
             lastResponse = response;
             continue;
           }
@@ -74,7 +77,7 @@ class OpenAIClient {
         }
       } catch (error) {
         console.log(`[OPENAI::${maskedKey}] Request failed: ${error.message}`);
-        failedKeys.push({ key: maskedKey, status: null, reason: error.message });
+        failedKeys.push(attempt(null, error.message, error.proxyUsed));
         lastError = error;
         continue;
       }
@@ -195,6 +198,7 @@ class OpenAIClient {
         if (req) req.destroy();
         const err = new Error(`Upstream did not respond within ${Math.round(timeoutMs / 1000)}s${via}`);
         err._proxyFailure = !!options._proxyUrl;
+        err.proxyUsed = options._proxyMasked || null;
         reject(err);
       }, timeoutMs);
 
@@ -227,6 +231,7 @@ class OpenAIClient {
         const maskedKey = this.maskApiKey(apiKey);
         console.log(`[OPENAI::${maskedKey}] HTTP request error: ${error.message}`);
         if (options._proxyUrl) error._proxyFailure = true;
+        error.proxyUsed = options._proxyMasked || null;
         reject(error);
       });
 
@@ -263,6 +268,7 @@ class OpenAIClient {
         if (req) req.destroy();
         const err = new Error(`Upstream did not start streaming within ${Math.round(timeoutMs / 1000)}s${via}`);
         err._proxyFailure = !!options._proxyUrl;
+        err.proxyUsed = options._proxyMasked || null;
         reject(err);
       }, timeoutMs);
 
@@ -289,6 +295,7 @@ class OpenAIClient {
         const maskedKey = this.maskApiKey(apiKey);
         console.log(`[OPENAI::${maskedKey}] HTTP streaming request error: ${error.message}`);
         if (options._proxyUrl) error._proxyFailure = true;
+        error.proxyUsed = options._proxyMasked || null;
         reject(error);
       });
 
@@ -340,10 +347,10 @@ class OpenAIClient {
    * entries die constantly. Each attempt re-picks, so it lands on the next
    * fastest proxy - and the dead one has already been benched by then.
    */
-  async _withProxyRetry(send) {
+  async _withProxyRetry(send, tried = new Set()) {
     // Like key rotation, but for proxies: each attempt takes a different random
-    // green proxy (never one this request already tried), up to maxTries of them.
-    const tried = new Set();
+    // green proxy (never one this request already tried, across all its keys),
+    // up to maxTries of them.
     const maxTries = (this.proxyManager && this.proxyManager.maxTries) || 1;
     let attempt = 1;
     for (;;) {

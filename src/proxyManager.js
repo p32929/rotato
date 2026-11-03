@@ -650,7 +650,13 @@ class ProxyManager {
 
     const green = this.getGreen();
     if (green.length < ProxyManager.MIN_GREEN) this.notifyExhausted();
-    const candidates = new Set(green.filter((u) => !(tried && tried.has(u))));
+    let candidates = new Set(green.filter((u) => !(tried && tried.has(u))));
+    if (candidates.size === 0 && tried && tried.size) {
+      // This request (across all its keys) has been through every green proxy:
+      // reuse one rather than go direct, just not the one it used last
+      const last = [...tried].pop();
+      candidates = new Set(green.filter((u) => u !== last));
+    }
     if (candidates.size === 0) return null;
 
     for (let refills = 0; refills < 2; refills++) {

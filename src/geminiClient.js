@@ -54,7 +54,8 @@ class GeminiClient {
     const requestContext = this.keyRotator.createRequestContext();
     let lastError = null;
     let lastResponse = null;
-    const failedKeys = [];
+    const failedKeys = []; // { key, status, reason, proxy, ms, at } - one log row each
+    const usedProxies = new Set(); // a rotated key never reuses the previous key's proxy
 
     const rotationStatusCodes = customStatusCodes || new Set([429]);
 
@@ -62,11 +63,13 @@ class GeminiClient {
     while ((apiKey = requestContext.getNextKey()) !== null) {
       const maskedKey = this.maskApiKey(apiKey);
 
+      const startedAt = Date.now();
+      const attempt = (status, reason, proxy) => ({ key: maskedKey, status, reason, proxy: proxy || null, ms: Date.now() - startedAt, at: new Date(startedAt).toISOString() });
       console.log(`[GEMINI::${maskedKey}] Attempting ${method} ${path}${streaming ? ' (streaming)' : ''}`);
 
       try {
         if (streaming) {
-          const response = await this._withProxyRetry((tried) => this.sendStreamingRequest(method, path, body, headers, apiKey, false, tried));
+          const response = await this._withProxyRetry((tried) => this.sendStreamingRequest(method, path, body, headers, apiKey, false, tried), usedProxies);
 
           if (rotationStatusCodes.has(response.statusCode)) {
             console.log(`[GEMINI::${maskedKey}] Status ${response.statusCode} triggers rotation - trying next key`);
@@ -74,7 +77,7 @@ class GeminiClient {
             // and an empty body under the upstream's content-length would hang them
             const data = await readBody(response.stream);
             requestContext.markKeyAsRateLimited(apiKey);
-            failedKeys.push({ key: maskedKey, status: response.statusCode, reason: 'rate_limited' });
+            failedKeys.push(attempt(response.statusCode, 'rate_limited', response.proxyUsed));
             lastResponse = { statusCode: response.statusCode, headers: response.headers, data, proxyUsed: response.proxyUsed };
             continue;
           }
@@ -84,12 +87,12 @@ class GeminiClient {
           response._keyInfo = { keyUsed: maskedKey, failedKeys };
           return response;
         } else {
-          const response = await this._withProxyRetry((tried) => this.sendRequest(method, path, body, headers, apiKey, false, tried));
+          const response = await this._withProxyRetry((tried) => this.sendRequest(method, path, body, headers, apiKey, false, tried), usedProxies);
 
           if (rotationStatusCodes.has(response.statusCode)) {
             console.log(`[GEMINI::${maskedKey}] Status ${response.statusCode} triggers rotation - trying next key`);
             requestContext.markKeyAsRateLimited(apiKey);
-            failedKeys.push({ key: maskedKey, status: response.statusCode, reason: 'rate_limited' });
+            failedKeys.push(attempt(response.statusCode, 'rate_limited', response.proxyUsed));
             lastResponse = response;
             continue;
           }
@@ -101,7 +104,7 @@ class GeminiClient {
         }
       } catch (error) {
         console.log(`[GEMINI::${maskedKey}] Request failed: ${error.message}`);
-        failedKeys.push({ key: maskedKey, status: null, reason: error.message });
+        failedKeys.push(attempt(null, error.message, error.proxyUsed));
         lastError = error;
         continue;
       }
@@ -238,6 +241,7 @@ class GeminiClient {
         if (req) req.destroy();
         const err = new Error(`Upstream did not respond within ${Math.round(timeoutMs / 1000)}s${via}`);
         err._proxyFailure = !!options._proxyUrl;
+        err.proxyUsed = options._proxyMasked || null;
         reject(err);
       }, timeoutMs);
 
@@ -270,6 +274,7 @@ class GeminiClient {
         const maskedKey = this.maskApiKey(apiKey);
         console.log(`[GEMINI::${maskedKey}] HTTP request error: ${error.message}`);
         if (options._proxyUrl) error._proxyFailure = true;
+        error.proxyUsed = options._proxyMasked || null;
         reject(error);
       });
 
@@ -306,6 +311,7 @@ class GeminiClient {
         if (req) req.destroy();
         const err = new Error(`Upstream did not start streaming within ${Math.round(timeoutMs / 1000)}s${via}`);
         err._proxyFailure = !!options._proxyUrl;
+        err.proxyUsed = options._proxyMasked || null;
         reject(err);
       }, timeoutMs);
 
@@ -331,6 +337,7 @@ class GeminiClient {
         const maskedKey = this.maskApiKey(apiKey);
         console.log(`[GEMINI::${maskedKey}] HTTP streaming request error: ${error.message}`);
         if (options._proxyUrl) error._proxyFailure = true;
+        error.proxyUsed = options._proxyMasked || null;
         reject(error);
       });
 
@@ -382,10 +389,10 @@ class GeminiClient {
    * entries die constantly. Each attempt re-picks, so it lands on the next
    * fastest proxy - and the dead one has already been benched by then.
    */
-  async _withProxyRetry(send) {
+  async _withProxyRetry(send, tried = new Set()) {
     // Like key rotation, but for proxies: each attempt takes a different random
-    // green proxy (never one this request already tried), up to maxTries of them.
-    const tried = new Set();
+    // green proxy (never one this request already tried, across all its keys),
+    // up to maxTries of them.
     const maxTries = (this.proxyManager && this.proxyManager.maxTries) || 1;
     let attempt = 1;
     for (;;) {
