@@ -55,12 +55,23 @@ class ProxyPool {
   start() {
     if (this.enabled) return;
     this.enabled = true;
-    // Forced: turning it back on soon after turning it off must still refill
-    this.refresh('enabled', true);
+    // A list restored from disk that is still fresh is used as is; the
+    // scheduled refresh and the background checks take it from there.
+    // Otherwise fetch now - forced, so turning it back on soon after turning
+    // it off still refills.
+    const fresh = this.live.length && this.lastRefreshAt && Date.now() - this.lastRefreshAt < this.refreshIntervalMs;
+    if (!fresh) this.refresh('enabled', true);
     if (!this.timer) {
       this.timer = setInterval(() => this.refresh('scheduled'), this.refreshIntervalMs);
       if (this.timer.unref) this.timer.unref();
     }
+  }
+
+  /** Take over the list saved before a restart (see proxyCache.js). */
+  restore(cache) {
+    this.live = cache.live.filter((e) => e && typeof e.url === 'string');
+    this.lastRefreshAt = cache.lastRefreshAt || null;
+    this.lastTested = cache.lastTested || 0;
   }
 
   stop() {

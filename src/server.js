@@ -9,6 +9,7 @@ const ProxyManager = require('./proxyManager');
 const ApiLogStore = require('./apiLogStore');
 const ProxyPool = require('./proxyPool');
 const ProxyChecker = require('./proxyChecker');
+const proxyCache = require('./proxyCache');
 const { resolveKey } = require('./keyValues');
 const { parseStatusCodes, describeStatusCodes } = require('./statusCodes');
 
@@ -67,7 +68,10 @@ class ProxyServer {
     // Auto-fetched proxy pool. Lives in memory; feeds the ProxyManager.
     this.proxyPool = new ProxyPool({
       getProbeTarget: () => this.getProxyProbeTarget(),
-      onUpdate: () => this.config.getProxyManager().setAutoProxies(this.proxyPool.live),
+      onUpdate: () => {
+        this.config.getProxyManager().setAutoProxies(this.proxyPool.live);
+        this.saveProxyCache(); // a fresh list is worth keeping right away
+      },
     });
 
     // Re-checks the proxies while idle, so green/red stays current
@@ -97,7 +101,7 @@ class ProxyServer {
   start() {
     // Restore persisted logs (and prune expired ones) before accepting traffic
     this.applyLogSettings();
-    this.applyProxySettings();
+    this.restoreProxyCache();
 
     this.server = http.createServer((req, res) => {
       // A stray throw in one request must never take the whole proxy down
@@ -2047,6 +2051,38 @@ class ProxyServer {
     return 'api.openai.com';
   }
 
+  /**
+   * Pick up the proxy list and health saved before the last restart, then keep
+   * the file current: written at most once a minute (only when something
+   * changed) and on shutdown.
+   */
+  restoreProxyCache() {
+    const cache = proxyCache.load();
+    if (cache && cache.live.length) this.proxyPool.restore(cache);
+    this.applyProxySettings();
+
+    if (cache) {
+      // After applyProxySettings: seeding the list from the pool resets health,
+      // and the saved strikes, bench and speeds should win
+      const manager = this.config.getProxyManager();
+      const known = new Set(manager.proxyUrls);
+      for (const [url, entry] of Object.entries(cache.health)) {
+        if (known.has(url) && entry && typeof entry === 'object') manager.health.set(url, entry);
+      }
+      const ageMin = cache.lastRefreshAt ? Math.round((Date.now() - cache.lastRefreshAt) / 60000) : null;
+      console.log(`[PROXY-CACHE] Restored ${this.proxyPool.live.length} proxies from ${proxyCache.FILE}${ageMin != null ? ` (fetched ${ageMin}m ago)` : ''}`);
+    }
+
+    this._proxyCacheJson = null;
+    this.proxyCacheTimer = setInterval(() => this.saveProxyCache(), 60 * 1000);
+    if (this.proxyCacheTimer.unref) this.proxyCacheTimer.unref();
+  }
+
+  saveProxyCache() {
+    if (this._stopping) return; // stopping empties the pool; keep the last real list
+    this._proxyCacheJson = proxyCache.save(this.proxyPool, this.config.getProxyManager(), this._proxyCacheJson);
+  }
+
   /** [name, provider] for enabled providers routed through the proxy, with a usable base URL. */
   proxyedProviders() {
     return [...this.config.getProviders().entries()].filter(([, p]) => {
@@ -2265,7 +2301,9 @@ class ProxyServer {
 
   stop() {
     this.apiLogs.stop(); // Sync-flush the pending index lines before shutdown
-    this.proxyPool.stop();
+    if (this.proxyCacheTimer) clearInterval(this.proxyCacheTimer);
+    this.saveProxyCache();
+    this._stopping = true;    this.proxyPool.stop();
     this.proxyChecker.stop();
     if (this.telegramBot) this.telegramBot.stop();
     if (this.server) {

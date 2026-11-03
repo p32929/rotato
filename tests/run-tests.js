@@ -258,6 +258,45 @@ assert.strictEqual(ProxyServer.prototype.parseRoute.call({ config: { getProvider
     ck.stop();
   }
 
+  // The proxy list survives a restart: saved to disk, restored, no re-fetch while fresh
+  {
+    const fs = require('fs'), os = require('os'), path = require('path');
+    const proxyCache = require('../src/proxyCache');
+    const cwd = process.cwd();
+    process.chdir(fs.mkdtempSync(path.join(os.tmpdir(), 'rotato-cache-')));
+    try {
+      assert.strictEqual(proxyCache.load(), null);                                   // nothing saved yet
+      const pool = new ProxyPool(); pool.timer = 1;
+      pool.live = [{ url: 'socks5://10.0.4.1:1', ms: 400 }, { url: 'socks5://10.0.4.2:1', ms: 1500 }];
+      pool.lastRefreshAt = Date.now(); pool.lastTested = 900;
+      const pm = new ProxyManager([], true);
+      pm.setAutoProxies(pool.live);
+      for (let i = 0; i < 3; i++) pm.reportFailure('socks5://10.0.4.2:1');
+      const json = proxyCache.save(pool, pm);
+      assert.strictEqual(proxyCache.save(pool, pm, json), json);                     // unchanged: no rewrite
+
+      const cache = proxyCache.load();
+      const pool2 = new ProxyPool(); pool2.timer = 1;
+      let fetched = 0; pool2.fetchCandidates = async () => { fetched++; return []; };
+      pool2.restore(cache);
+      pool2.start();
+      assert.strictEqual(fetched, 0);                                                 // fresh: used as is
+      assert.strictEqual(pool2.live.length, 2);
+      assert.ok(cache.health['socks5://10.0.4.2:1'].deadUntil > Date.now());          // bench survives too
+
+      const pool3 = new ProxyPool(); pool3.timer = 1;
+      pool3.fetchCandidates = async () => { fetched++; return []; };
+      pool3.restore({ ...cache, lastRefreshAt: Date.now() - 60 * 60 * 1000 });
+      pool3.start();
+      await pool3._activeRefresh;
+      assert.strictEqual(fetched, 1);                                                 // stale: fetched again
+      fs.writeFileSync(path.join(process.cwd(), proxyCache.FILE), '{broken');
+      assert.strictEqual(proxyCache.load(), null);                                    // unreadable: start fresh
+    } finally {
+      process.chdir(cwd);
+    }
+  }
+
   // Dropped auto proxies don't keep their agents around
   const m = new ProxyManager([], true);
   m.setAutoProxies(['socks5://1.1.1.1:1']);
