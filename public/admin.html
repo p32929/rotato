@@ -1184,9 +1184,6 @@
                             <option value="direct">Direct</option>
                         </select>
                         <div class="log-actions flex items-center gap-2">
-                        <label class="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none px-1" title="Auto-refresh every 5s">
-                            <input type="checkbox" id="logAutoRefresh" onchange="toggleLogAutoRefresh()" class="w-3.5 h-3.5"> Live
-                        </label>
                         <button onclick="handleRefreshLogs(this)" class="btn btn-secondary btn-sm" title="Refresh logs">
                             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
@@ -5474,15 +5471,6 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             showSuccessToast(`Exported ${logs.length} log entries`);
         }
 
-        function toggleLogAutoRefresh() {
-            const on = document.getElementById('logAutoRefresh')?.checked;
-            if (_logAutoRefreshTimer) { clearInterval(_logAutoRefreshTimer); _logAutoRefreshTimer = null; }
-            if (on) {
-                _logAutoRefreshTimer = setInterval(liveRefreshLogs, 5000);
-                refreshLogs();
-            }
-        }
-
         // --- Response viewer state ---
         let _rvData = null, _rvId = null;
         let _rvRawResp = '', _rvRawReq = '';       // original payloads
@@ -6641,10 +6629,10 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             activeBtn.classList.add('active', 'text-foreground', 'border-primary');
             activeBtn.classList.remove('text-muted-foreground');
             
-            // Load logs if logs tab is selected; pause auto-refresh polling elsewhere
+            // Logs are always live while the tab is open; polling pauses elsewhere
             if (tabName === 'logs') {
                 refreshLogs();
-                if (document.getElementById('logAutoRefresh')?.checked && !_logAutoRefreshTimer) {
+                if (!_logAutoRefreshTimer) {
                     _logAutoRefreshTimer = setInterval(liveRefreshLogs, 5000);
                 }
             } else if (_logAutoRefreshTimer) {
