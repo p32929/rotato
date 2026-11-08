@@ -31,11 +31,14 @@ function main() {
     const server = new ProxyServer(config, geminiClient, openaiClient);
     server.start();
     
-    process.on('SIGINT', () => {
-      console.log('\nShutting down server...');
-      server.stop();
-      process.exit(0);
-    });
+    // SIGTERM is how hosts and process managers stop a server; both save state first
+    for (const signal of ['SIGINT', 'SIGTERM']) {
+      process.on(signal, () => {
+        console.log('\nShutting down server...');
+        server.stop();
+        process.exit(0);
+      });
+    }
     
   } catch (error) {
     console.error('Failed to start server:', error.message);

@@ -43,6 +43,7 @@ class ApiLogStore {
     this.flushTimer = null;
     this.pruneTimer = null;
     this.knownDays = new Set();   // day dirs already created this process
+    this.checkedTails = new Set(); // day index files whose last byte was checked
     this.storedCount = 0;         // entries currently on disk
     this.sequence = 0;            // last issued request id
   }
@@ -174,7 +175,13 @@ class ApiLogStore {
         this.knownDays.add(day);
       }
       const indexPath = path.join(dir, 'index.jsonl');
-      const payload = lines.join('\n') + '\n';
+      let payload = lines.join('\n') + '\n';
+      // A crash mid-append leaves a partial last line; start on a fresh line so
+      // the first new entry isn't glued onto it and lost (blank lines are skipped)
+      if (!this.checkedTails.has(day)) {
+        this.checkedTails.add(day);
+        if (!ApiLogStore.endsWithNewline(indexPath)) payload = '\n' + payload;
+      }
       this.storedCount += lines.length;
 
       if (sync) {
@@ -370,12 +377,15 @@ class ApiLogStore {
     this.storedCount = 0;
     this.clearTimer('flushTimer');
 
+    // Memory mode never touches the disk - not even to delete what file mode left
+    if (!this.isFileMode()) return;
     try {
       fs.rmSync(this.rootDir, { recursive: true, force: true });
     } catch (err) {
       console.log(`[LOG] Failed to clear ${this.rootDir}: ${err.message}`);
     }
-    if (this.isFileMode()) this.ensureDir(this.rootDir);
+    this.checkedTails.clear();
+    this.ensureDir(this.rootDir);
   }
 
   stop() {
@@ -394,6 +404,23 @@ class ApiLogStore {
   }
 
   // ----------------------------------------------------------------- helpers
+
+  /** True for a missing/empty file or one that ends in a newline. */
+  static endsWithNewline(file) {
+    let fd;
+    try {
+      const { size } = fs.statSync(file);
+      if (size === 0) return true;
+      fd = fs.openSync(file, 'r');
+      const b = Buffer.alloc(1);
+      fs.readSync(fd, b, 0, 1, size - 1);
+      return b[0] === 0x0a;
+    } catch (e) {
+      return true;
+    } finally {
+      if (fd !== undefined) fs.closeSync(fd);
+    }
+  }
 
   static dayKey(timestamp) {
     const ts = Date.parse(timestamp);

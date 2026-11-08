@@ -8,8 +8,24 @@ const TelegramBot = require('./telegramBot');
 const ProxyManager = require('./proxyManager');
 const ApiLogStore = require('./apiLogStore');
 const ProxyPool = require('./proxyPool');
+const ProxyChecker = require('./proxyChecker');
+const proxyCache = require('./proxyCache');
 const { resolveKey } = require('./keyValues');
 const { parseStatusCodes, describeStatusCodes } = require('./statusCodes');
+
+// A provider's own settings: {TYPE}_{NAME}_{SUFFIX}, or legacy {TYPE}_{SUFFIX}
+const PROVIDER_VAR_RE = /^[^_]+(?:_.+?)?_(API_KEYS|BASE_URL|MODELS_URL|ACCESS_KEY|DEFAULT_MODEL|MODEL_HISTORY|DISABLED|PROXY)$/;
+
+// The model a request asked for: the body's "model" (OpenAI style), else the
+// /models/<name>:<action> path segment (Gemini style). Null when there isn't one.
+function requestModel(body, url) {
+  try {
+    const model = body && JSON.parse(body).model;
+    if (typeof model === 'string' && model) return model.slice(0, 200);
+  } catch (e) { /* not JSON */ }
+  const m = String(url || '').split('?')[0].match(/\/models\/([^/:]+)(?::[^/]*)?$/);
+  return m ? decodeURIComponent(m[1]).slice(0, 200) : null;
+}
 
 // The provider's own reason from an error body ({error:{message}}, {error:"..."},
 // {message}, Cloudflare's {errors:[{message}]}), so a failed key check says why
@@ -39,9 +55,10 @@ class ProxyServer {
     // API request logging - memory vs. per-request files, driven by API_LOGS in .env
     this.apiLogs = new ApiLogStore();
 
-    // Rate limiting for login
-    this.failedLoginAttempts = 0;
-    this.loginBlockedUntil = null;
+    // Rate limiting for login, per client address - a global counter would let
+    // anyone keep the real admin locked out
+    this.loginAttempts = new Map(); // ip -> { fails, blockedUntil }
+    this.adminSessionIssuedAt = 0;
 
     // Store required classes for reinitialization
     this.KeyRotator = require('./keyRotator');
@@ -51,8 +68,20 @@ class ProxyServer {
     // Auto-fetched proxy pool. Lives in memory; feeds the ProxyManager.
     this.proxyPool = new ProxyPool({
       getProbeTarget: () => this.getProxyProbeTarget(),
-      onUpdate: () => this.config.getProxyManager().setAutoProxies(this.proxyPool.live),
+      onUpdate: () => {
+        this.config.getProxyManager().setAutoProxies(this.proxyPool.live);
+        this.saveProxyCache(); // a fresh list is worth keeping right away
+      },
     });
+
+    // Re-checks the proxies while idle, so green/red stays current
+    this.proxyChecker = new ProxyChecker({
+      getManager: () => this.config.getProxyManager(),
+      probe: (url, host) => this.proxyPool.probe(url, host),
+      getTargets: () => this.proxyedProviders().map(([, p]) => new URL(p.baseUrl).hostname),
+      modelCheck: (url) => this.proxyModelCheck(url),
+    });
+    this._modelCheckTurn = 0;
 
     // Telegram bot (started after server.listen in start())
     this.telegramBot = new TelegramBot(this);
@@ -72,10 +101,15 @@ class ProxyServer {
   start() {
     // Restore persisted logs (and prune expired ones) before accepting traffic
     this.applyLogSettings();
-    this.applyProxySettings();
+    this.restoreProxyCache();
 
     this.server = http.createServer((req, res) => {
-      this.handleRequest(req, res);
+      // A stray throw in one request must never take the whole proxy down
+      this.handleRequest(req, res).catch((err) => {
+        console.log(`[SERVER] Unhandled request error: ${err && err.message}`);
+        if (!res.headersSent) this.sendError(res, 500, 'Internal server error');
+        else res.destroy();
+      });
     });
 
     this.server.listen(this.config.getPort(), () => {
@@ -133,8 +167,10 @@ class ProxyServer {
       : `adm-${Math.random().toString(36).substring(2, 8)}`;
     console.log(`[REQ-${requestId}] ${req.method} ${req.url} from ${clientIp}`);
 
+    let model = null; // shown in the request log
     try {
       const body = await this.readRequestBody(req);
+      if (isApiCall) model = requestModel(body, req.url);
 
       // Serve static files from public directory
       if (req.url === '/tailwind-3.4.17.js' && (req.method === 'GET' || req.method === 'HEAD')) {
@@ -179,7 +215,7 @@ class ProxyServer {
       }
 
       // Handle admin routes
-      if (req.url.startsWith('/admin')) {
+      if (/^\/admin(\/|\?|$)/.test(req.url)) {
         await this.handleAdminRequest(req, res, body);
         return;
       }
@@ -199,7 +235,7 @@ class ProxyServer {
         
         if (isApiCall) {
           const responseTime = Date.now() - startTime;
-          this.logApiRequest(requestId, req.method, req.url, 'unknown', 400, responseTime, 'Invalid API path', clientIp);
+          this.logApiRequest(requestId, req.method, req.url, 'unknown', 400, responseTime, 'Invalid API path', clientIp, null, null, model);
         }
         
         this.sendError(res, 400, 'Invalid API path. Use /{provider}/* format');
@@ -213,7 +249,7 @@ class ProxyServer {
         console.log(`[REQ-${requestId}] Provider '${providerName}' is disabled`);
         if (isApiCall) {
           const responseTime = Date.now() - startTime;
-          this.logApiRequest(requestId, req.method, path, providerName, 503, responseTime, `Provider '${providerName}' is disabled`, clientIp);
+          this.logApiRequest(requestId, req.method, path, providerName, 503, responseTime, `Provider '${providerName}' is disabled`, clientIp, null, null, model);
         }
         this.sendError(res, 503, `Provider '${providerName}' is currently disabled`);
         return;
@@ -235,7 +271,7 @@ class ProxyServer {
 
         if (isApiCall) {
           const responseTime = Date.now() - startTime;
-          this.logApiRequest(requestId, req.method, path, providerName, 401, responseTime, 'Invalid or missing ACCESS_KEY', clientIp);
+          this.logApiRequest(requestId, req.method, path, providerName, 401, responseTime, 'Invalid or missing ACCESS_KEY', clientIp, null, null, model);
         }
 
         this.sendError(res, 401, `Invalid or missing ACCESS_KEY for provider '${providerName}'`);
@@ -265,7 +301,7 @@ class ProxyServer {
 
         if (isApiCall) {
           const responseTime = Date.now() - startTime;
-          this.logApiRequest(requestId, req.method, path, providerName, 503, responseTime, `Provider '${providerName}' not configured`, clientIp);
+          this.logApiRequest(requestId, req.method, path, providerName, 503, responseTime, `Provider '${providerName}' not configured`, clientIp, null, null, model);
         }
 
         this.sendError(res, 503, `Provider '${providerName}' not configured`);
@@ -282,7 +318,7 @@ class ProxyServer {
       const upstreamBody = this.sanitizeRequestBody(body);
 
       // Detect streaming request
-      const isStreaming = this.isStreamingRequest(body);
+      const isStreaming = this.isStreamingRequest(body, path);
       if (isStreaming) {
         console.log(`[REQ-${requestId}] Streaming request detected`);
       }
@@ -319,6 +355,23 @@ class ProxyServer {
 
         response.stream.pipe(res);
 
+        let clientGone = false;
+        let logged = false;
+        const logStream = (status, error) => {
+          if (logged || !isApiCall) return;
+          logged = true;
+          this.logApiRequest(requestId, req.method, path, providerName, status, Date.now() - startTime, error, clientIp, keyInfo, proxyUsed, model);
+        };
+
+        // Client went away: stop the upstream too, or it keeps generating (and billing)
+        res.on('close', () => {
+          if (res.writableFinished || clientGone) return;
+          clientGone = true;
+          response.stream.destroy();
+          console.log(`[REQ-${requestId}] Client disconnected mid-stream`);
+          logStream(499, 'Client disconnected mid-stream');
+        });
+
         response.stream.on('end', () => {
           let streamedData = Buffer.concat(streamChunks).toString('utf8');
           if (truncated) {
@@ -340,19 +393,18 @@ class ProxyServer {
             keyInfo: keyInfo
           });
 
-          if (isApiCall) {
-            const responseTime = Date.now() - startTime;
-            const error = response.statusCode >= 400 ? `HTTP ${response.statusCode}` : null;
-            this.logApiRequest(requestId, req.method, path, providerName, response.statusCode, responseTime, error, clientIp, keyInfo, proxyUsed);
-          }
+          logStream(response.statusCode, response.statusCode >= 400 ? `HTTP ${response.statusCode}` : null);
           console.log(`[REQ-${requestId}] Streaming response completed`);
         });
 
         response.stream.on('error', (err) => {
+          if (clientGone) return; // already logged as a disconnect
           console.log(`[REQ-${requestId}] Streaming error: ${err.message}`);
-          if (!res.headersSent) {
-            this.sendError(res, 502, 'Streaming error');
-          }
+          logStream(502, `Upstream stream failed: ${err.message}`);
+          // pipe() doesn't end the client response on a source error - cut it
+          // so the caller sees the failure instead of hanging
+          if (!res.headersSent) this.sendError(res, 502, 'Streaming error');
+          else res.destroy(err);
         });
       } else {
         // Non-streaming response. logApiResponse() stages the full payload and
@@ -365,42 +417,49 @@ class ProxyServer {
         if (isApiCall) {
           const responseTime = Date.now() - startTime;
           const error = response.statusCode >= 400 ? `HTTP ${response.statusCode}` : null;
-          this.logApiRequest(requestId, req.method, path, providerName, response.statusCode, responseTime, error, clientIp, keyInfo, proxyUsed);
+          this.logApiRequest(requestId, req.method, path, providerName, response.statusCode, responseTime, error, clientIp, keyInfo, proxyUsed, model);
         }
 
         this.sendResponse(res, response);
       }
     } catch (error) {
+      // Upstream unreachable or silent is the provider's side (502/504), not ours
+      const status = /did not (respond|start streaming)/.test(error.message) ? 504
+        : (error.code || error._proxyFailure) ? 502 : 500;
       console.log(`[REQ-${requestId}] Request handling error: ${error.message}`);
-      console.log(`[REQ-${requestId}] Response: 500 Internal Server Error`);
-      
+      console.log(`[REQ-${requestId}] Response: ${status}`);
+
       if (isApiCall) {
         const responseTime = Date.now() - startTime;
-        this.logApiRequest(requestId, req.method, req.url, 'unknown', 500, responseTime, error.message, clientIp);
+        this.logApiRequest(requestId, req.method, req.url, 'unknown', status, responseTime, error.message, clientIp, null, null, model);
       }
-      
-      this.sendError(res, 500, 'Internal server error');
+
+      this.sendError(res, status, status === 500 ? 'Internal server error' : `Upstream request failed: ${error.message}`);
     }
   }
 
   readRequestBody(req) {
     return new Promise((resolve) => {
-      let body = '';
-      
-      req.on('data', (chunk) => {
-        body += chunk;
-      });
-      
-      req.on('end', () => {
-        resolve(body || null);
-      });
+      // Decode once at the end: decoding chunk by chunk splits multi-byte
+      // characters that straddle two chunks into garbage
+      const chunks = [];
+      const done = () => resolve(chunks.length ? Buffer.concat(chunks).toString('utf8') || null : null);
+      req.on('data', (chunk) => chunks.push(chunk));
+      req.on('end', done);
+      req.on('error', done);   // client dropped mid-upload: don't leave this pending
+      req.on('aborted', done);
     });
   }
 
   parseRoute(url) {
     if (!url) return null;
-    
-    const urlObj = new URL(url, 'http://localhost');
+
+    let urlObj;
+    try {
+      urlObj = new URL(url, 'http://localhost');
+    } catch (e) {
+      return null; // e.g. "//[" - not a route, and must not throw
+    }
     const path = urlObj.pathname;
     
     // Parse new provider format: /{provider}/* (no version required)
@@ -605,6 +664,7 @@ class ProxyServer {
 
   sendError(res, statusCode, message) {
     console.log(`[SERVER] Sending error response: ${statusCode} - ${message}`);
+    if (res.headersSent) { res.destroy(); return; } // mid-response: all we can do is cut it
 
     const errorResponse = {
       error: {
@@ -644,7 +704,9 @@ class ProxyServer {
   /**
    * Detect if a request body contains stream: true
    */
-  isStreamingRequest(body) {
+  isStreamingRequest(body, path = '') {
+    // Gemini's native streaming is chosen by the endpoint, not the body
+    if (/:streamGenerateContent\b/.test(path)) return true;
     if (!body) return false;
     try {
       const parsed = typeof body === 'string' ? JSON.parse(body) : body;
@@ -723,6 +785,20 @@ class ProxyServer {
   async handleAdminRequest(req, res, body) {
     const url = new URL(req.url, 'http://localhost');
     const path = url.pathname;
+
+    // Another site can't drive the panel through the admin's browser: a
+    // cross-origin POST (which a browser sends with its Origin) is refused
+    if (req.method !== 'GET' && req.headers.origin) {
+      let sameOrigin = false;
+      try {
+        const host = new URL(req.headers.origin).host;
+        sameOrigin = host === req.headers.host || host === req.headers['x-forwarded-host']; // behind a reverse proxy
+      } catch (e) { /* "null" etc. */ }
+      if (!sameOrigin) {
+        this.sendError(res, 403, 'Cross-origin request refused');
+        return;
+      }
+    }
     
     // Check if admin password is configured
     const adminPassword = this.getAdminPassword();
@@ -748,13 +824,14 @@ class ProxyServer {
     // Check login rate limit status
     if (path === '/admin/api/login-status' && req.method === 'GET') {
       const now = Date.now();
-      const isBlocked = this.loginBlockedUntil && now < this.loginBlockedUntil;
+      const st = this.loginState(req);
+      const isBlocked = !!(st.blockedUntil && now < st.blockedUntil);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
         blocked: isBlocked,
-        blockedUntil: this.loginBlockedUntil,
-        remainingSeconds: isBlocked ? Math.ceil((this.loginBlockedUntil - now) / 1000) : 0,
-        failedAttempts: this.failedLoginAttempts
+        blockedUntil: st.blockedUntil,
+        remainingSeconds: isBlocked ? Math.ceil((st.blockedUntil - now) / 1000) : 0,
+        failedAttempts: st.fails
       }));
       return;
     }
@@ -845,20 +922,37 @@ class ProxyServer {
   }
   
   isAdminAuthenticated(req) {
+    if (!this.adminSessionToken || Date.now() - this.adminSessionIssuedAt > ProxyServer.SESSION_MS) return false;
     const cookies = this.parseCookies(req.headers.cookie);
-    return cookies.adminSession === this.adminSessionToken && this.adminSessionToken !== null;
+    return ProxyServer.safeEqual(cookies.adminSession, this.adminSessionToken);
+  }
+
+  static safeEqual(a, b) {
+    if (typeof a !== 'string' || typeof b !== 'string') return false;
+    const x = Buffer.from(a), y = Buffer.from(b);
+    return x.length === y.length && crypto.timingSafeEqual(x, y);
+  }
+
+  loginState(req) {
+    const ip = (req.socket && req.socket.remoteAddress) || 'unknown';
+    if (!this.loginAttempts.has(ip)) {
+      if (this.loginAttempts.size > 1000) this.loginAttempts.clear(); // ponytail: crude cap, fine for a single-admin panel
+      this.loginAttempts.set(ip, { fails: 0, blockedUntil: null });
+    }
+    return this.loginAttempts.get(ip);
   }
 
   async handleAdminLogin(req, res, body) {
     try {
+      const st = this.loginState(req);
       // Check if login is currently blocked
-      if (this.loginBlockedUntil && Date.now() < this.loginBlockedUntil) {
-        const remainingSeconds = Math.ceil((this.loginBlockedUntil - Date.now()) / 1000);
+      if (st.blockedUntil && Date.now() < st.blockedUntil) {
+        const remainingSeconds = Math.ceil((st.blockedUntil - Date.now()) / 1000);
         const remainingMinutes = Math.ceil(remainingSeconds / 60);
         res.writeHead(429, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
           error: `Too many failed login attempts. Please wait ${remainingMinutes} minute(s).`,
-          blockedUntil: this.loginBlockedUntil,
+          blockedUntil: st.blockedUntil,
           remainingSeconds: remainingSeconds
         }));
         return;
@@ -867,28 +961,30 @@ class ProxyServer {
       const data = JSON.parse(body);
       const adminPassword = this.getAdminPassword();
 
-      if (data.password === adminPassword) {
+      if (ProxyServer.safeEqual(data && data.password, adminPassword)) {
         // Successful login - reset counters
-        this.failedLoginAttempts = 0;
-        this.loginBlockedUntil = null;
+        st.fails = 0;
+        st.blockedUntil = null;
         this.adminSessionToken = this.generateSessionToken();
+        this.adminSessionIssuedAt = Date.now();
 
         // Set session cookie (expires in 24 hours)
         const expires = new Date(Date.now() + 24 * 60 * 60 * 1000).toUTCString();
         res.writeHead(200, {
           'Content-Type': 'application/json',
-          'Set-Cookie': `adminSession=${this.adminSessionToken}; HttpOnly; Expires=${expires}; Path=/admin`
+          'Set-Cookie': `adminSession=${this.adminSessionToken}; HttpOnly; SameSite=Strict; Expires=${expires}; Path=/admin`
         });
         res.end(JSON.stringify({ success: true }));
       } else {
         // Failed login - increment counter
-        this.failedLoginAttempts++;
-        const attemptsRemaining = 5 - this.failedLoginAttempts;
+        st.fails++;
+        const attemptsRemaining = 5 - st.fails;
 
         // Block if reached 5 attempts
-        if (this.failedLoginAttempts >= 5) {
-          this.loginBlockedUntil = Date.now() + (5 * 60 * 1000); // 5 minutes
-          console.log('[SECURITY] Login blocked due to 5 failed attempts. Blocked until:', new Date(this.loginBlockedUntil).toISOString());
+        if (st.fails >= 5) {
+          st.fails = 0;
+          st.blockedUntil = Date.now() + (5 * 60 * 1000); // 5 minutes
+          console.log('[SECURITY] Login blocked due to 5 failed attempts. Blocked until:', new Date(st.blockedUntil).toISOString());
           res.writeHead(429, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({
             error: 'Too many failed login attempts. Please wait 5 minutes.',
@@ -896,7 +992,7 @@ class ProxyServer {
             remainingSeconds: 300
           }));
         } else {
-          console.log(`[SECURITY] Failed login attempt ${this.failedLoginAttempts}/5`);
+          console.log(`[SECURITY] Failed login attempt ${st.fails}/5`);
           res.writeHead(401, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({
             error: `Invalid password. ${attemptsRemaining} attempt(s) remaining.`,
@@ -944,9 +1040,9 @@ class ProxyServer {
       const envPath = path.join(process.cwd(), '.env');
       const envContent = fs.readFileSync(envPath, 'utf8');
       const envVars = this.config.parseEnvFile(envContent);
-      return envVars.ADMIN_PASSWORD;
+      return envVars.ADMIN_PASSWORD || process.env.ADMIN_PASSWORD || null;
     } catch (error) {
-      return null;
+      return process.env.ADMIN_PASSWORD || null;
     }
   }
   
@@ -954,31 +1050,35 @@ class ProxyServer {
   async handleUpdateEnvVars(res, body) {
     try {
       const envVars = JSON.parse(body);
+      if (!envVars || typeof envVars !== 'object' || Array.isArray(envVars)) {
+        this.sendError(res, 400, 'Expected a JSON object of settings');
+        return;
+      }
       const envPath = path.join(process.cwd(), '.env');
 
       // Read current env to preserve admin password and disabled states
       const currentEnvContent = fs.readFileSync(envPath, 'utf8');
       const currentEnvVars = this.config.parseEnvFile(currentEnvContent);
 
-      // Merge with new vars but preserve admin password
-      const finalEnvVars = { ...envVars };
-      if (currentEnvVars.ADMIN_PASSWORD) {
-        finalEnvVars.ADMIN_PASSWORD = currentEnvVars.ADMIN_PASSWORD;
+      // This endpoint only edits providers. Everything else (password, port,
+      // Settings, Telegram, proxy) has its own save and is kept from the file,
+      // so a panel holding an older copy can't quietly undo those saves.
+      const isProviderVar = (key) => PROVIDER_VAR_RE.test(key);
+      const finalEnvVars = {};
+      for (const [key, value] of Object.entries(currentEnvVars)) {
+        if (!isProviderVar(key)) finalEnvVars[key] = value;
+      }
+      for (const [key, value] of Object.entries(envVars)) {
+        if (isProviderVar(key)) finalEnvVars[key] = value;
       }
 
-      // Preserve _DISABLED, TELEGRAM_, and DEFAULT_STATUS_CODES entries from current env if not in new vars
+      // Keep a provider's _DISABLED/_PROXY flags when the payload leaves them out,
+      // but only while that provider still exists - otherwise a deleted
+      // provider's flag would resurrect it as a keyless ghost on reload.
       for (const [key, value] of Object.entries(currentEnvVars)) {
-        if (key in finalEnvVars) continue;
-
-        if (key.endsWith('_DISABLED') || key.endsWith('_PROXY')) {
-          // Only preserve a provider's flags if that provider still exists (i.e.
-          // its API keys are present in the new payload). Otherwise a deleted
-          // provider's flag would resurrect it as a keyless ghost on reload.
-          const apiKeysKey = key.replace(/_(DISABLED|PROXY)$/, '_API_KEYS');
-          if (apiKeysKey in finalEnvVars) {
-            finalEnvVars[key] = value;
-          }
-        } else if (key.startsWith('TELEGRAM_') || key.startsWith('PROXY_') || key === 'DEFAULT_STATUS_CODES' || key === 'API_LOGS') {
+        if (key in envVars || !/_(DISABLED|PROXY)$/.test(key)) continue;
+        // A keyless provider exists by its base URL alone
+        if (['_API_KEYS', '_BASE_URL'].some((s) => key.replace(/_(DISABLED|PROXY)$/, s) in finalEnvVars)) {
           finalEnvVars[key] = value;
         }
       }
@@ -999,6 +1099,13 @@ class ProxyServer {
       const parsed = JSON.parse(body);
       let testResult = { success: false, error: 'Unknown API type' };
 
+      // A provider added without keys: it only goes in if its models list answers without one
+      if (parsed.keyless) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(await this.testKeyless(parsed.apiType, parsed.baseUrl, parsed.modelsUrl)));
+        return;
+      }
+
       // Test with the key's own values filled into the base URL
       let apiKey, baseUrl;
       try {
@@ -1010,13 +1117,26 @@ class ProxyServer {
       }
       const { apiType } = parsed;
 
+      // viaProxy: send the check the way real traffic goes - through a proxy
+      // picked exactly as a request would pick one
+      let via = null;
+      if (parsed.viaProxy) {
+        via = this.config.getProxyManager().pick();
+        if (!via) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'No working proxy right now - add proxy URLs or turn on auto-fetch and wait for the list' }));
+          return;
+        }
+      }
+
       if (apiType === 'gemini') {
         // Test Gemini API key with custom base URL if provided
-        testResult = await this.testGeminiKey(apiKey, baseUrl, parsed.quiet);
+        testResult = await this.testGeminiKey(apiKey, baseUrl, parsed.quiet, via);
       } else if (apiType === 'openai') {
         // Test OpenAI API key with custom base URL if provided
-        testResult = await this.testOpenaiKey(apiKey, baseUrl, parsed.quiet);
+        testResult = await this.testOpenaiKey(apiKey, baseUrl, parsed.quiet, via);
       }
+      if (via) testResult.proxy = via.maskedUrl;
       
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(testResult));
@@ -1025,8 +1145,88 @@ class ProxyServer {
     }
   }
   
+  /**
+   * Does this provider work without an API key? GET its models list (its own
+   * models URL, if it has one) with no auth at all. Only a 2xx JSON answer
+   * counts - a website's 200 HTML page is not an API.
+   */
+  testKeyless(apiType, baseUrl, modelsUrl = '') {
+    if (apiType !== 'openai' && apiType !== 'gemini') return Promise.resolve({ success: false, error: 'Unknown API type' });
+    let options;
+    try {
+      new URL(baseUrl);
+      const client = apiType === 'gemini' ? new this.GeminiClient(null, baseUrl, null) : new this.OpenAIClient(null, baseUrl, null);
+      const upstream = this.upstreamPath('GET', '/models', { modelsUrl });
+      options = apiType === 'gemini'
+        ? client._buildRequestOptions('GET', upstream, null, {}, '', true)
+        : client._buildRequestOptions('GET', upstream, null, {}, '');
+    } catch (e) {
+      return Promise.resolve({ success: false, error: `Bad URL: ${e.message}` });
+    }
+    const where = `https://${options.hostname}${options.path}`;
+    return new Promise((resolve) => {
+      const req = https.request({ ...options, timeout: 15000 }, (r) => {
+        const chunks = [];
+        r.on('data', (c) => chunks.push(c));
+        r.on('end', () => {
+          const text = Buffer.concat(chunks).toString('utf8');
+          console.log(`[TEST-KEYLESS] GET ${where} → ${r.statusCode} ${text.length}b`);
+          if (r.statusCode < 200 || r.statusCode >= 300) {
+            return resolve({ success: false, error: `${where} answered ${r.statusCode} without a key${upstreamErrorText(text) ? `: ${upstreamErrorText(text)}` : ''}` });
+          }
+          try { JSON.parse(text); } catch (e) {
+            return resolve({ success: false, error: `${where} answered 200 but not with JSON - is this the API's base URL?` });
+          }
+          resolve({ success: true, error: null });
+        });
+      });
+      req.on('timeout', () => req.destroy(new Error('no answer within 15s')));
+      req.on('error', (err) => resolve({ success: false, error: `${where}: ${err.message}` }));
+      req.end();
+    });
+  }
+
+  /**
+   * fetch() for key checks. Direct uses the built-in fetch; through a proxy it
+   * goes over https.request with the proxy's agent (fetch can't take one) and
+   * returns the same small Response-like shape. The proxy's health is fed back
+   * like a real request's, so a dead one gets benched.
+   */
+  testFetch(url, opts = {}, via = null) {
+    if (!via) return fetch(url, opts);
+    const manager = this.config.getProxyManager();
+    return new Promise((resolve, reject) => {
+      const req = https.request(url, { method: opts.method || 'GET', headers: opts.headers || {}, agent: via.agent, timeout: 20000 }, (r) => {
+        const chunks = [];
+        r.on('data', (c) => chunks.push(c));
+        r.on('end', () => {
+          // Same rule as real requests: 403/407 usually means the provider blocks this proxy's IP
+          if (r.statusCode === 403 || r.statusCode === 407) manager.reportFailure(via.url);
+          else manager.reportSuccess(via.url);
+          const text = Buffer.concat(chunks).toString('utf8');
+          resolve({
+            status: r.statusCode,
+            statusText: http.STATUS_CODES[r.statusCode] || '',
+            ok: r.statusCode >= 200 && r.statusCode < 300,
+            headers: { get: (h) => r.headers[h.toLowerCase()] || null },
+            text: async () => text,
+          });
+        });
+      });
+      const fail = (err) => {
+        manager.reportFailure(via.url);
+        reject(new Error(`via proxy ${via.maskedUrl}: ${err.message}`));
+      };
+      req.on('timeout', () => req.destroy(new Error('timed out after 20s')));
+      req.on('error', fail);
+      if (opts.body) req.write(opts.body);
+      req.end();
+    });
+  }
+
   // quiet: a bulk "Test all" run - don't fill the request log with key checks
-  async testGeminiKey(apiKey, baseUrl = null, quiet = false) {
+  async testGeminiKey(apiKey, baseUrl = null, quiet = false, via = null) {
+    const fetch = (url, opts) => this.testFetch(url, opts, via);
     const testId = Math.random().toString(36).substring(2, 11);
     const testBaseUrl = baseUrl || 'https://generativelanguage.googleapis.com/v1';
     const startTime = Date.now();
@@ -1082,7 +1282,8 @@ class ProxyServer {
     }
   }
   
-  async testOpenaiKey(apiKey, baseUrl = null, quiet = false) {
+  async testOpenaiKey(apiKey, baseUrl = null, quiet = false, via = null) {
+    const fetch = (url, opts) => this.testFetch(url, opts, via);
     const testId = Math.random().toString(36).substring(2, 11);
     const testBaseUrl = baseUrl || 'https://api.openai.com/v1';
     const startTime = Date.now();
@@ -1230,7 +1431,6 @@ class ProxyServer {
       const providers = this.config.getProviders();
       let total = 0, enabled = 0;
       for (const [, cfg] of providers.entries()) { total++; if (!cfg.disabled) enabled++; }
-      const proxyUrls = this.config.getProxyUrls ? this.config.getProxyUrls() : [];
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
         uptimeMs: Date.now() - this.startTime,
@@ -1238,7 +1438,7 @@ class ProxyServer {
         providers: total,
         providersEnabled: enabled,
         proxyEnabled: this.config.isProxyEnabled ? this.config.isProxyEnabled() : false,
-        proxyCount: Array.isArray(proxyUrls) ? proxyUrls.length : 0,
+        proxyCount: this.config.getProxyManager().getGreen().length, // usable right now, own + fetched
         telegramRunning: !!(this.telegramBot && this.telegramBot.isRunning && this.telegramBot.isRunning())
       }));
     } catch (error) {
@@ -1256,7 +1456,7 @@ class ProxyServer {
     }
   }
 
-  logApiRequest(requestId, method, endpoint, provider, status = null, responseTime = null, error = null, clientIp = null, keyInfo = null, proxyUsed = null) {
+  logApiRequest(requestId, method, endpoint, provider, status = null, responseTime = null, error = null, clientIp = null, keyInfo = null, proxyUsed = null, model = null) {
     const logEntry = {
       timestamp: new Date().toISOString(),
       requestId: requestId || 'unknown',
@@ -1269,7 +1469,8 @@ class ProxyServer {
       clientIp: clientIp,
       keyUsed: keyInfo ? keyInfo.keyUsed : null,
       failedKeys: keyInfo ? keyInfo.failedKeys : [],
-      proxyUsed: proxyUsed || null
+      proxyUsed: proxyUsed || null,
+      model: model || null
     };
 
     this.totalApiRequests++;
@@ -1521,6 +1722,8 @@ class ProxyServer {
       res.end(JSON.stringify({
         enabled,
         autoFetch,
+        goodMs: this.config.getProxyManager().goodMs,
+        maxTries: this.config.getProxyManager().maxTries,
         proxies,
         providers,
         auto: this.proxyPool.getStatus(),
@@ -1538,7 +1741,15 @@ class ProxyServer {
    */
   async handleUpdateProxySettings(res, body) {
     try {
-      const { proxies, autoFetch, providerProxies } = JSON.parse(body);
+      const { proxies, autoFetch, providerProxies, goodMs, maxTries } = JSON.parse(body);
+
+      // Green/red line and tries per request
+      const numberIn = (v, min, max) => v === undefined || (Number.isInteger(Number(v)) && Number(v) >= min && Number(v) <= max);
+      if (!numberIn(goodMs, 100, 30000) || !numberIn(maxTries, 1, 50)) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'Green below must be 100–30000 ms and tries per request 1–50' }));
+        return;
+      }
 
       const list = Array.isArray(proxies)
         ? proxies.map(p => String(p).trim()).filter(p => p.length > 0)
@@ -1567,6 +1778,9 @@ class ProxyServer {
       } else {
         delete envVars.PROXY_URLS;
       }
+
+      if (goodMs !== undefined) envVars.PROXY_GOOD_MS = String(Number(goodMs));
+      if (maxTries !== undefined) envVars.PROXY_MAX_TRIES = String(Number(maxTries));
 
       const useAuto = !!autoFetch;
       if (useAuto) {
@@ -1665,9 +1879,11 @@ class ProxyServer {
         return;
       }
 
-      const status = await this.proxyPool.refresh('manual', true);
+      // A sweep takes minutes - longer than an HTTP request should stay open -
+      // so start it and answer now; the panel follows it via /proxy/status.
+      this.proxyPool.refresh('manual', true).catch((e) => console.log(`[PROXY-POOL] Refresh failed: ${e.message}`));
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: true, auto: status, pool: this.config.getProxyManager().getStats() }));
+      res.end(JSON.stringify({ success: true, auto: this.proxyPool.getStatus(), pool: this.config.getProxyManager().getStats() }));
     } catch (error) {
       this.sendError(res, 500, 'Failed to refresh proxy pool: ' + error.message);
     }
@@ -1722,8 +1938,16 @@ class ProxyServer {
   /**
    * Write env vars back to .env file (shared helper)
    */
-  writeEnvFile(envVars) {
+  writeEnvFile(rawVars) {
     const envPath = path.join(process.cwd(), '.env');
+
+    // One line per setting: a newline in a value would inject extra settings
+    // (e.g. a second ADMIN_PASSWORD), and a bad name would corrupt the file
+    const envVars = {};
+    for (const [key, value] of Object.entries(rawVars || {})) {
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
+      envVars[key] = String(value == null ? '' : value).replace(/[\r\n]+/g, '');
+    }
 
     let envContent = '# API Key Rotator Configuration\n';
     envContent += `# Last updated: ${new Date().toISOString()}\n\n`;
@@ -1783,10 +2007,10 @@ class ProxyServer {
           if (p.accessKey) envContent += `${p.apiType}_${p.providerName}_ACCESS_KEY=${p.accessKey}\n`;
           if (p.defaultModel) envContent += `${p.apiType}_${p.providerName}_DEFAULT_MODEL=${p.defaultModel}\n`;
           if (p.modelHistory) envContent += `${p.apiType}_${p.providerName}_MODEL_HISTORY=${p.modelHistory}\n`;
-          // Only persist a disabled flag for a provider that actually has keys —
-          // an orphaned DISABLED flag would otherwise render as a keyless ghost provider.
-          if (p.disabled === 'true' && p.keys) envContent += `${p.apiType}_${p.providerName}_DISABLED=true\n`;
-          if (p.proxy === 'true' && p.keys) envContent += `${p.apiType}_${p.providerName}_PROXY=true\n`;
+          // Only persist these flags for a provider that exists (keys, or a keyless
+          // provider's base URL) - an orphaned flag would render as a ghost provider.
+          if (p.disabled === 'true' && (p.keys || p.baseUrl)) envContent += `${p.apiType}_${p.providerName}_DISABLED=true\n`;
+          if (p.proxy === 'true' && (p.keys || p.baseUrl)) envContent += `${p.apiType}_${p.providerName}_PROXY=true\n`;
           envContent += '\n';
         }
       }
@@ -1864,13 +2088,99 @@ class ProxyServer {
    * proxy is only kept if it can reach a real provider.
    */
   getProxyProbeTarget() {
-    for (const [, provider] of this.config.getProviders().entries()) {
-      if (provider.disabled || !provider.baseUrl) continue;
+    // Prefer a provider that is actually routed through the pool
+    const providers = [...this.config.getProviders().values()]
+      .filter(p => !p.disabled && p.baseUrl)
+      .sort((a, b) => !!b.proxy - !!a.proxy);
+    for (const provider of providers) {
       try {
         return new URL(provider.baseUrl).hostname;
       } catch (e) { /* try the next provider */ }
     }
     return 'api.openai.com';
+  }
+
+  /**
+   * Pick up the proxy list and health saved before the last restart, then keep
+   * the file current: written at most once a minute (only when something
+   * changed) and on shutdown.
+   */
+  restoreProxyCache() {
+    const cache = proxyCache.load();
+    if (cache && cache.live.length) this.proxyPool.restore(cache);
+    this.applyProxySettings();
+
+    if (cache) {
+      // After applyProxySettings: seeding the list from the pool resets health,
+      // and the saved strikes, bench and speeds should win
+      const manager = this.config.getProxyManager();
+      const known = new Set(manager.proxyUrls);
+      for (const [url, entry] of Object.entries(cache.health)) {
+        if (known.has(url) && entry && typeof entry === 'object') manager.health.set(url, entry);
+      }
+      const ageMin = cache.lastRefreshAt ? Math.round((Date.now() - cache.lastRefreshAt) / 60000) : null;
+      console.log(`[PROXY-CACHE] Restored ${this.proxyPool.live.length} proxies from ${proxyCache.FILE}${ageMin != null ? ` (fetched ${ageMin}m ago)` : ''}`);
+    }
+
+    this._proxyCacheJson = null;
+    this.proxyCacheTimer = setInterval(() => this.saveProxyCache(), 60 * 1000);
+    if (this.proxyCacheTimer.unref) this.proxyCacheTimer.unref();
+  }
+
+  saveProxyCache() {
+    if (this._stopping) return; // stopping empties the pool; keep the last real list
+    this._proxyCacheJson = proxyCache.save(this.proxyPool, this.config.getProxyManager(), this._proxyCacheJson);
+  }
+
+  /** [name, provider] for enabled providers routed through the proxy, with a usable base URL. */
+  proxyedProviders() {
+    return [...this.config.getProviders().entries()].filter(([, p]) => {
+      if (!p.proxy || p.disabled || !p.keys.length) return false;
+      try { new URL(p.baseUrl); return true; } catch (e) { return false; }
+    });
+  }
+
+  /**
+   * Background check: list one provider's models through this proxy. Takes
+   * turns across proxied providers and their keys. Reaching the provider at all
+   * counts as working; 403/407 or no connection counts against the proxy.
+   */
+  proxyModelCheck(proxyUrl) {
+    const providers = this.proxyedProviders();
+    if (!providers.length) return Promise.resolve();
+    const turn = this._modelCheckTurn++;
+    const [, provider] = providers[turn % providers.length];
+    const key = provider.keys[Math.floor(turn / providers.length) % provider.keys.length];
+    const manager = this.config.getProxyManager();
+
+    let options;
+    try {
+      // A client without a proxy manager just builds the URL and auth headers;
+      // the agent is set here, so the shuffle bag isn't touched
+      const client = provider.apiType === 'gemini'
+        ? new this.GeminiClient(null, provider.baseUrl, null)
+        : new this.OpenAIClient(null, provider.baseUrl, null);
+      const upstream = this.upstreamPath('GET', '/models', provider);
+      options = provider.apiType === 'gemini'
+        ? client._buildRequestOptions('GET', upstream, null, {}, key, true)
+        : client._buildRequestOptions('GET', upstream, null, {}, key);
+    } catch (e) {
+      return Promise.resolve(); // e.g. a key missing a {placeholder} value - not the proxy's fault
+    }
+
+    return new Promise((resolve) => {
+      const req = https.request({ ...options, agent: manager.getAgentFor(proxyUrl), timeout: 15000 }, (r) => {
+        r.resume();
+        r.on('end', () => {
+          if (r.statusCode === 403 || r.statusCode === 407) manager.reportFailure(proxyUrl);
+          else manager.reportSuccess(proxyUrl);
+          resolve();
+        });
+      });
+      req.on('timeout', () => req.destroy(new Error('timed out')));
+      req.on('error', () => { manager.reportFailure(proxyUrl); resolve(); });
+      req.end();
+    });
   }
 
   /**
@@ -1880,17 +2190,32 @@ class ProxyServer {
   applyProxySettings() {
     const manager = this.config.getProxyManager();
 
+    // A settings save builds a new manager; keep what the checks have learned
+    // (speeds, strikes, bench) instead of starting from scratch
+    if (this._proxyManager && this._proxyManager !== manager) {
+      for (const [url, entry] of this._proxyManager.health) manager.health.set(url, entry);
+    }
+    this._proxyManager = manager;
+
     // When every proxy is benched, go and fetch a fresh batch. The pool applies
     // its own minimum gap so a burst of failures can't hammer the source.
+    // Green running low: re-check the red/benched ones now, and fetch a fresh list
     manager.onPoolExhausted = () => {
+      this.proxyChecker.rescue();
       if (this.proxyPool.enabled) this.proxyPool.refresh('pool exhausted');
     };
+    manager.isLoading = () => this.proxyPool.enabled && this.proxyPool.refreshing;
 
-    if (this.config.isProxyEnabled() && this.config.isProxyAutoFetchEnabled()) {
+    // Fetch whenever auto-fetch is on, even before any provider is routed
+    // through it - routing is per provider, so this only fills the list.
+    if (this.config.isProxyAutoFetchEnabled()) {
       this.proxyPool.start();
     } else {
       this.proxyPool.stop();
     }
+
+    if (this.config.isProxyEnabled()) this.proxyChecker.start();
+    else this.proxyChecker.stop();
 
     manager.setAutoProxies(this.proxyPool.live);
   }
@@ -2026,7 +2351,10 @@ class ProxyServer {
 
   stop() {
     this.apiLogs.stop(); // Sync-flush the pending index lines before shutdown
-    this.proxyPool.stop();
+    if (this.proxyCacheTimer) clearInterval(this.proxyCacheTimer);
+    this.saveProxyCache();
+    this._stopping = true;    this.proxyPool.stop();
+    this.proxyChecker.stop();
     if (this.telegramBot) this.telegramBot.stop();
     if (this.server) {
       this.server.close();
@@ -2034,4 +2362,7 @@ class ProxyServer {
   }
 }
 
+ProxyServer.SESSION_MS = 24 * 60 * 60 * 1000; // matches the cookie's lifetime
+
 module.exports = ProxyServer;
+module.exports.requestModel = requestModel;

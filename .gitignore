@@ -6,3 +6,5 @@
 logs.jsonl
 /logs
 .DS_Store
+/proxy-cache.json
+/proxy-cache.json.tmp

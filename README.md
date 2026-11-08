@@ -143,6 +143,16 @@ Every request fills the placeholders from whichever key is being tried, so rotat
 
 In the admin panel you never type the `|` format: once the base URL has a `{placeholder}`, every key row gets a field for it, existing keys show their values as tags (a missing one shows red; click it to fill it in), and **Edit** changes a key's values.
 
+## Providers Without a Key
+
+Some APIs work without a key. Leave the keys empty in the **Add provider** dialog (with a name and base URL): rotato calls the provider's models list (its custom models URL, if set) with no auth, and only adds it if that answers 2xx with JSON. In `.env` such a provider is just its base URL:
+
+```env
+OPENAI_POLLINATIONS_BASE_URL=https://text.pollinations.ai/openai
+```
+
+Requests go out with no key of their own (a caller's own `Authorization` header still goes through), everything else works as usual — proxies, retries, access key, logs — and the logs show **no API key** in the key column. Adding a key later turns it into a normal provider; deleting its last key still removes the whole provider.
+
 ## Custom Models URL
 
 Some providers list their models somewhere other than `{base URL}/models` (Cloudflare Workers AI's OpenAI-compatible API has no `/models` at all). Set a models list URL for that provider (in the **Add provider** dialog, later under the provider's **Connection** settings, or in `.env`), and every `GET /{provider}/models` (the models browser, the Telegram bot, your own apps) is fetched from there instead:
@@ -174,17 +184,34 @@ Supported schemes: `http://`, `https://`, `socks4://` (SOCKS4a), `socks5://`, ea
 PROXY_AUTO_FETCH=true
 ```
 
-Pulls the SOCKS4 and SOCKS5 lists from [monosans/proxy-list](https://github.com/monosans/proxy-list) (~260 entries between them), **validates every one**, and keeps only those that respond. Validation opens the proxy tunnel to one of your configured providers and completes the TLS handshake, then hangs up — no HTTP request is sent, no API key is used, and no third-party "what is my IP" service is involved.
+Pulls the SOCKS5, SOCKS4 and HTTP lists from [monosans/proxy-list](https://github.com/monosans/proxy-list) and [proxifly/free-proxy-list](https://github.com/proxifly/free-proxy-list) (~10k entries after removing duplicates), **validates every one**, and keeps only those that respond — typically several hundred. A full sweep takes a few minutes; when the pool starts empty, proxies are handed over as they are found, so the first requests don't wait for the whole sweep. Validation opens the proxy tunnel to one of your configured providers and completes the TLS handshake, then hangs up — no HTTP request is sent, no API key is used, and no third-party "what is my IP" service is involved.
 
-The pool is held in memory and never written to `.env`. It refreshes every 30 minutes, and again once the usable pool has dropped to a quarter of its size (rate-limited to at most one refresh every 5 minutes) — free proxies bleed away continuously, so waiting for the last one to die would mean running on a handful of survivors for most of the interval. Auto-fetch works on its own — you don't need any proxies of your own for `PROXY_ENABLED=true` to be valid.
+The pool is held in memory and never written to `.env`. The list is re-fetched every 30 minutes, and sooner when fewer than 5 green proxies are left (at most one fetch every 5 minutes). Auto-fetch works on its own — you don't need any proxies of your own.
 
-Expect heavy attrition: in testing, **32 of 260 entries were alive**, and SOCKS5 fared far better than SOCKS4 (many SOCKS4 proxies don't implement the SOCKS4a hostname extension this needs). Treat proxy rotation as best-effort.
+Expect heavy attrition: typically a quarter to a third of the entries answer, and SOCKS5 fares far better than SOCKS4 (many SOCKS4 proxies don't implement the SOCKS4a hostname extension this needs). Some providers (Groq, for one) block most free-proxy IPs outright. Treat proxy rotation as best-effort.
 
-### Fastest-first selection
+### Green, red, and how a proxy is picked
 
-Proxies are ranked by measured round-trip time and traffic rotates across only the **fastest slice** (a quarter of the usable pool, at least 3 and at most 10). Validation timings seed the ranking so even the first request picks a quick proxy, and every real request updates it via a rolling average.
+Every proxy has a live speed: how long it takes to open the tunnel and finish the TLS handshake with the provider — the part the proxy controls, not the provider's own response time. Only checks (fetch, background, rescue) set it — real requests don't, so a proxy that was briefly slow during a burst doesn't turn red. Below the line (`PROXY_GOOD_MS`, default 1000ms) it is **green** and used; at or above it, **red** and only shown. The Proxy tab colours the list accordingly and keeps it live while open.
 
-Rotating across a slice rather than always taking the single fastest keeps several IPs in play, which is the whole point of proxying in the first place. In a typical sweep the rotation sits around 400–800ms while the slowest live proxies measure over 6 seconds, so the tail never carries traffic.
+Each request gets a **random green proxy**. Proxies come out of a shuffled list, so concurrent requests never share one and none is reused until every other green proxy has had a turn. The shuffle spreads proxies on the same IP evenly through the cycle — free lists often carry dozens of ports on one machine, and picking those back to back would overload it. If a proxy fails, the **same key moves on to the next proxy**, never one this request already tried, up to `PROXY_MAX_TRIES` (default 5), and the failed proxy waits at the back of the shuffle. When a key is rotated (429 and so on — that's the key's fault, not the proxy's), the next key gets a proxy this request hasn't used yet.
+
+**A provider with the proxy on always goes through a proxy.** When a request has used every green proxy it reuses the one it used longest ago (the same one, if it's the only green one); with no green at all, it takes the fastest red one; with everything benched, the one whose bench ends soonest. Right after a start, while the list is still loading, requests wait for it (up to 30s) instead of going direct. A request only goes direct when the list is empty. The same host:port listed as both socks4 and socks5 counts as one proxy.
+
+```env
+PROXY_GOOD_MS=1000     # green below this many ms
+PROXY_MAX_TRIES=5      # proxies one request may try before the next key
+```
+
+Both are editable in the Proxy tab.
+
+### Background checks
+
+Every couple of minutes rotato re-checks the list, least recently checked first:
+
+- **Every proxy** gets a handshake check, under traffic too: tunnel + TLS handshake to a proxied provider's host, then hang up. No request, no API key. Its timing becomes the proxy's speed, so proxies move between green and red, and a benched proxy that passes is back in play at once. Real requests never use red proxies, so without this a proxy that turned red would stay red.
+- **When green runs low** (fewer than 5) even during traffic, red and benched proxies get an immediate handshake check — at most once a minute, until 10 are green again — so proxies that were only slow under load come back instead of requests going direct.
+- **Green proxies**, while no proxied request has gone out for 30 seconds, also list a provider's models through the proxy, each at most once every 10 minutes, one call every few seconds, taking turns across proxied providers and their keys. Listing models is free, and unlike a handshake it catches a provider blocking the proxy's IP (a 403/407 counts against it).
 
 ### Timeouts and recovery
 
@@ -192,11 +219,11 @@ Every request is bounded. A proxy that accepts the tunnel and then goes silent u
 
 - **Connect (tunnel + TLS)** is capped per proxy, scaled to its measured speed — a proxy that benchmarked at 400ms gets 4s, never the full 8s ceiling.
 - **Response** is capped at 60s through a proxy, 120s direct. For streaming, only the wait for headers is bounded; the stream itself may run as long as it likes.
-- **On a proxy failure the same API key is retried through the next proxy** (up to two extra attempts) rather than burning the key or failing the request. With a single key configured, one dead proxy no longer fails the call.
+- **On a proxy failure the same API key is retried through the next proxy** (up to `PROXY_MAX_TRIES`) rather than burning the key or failing the request. With a single key configured, one dead proxy no longer fails the call.
 
-A stall benches the proxy immediately rather than after three strikes, since silence is conclusive. An HTTP **403 or 407 through a proxy** counts as a strike too — a blocked proxy IP answers quickly, so latency ranking would otherwise promote it to the front of the rotation.
+A stall benches the proxy immediately rather than after three strikes, since silence is conclusive. An HTTP **403 or 407 through a proxy** counts as a strike too, and the request moves on to the next proxy — a blocked proxy IP answers quickly. If every proxy tried gets one, the provider's answer is passed on.
 
-Proxies that fail to carry a request three times in a row are **benched for 10 minutes**, then given another chance. Only connection-level failures count — an HTTP error from the provider isn't the proxy's fault. Your own `PROXY_URLS` entries are never removed automatically. If every proxy is benched, requests fall back to going **direct** rather than failing, and a pool refresh is triggered.
+Proxies that fail three times in a row are **benched for 10 minutes**, or until a background check finds them working. Only connection-level failures (and 403/407) count — other HTTP errors from the provider aren't the proxy's fault. Your own `PROXY_URLS` entries are never removed automatically.
 
 > Free public proxies are run by strangers. Provider traffic is HTTPS inside a CONNECT tunnel, so your API keys and request bodies stay encrypted, but the operator can see which hosts you reach and can stall or drop traffic.
 
@@ -248,7 +275,13 @@ Old day directories are deleted at startup and hourly after that. `logs/` is git
 - **Custom models URL** — any provider can list its models from somewhere other than `{base URL}/models`; the models browser and Telegram bot read lists in any common shape
 - **Redesigned admin panel** — collapsible providers with expand/collapse all, an Add provider dialog, drag-to-reorder keys, and a full phone layout
 - **Test all** — one button checks every key of every provider without spending tokens; each key gets a status dot and each provider a summary
+- Request logs show the model each request asked for (searchable and sortable)
 - Keys are validated even for providers without a `/models` endpoint
+- **Proxy picking** — proxies are green (under 1000ms by default) or red; each request takes a random green one no other request is using, moves on to the next on failure (5 tries by default), and background checks keep the list and its colours current. Both numbers are set in the Proxy tab
+- **Providers without a key** — leave the keys empty when adding a provider; it's added only if its models list answers without one, and it works with proxies like any other
+- **More free proxies** — the auto-fetched pool also pulls proxifly/free-proxy-list and HTTP proxies (~10k candidates, several hundred usually alive, up from a few dozen), and an empty pool starts using proxies while the first sweep is still running
+- **Proxy on means proxied** — a rotated key gets a different proxy; with few or no green proxies a request reuses one or takes a red one rather than going direct; right after a start it waits for the list to load
+- Key tests can go through the proxy or direct for providers that use it, and the Proxy tab can select all/none
 - Removed the keep-alive ping setting: it pinged the server from inside itself, so it couldn't keep a free host awake
 
 **Breaking Changes**:

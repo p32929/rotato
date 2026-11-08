@@ -41,9 +41,12 @@ class TelegramBot {
     this.polling = true;
     this.lastUpdateId = 0;
     this.consecutiveErrors = 0;
+    // A poll() from before a restart may still be busy handling a message; the
+    // generation stops it from scheduling a second loop when it wakes up
+    this.pollGen = (this.pollGen || 0) + 1;
     console.log(`[TELEGRAM] Bot starting with ${this.allowedUsers.size} allowed user(s)`);
     this.registerCommands();
-    this.poll();
+    this.poll(this.pollGen);
   }
 
   async registerCommands() {
@@ -85,8 +88,9 @@ class TelegramBot {
     console.log('[TELEGRAM] Bot stopped');
   }
 
-  async poll() {
-    if (!this.polling) return;
+  async poll(gen = this.pollGen) {
+    const live = () => this.polling && gen === this.pollGen;
+    if (!live()) return;
 
     try {
       const updates = await this.apiCall('getUpdates', {
@@ -100,6 +104,7 @@ class TelegramBot {
 
       if (updates && updates.length > 0) {
         for (const update of updates) {
+          if (!live()) break; // restarted mid-batch - the new loop picks these up
           this.lastUpdateId = update.update_id;
           try {
             await this.handleUpdate(update);
@@ -112,14 +117,14 @@ class TelegramBot {
       this.consecutiveErrors++;
       const backoff = Math.min(1000 * Math.pow(2, this.consecutiveErrors - 1), this.maxBackoff);
 
-      if (this.polling) {
-        this.pollTimeout = setTimeout(() => this.poll(), backoff);
+      if (live()) {
+        this.pollTimeout = setTimeout(() => this.poll(gen), backoff);
       }
       return;
     }
 
-    if (this.polling) {
-      this.pollTimeout = setTimeout(() => this.poll(), 500);
+    if (live()) {
+      this.pollTimeout = setTimeout(() => this.poll(gen), 500);
     }
   }
 
@@ -639,6 +644,10 @@ class TelegramBot {
       }
       const history = this.userHistory.get(chatId);
 
+      // Only the newest image is kept: every request re-sends the whole history,
+      // and 50 full-size images would sit in memory and go up on each call
+      for (const h of history) delete h.image;
+
       // Add as multimodal content
       history.push({
         role: 'user',
@@ -704,6 +713,9 @@ class TelegramBot {
         }
       }
     } catch (err) {
+      // Drop the failed image turn, or every later message re-sends it and fails too
+      const h = this.userHistory.get(chatId);
+      if (h && h.length && h[h.length - 1].image) h.pop();
       if (thinkingMsg) {
         await this.editMessage(chatId, thinkingMsg.message_id, `Error: ${err.message}`).catch(() => {});
       } else {
@@ -1024,6 +1036,10 @@ class TelegramBot {
       const result = await this.apiCall('sendMessage', payload);
       return result;
     } catch (err) {
+      // Model output often isn't valid Markdown - send it as plain text instead of dropping it
+      if (payload.parse_mode && /parse entities/i.test(err.message)) {
+        return this.sendMessage(chatId, text, { ...opts, parse_mode: undefined });
+      }
       console.log(`[TELEGRAM] sendMessage error: ${err.message}`);
       return null;
     }
@@ -1039,6 +1055,9 @@ class TelegramBot {
     try {
       await this.apiCall('editMessageText', payload);
     } catch (err) {
+      if (payload.parse_mode && /parse entities/i.test(err.message)) {
+        return this.editMessage(chatId, messageId, text, { ...opts, parse_mode: undefined });
+      }
       console.log(`[TELEGRAM] editMessage error: ${err.message}`);
     }
   }

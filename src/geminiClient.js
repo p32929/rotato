@@ -2,6 +2,17 @@ const https = require('https');
 const { URL } = require('url');
 const { resolveKey, maskKey } = require('./keyValues');
 
+
+// Read a (small) upstream response body in full; '' if it fails
+function readBody(stream) {
+  return new Promise((resolve) => {
+    const chunks = [];
+    stream.on('data', (c) => chunks.push(c));
+    stream.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    stream.on('error', () => resolve(''));
+  });
+}
+
 class GeminiClient {
   constructor(keyRotator, baseUrl = 'https://generativelanguage.googleapis.com', proxyManager = null) {
     this.keyRotator = keyRotator;
@@ -23,12 +34,12 @@ class GeminiClient {
 
       try {
         if (streaming) {
-          const response = await this._withProxyRetry(() => this.sendStreamingRequest(method, path, body, cleanHeaders, providedApiKey, true));
+          const response = await this._withProxyRetry((tried) => this.sendStreamingRequest(method, path, body, cleanHeaders, providedApiKey, true, tried));
           console.log(`[GEMINI::${maskedKey}] Response (${response.statusCode}) - streaming`);
           response._keyInfo = { keyUsed: maskedKey, failedKeys: [] };
           return response;
         } else {
-          const response = await this._withProxyRetry(() => this.sendRequest(method, path, body, cleanHeaders, providedApiKey, true));
+          const response = await this._withProxyRetry((tried) => this.sendRequest(method, path, body, cleanHeaders, providedApiKey, true, tried));
           console.log(`[GEMINI::${maskedKey}] Response (${response.statusCode})`);
           response._keyInfo = { keyUsed: maskedKey, failedKeys: [] };
           return response;
@@ -43,7 +54,8 @@ class GeminiClient {
     const requestContext = this.keyRotator.createRequestContext();
     let lastError = null;
     let lastResponse = null;
-    const failedKeys = [];
+    const failedKeys = []; // { key, status, reason, proxy, ms, at } - one log row each
+    const usedProxies = new Set(); // a rotated key never reuses the previous key's proxy
 
     const rotationStatusCodes = customStatusCodes || new Set([429]);
 
@@ -51,18 +63,22 @@ class GeminiClient {
     while ((apiKey = requestContext.getNextKey()) !== null) {
       const maskedKey = this.maskApiKey(apiKey);
 
+      const startedAt = Date.now();
+      const attempt = (status, reason, proxy) => ({ key: maskedKey, status, reason, proxy: proxy || null, ms: Date.now() - startedAt, at: new Date(startedAt).toISOString() });
       console.log(`[GEMINI::${maskedKey}] Attempting ${method} ${path}${streaming ? ' (streaming)' : ''}`);
 
       try {
         if (streaming) {
-          const response = await this._withProxyRetry(() => this.sendStreamingRequest(method, path, body, headers, apiKey, false));
+          const response = await this._withProxyRetry((tried) => this.sendStreamingRequest(method, path, body, headers, apiKey, false, tried), usedProxies);
 
           if (rotationStatusCodes.has(response.statusCode)) {
             console.log(`[GEMINI::${maskedKey}] Status ${response.statusCode} triggers rotation - trying next key`);
-            response.stream.resume();
+            // Keep the error body: if every key fails this is what the caller gets,
+            // and an empty body under the upstream's content-length would hang them
+            const data = await readBody(response.stream);
             requestContext.markKeyAsRateLimited(apiKey);
-            failedKeys.push({ key: maskedKey, status: response.statusCode, reason: 'rate_limited' });
-            lastResponse = { statusCode: response.statusCode, headers: response.headers, data: '' };
+            failedKeys.push(attempt(response.statusCode, 'rate_limited', response.proxyUsed));
+            lastResponse = { statusCode: response.statusCode, headers: response.headers, data, proxyUsed: response.proxyUsed };
             continue;
           }
 
@@ -71,12 +87,12 @@ class GeminiClient {
           response._keyInfo = { keyUsed: maskedKey, failedKeys };
           return response;
         } else {
-          const response = await this._withProxyRetry(() => this.sendRequest(method, path, body, headers, apiKey, false));
+          const response = await this._withProxyRetry((tried) => this.sendRequest(method, path, body, headers, apiKey, false, tried), usedProxies);
 
           if (rotationStatusCodes.has(response.statusCode)) {
             console.log(`[GEMINI::${maskedKey}] Status ${response.statusCode} triggers rotation - trying next key`);
             requestContext.markKeyAsRateLimited(apiKey);
-            failedKeys.push({ key: maskedKey, status: response.statusCode, reason: 'rate_limited' });
+            failedKeys.push(attempt(response.statusCode, 'rate_limited', response.proxyUsed));
             lastResponse = response;
             continue;
           }
@@ -88,7 +104,7 @@ class GeminiClient {
         }
       } catch (error) {
         console.log(`[GEMINI::${maskedKey}] Request failed: ${error.message}`);
-        failedKeys.push({ key: maskedKey, status: null, reason: error.message });
+        failedKeys.push(attempt(null, error.message, error.proxyUsed));
         lastError = error;
         continue;
       }
@@ -100,7 +116,9 @@ class GeminiClient {
     const lastFailedKey = requestContext.getLastFailedKey();
     this.keyRotator.updateLastFailedKey(lastFailedKey);
 
-    if (requestContext.allTriedKeysRateLimited()) {
+    // Some keys rate-limited and others failed outright: the provider's real
+    // answer beats a generic error
+    if (requestContext.allTriedKeysRateLimited() || lastResponse) {
       console.log('[GEMINI] All keys rate limited for this request - returning 429');
       const response = lastResponse || {
         statusCode: 429,
@@ -124,7 +142,7 @@ class GeminiClient {
     throw new Error('All API keys exhausted without clear error');
   }
 
-  _buildRequestOptions(method, path, body, headers, rawKey, useHeader) {
+  _buildRequestOptions(method, path, body, headers, rawKey, useHeader, tried = null) {
     // A full https:// URL (a provider's custom models URL) stands in for the base URL
     const absolute = /^https:\/\//i.test(path || '');
     const baseUrl = absolute ? path : this.baseUrl;
@@ -163,7 +181,9 @@ class GeminiClient {
       ...headers
     };
 
-    if (useHeader) {
+    if (!apiKey) {
+      // A keyless provider: no key on the request
+    } else if (useHeader) {
       finalHeaders['x-goog-api-key'] = apiKey;
     } else {
       url.searchParams.append('key', apiKey);
@@ -184,23 +204,24 @@ class GeminiClient {
 
     // Route through a rotating proxy if one is configured and enabled
     if (this.proxyManager && this.proxyManager.isEnabled()) {
-      const picked = this.proxyManager.pick();
+      const picked = this.proxyManager.pick(tried);
       if (picked) {
         options.agent = picked.agent;
         options._proxyMasked = picked.maskedUrl;
         options._proxyUrl = picked.url;
-        options._proxyStartedAt = Date.now();
         const known = picked.latencyMs != null ? ` (~${picked.latencyMs}ms)` : '';
         console.log(`[GEMINI] Routing request via proxy ${picked.maskedUrl}${known}`);
+      } else {
+        console.log(`[GEMINI] Proxy list is empty - sending this request direct`);
       }
     }
 
     return options;
   }
 
-  sendRequest(method, path, body, headers, apiKey, useHeader = false) {
+  sendRequest(method, path, body, headers, apiKey, useHeader = false, tried = null) {
     return new Promise((resolve, reject) => {
-      const options = this._buildRequestOptions(method, path, body, headers, apiKey, useHeader);
+      const options = this._buildRequestOptions(method, path, body, headers, apiKey, useHeader, tried);
 
       const timeoutMs = this._responseTimeoutFor(options);
       let settled = false;
@@ -222,16 +243,15 @@ class GeminiClient {
         if (req) req.destroy();
         const err = new Error(`Upstream did not respond within ${Math.round(timeoutMs / 1000)}s${via}`);
         err._proxyFailure = !!options._proxyUrl;
+        err.proxyUsed = options._proxyMasked || null;
         reject(err);
       }, timeoutMs);
 
       req = https.request(options, (res) => {
         if (settled) { res.resume(); return; }
-        let data = '';
-
-        res.on('data', (chunk) => {
-          data += chunk;
-        });
+        // Decoded once at the end - per-chunk decoding garbles multi-byte characters
+        const chunks = [];
+        res.on('data', (chunk) => chunks.push(chunk));
 
         res.on('end', () => {
           if (settled) return;
@@ -241,7 +261,8 @@ class GeminiClient {
           resolve({
             statusCode: res.statusCode,
             headers: res.headers,
-            data: data,
+            _proxyBlocked: !!options._proxyUrl && (res.statusCode === 403 || res.statusCode === 407),
+            data: Buffer.concat(chunks).toString('utf8'),
             proxyUsed: options._proxyMasked || null
           });
         });
@@ -255,6 +276,7 @@ class GeminiClient {
         const maskedKey = this.maskApiKey(apiKey);
         console.log(`[GEMINI::${maskedKey}] HTTP request error: ${error.message}`);
         if (options._proxyUrl) error._proxyFailure = true;
+        error.proxyUsed = options._proxyMasked || null;
         reject(error);
       });
 
@@ -267,9 +289,9 @@ class GeminiClient {
     });
   }
 
-  sendStreamingRequest(method, path, body, headers, apiKey, useHeader = false) {
+  sendStreamingRequest(method, path, body, headers, apiKey, useHeader = false, tried = null) {
     return new Promise((resolve, reject) => {
-      const options = this._buildRequestOptions(method, path, body, headers, apiKey, useHeader);
+      const options = this._buildRequestOptions(method, path, body, headers, apiKey, useHeader, tried);
 
       const timeoutMs = this._responseTimeoutFor(options);
       let settled = false;
@@ -291,6 +313,7 @@ class GeminiClient {
         if (req) req.destroy();
         const err = new Error(`Upstream did not start streaming within ${Math.round(timeoutMs / 1000)}s${via}`);
         err._proxyFailure = !!options._proxyUrl;
+        err.proxyUsed = options._proxyMasked || null;
         reject(err);
       }, timeoutMs);
 
@@ -302,6 +325,7 @@ class GeminiClient {
         resolve({
           statusCode: res.statusCode,
           headers: res.headers,
+          _proxyBlocked: !!options._proxyUrl && (res.statusCode === 403 || res.statusCode === 407),
           stream: res,
           proxyUsed: options._proxyMasked || null
         });
@@ -315,6 +339,7 @@ class GeminiClient {
         const maskedKey = this.maskApiKey(apiKey);
         console.log(`[GEMINI::${maskedKey}] HTTP streaming request error: ${error.message}`);
         if (options._proxyUrl) error._proxyFailure = true;
+        error.proxyUsed = options._proxyMasked || null;
         reject(error);
       });
 
@@ -346,8 +371,7 @@ class GeminiClient {
         this.proxyManager.reportFailure(url);
         return;
       }
-      const startedAt = options._proxyStartedAt;
-      this.proxyManager.reportSuccess(url, startedAt ? Date.now() - startedAt : null);
+      this.proxyManager.reportSuccess(url);
     } else {
       // A stall is conclusive - don't leave it in rotation for two more hangs
       this.proxyManager.reportFailure(url, stalled);
@@ -367,21 +391,37 @@ class GeminiClient {
    * entries die constantly. Each attempt re-picks, so it lands on the next
    * fastest proxy - and the dead one has already been benched by then.
    */
-  async _withProxyRetry(send) {
-    let attempt = 0;
+  async _withProxyRetry(send, tried = new Set()) {
+    // Like key rotation, but for proxies: each attempt takes a different random
+    // green proxy (never one this request already tried, across all its keys),
+    // up to maxTries of them.
+    const maxTries = (this.proxyManager && this.proxyManager.maxTries) || 1;
+    // Just after a start the list may still be loading: wait for it, don't go direct
+    if (this.proxyManager) await this.proxyManager.waitForProxies();
+    let attempt = 1;
     for (;;) {
+      const more = () => attempt < maxTries && this.proxyManager && this.proxyManager.isEnabled();
+      let response;
       try {
-        return await send();
+        response = await send(tried);
       } catch (error) {
-        const canRetry = error && error._proxyFailure
-          && this.proxyManager && this.proxyManager.isEnabled()
-          && attempt < GeminiClient.MAX_PROXY_RETRIES;
-        if (!canRetry) throw error;
+        if (!(error && error._proxyFailure && more())) throw error;
+        console.log(`[GEMINI] Proxy attempt ${attempt}/${maxTries} failed - trying the same key through another proxy`);
         attempt += 1;
-        console.log(`[GEMINI] Proxy attempt ${attempt} failed - retrying the same key through another proxy`);
+        continue;
       }
+      // 403/407 through a proxy usually means the provider blocks that IP: try the
+      // next proxy. If they all get it, the provider's answer is passed on.
+      if (response._proxyBlocked && more()) {
+        if (response.stream) response.stream.destroy();
+        console.log(`[GEMINI] Proxy attempt ${attempt}/${maxTries} got HTTP ${response.statusCode} - trying the same key through another proxy`);
+        attempt += 1;
+        continue;
+      }
+      return response;
     }
   }
+
 
   _responseTimeoutFor(options) {
     return options._proxyUrl
@@ -397,7 +437,6 @@ class GeminiClient {
 // A provider can legitimately take a while to answer a large non-streaming
 // completion, so the direct bound is generous. Through a proxy, silence is far
 // more likely to mean a dead proxy than a slow provider.
-GeminiClient.MAX_PROXY_RETRIES = 2;
 GeminiClient.DIRECT_TIMEOUT_MS = 120000;
 GeminiClient.PROXIED_TIMEOUT_MS = 60000;
 

@@ -44,6 +44,7 @@ function resolveKey(raw, baseUrl) {
 /** Mask the token; show only the start of each value so keys stay tellable apart. */
 function maskKey(raw) {
   const { token, values } = parseKey(raw);
+  if (!token && !Object.keys(values).length) return 'no API key'; // a keyless provider
   const masked = !token || token.length < 8 ? '***' : token.substring(0, 4) + '...' + token.substring(token.length - 4);
   const names = Object.keys(values);
   if (names.length === 0) return masked;

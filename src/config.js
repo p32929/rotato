@@ -79,7 +79,8 @@ class Config {
     // Log each provider
     for (const [providerName, config] of this.providers.entries()) {
       const maskedKeys = config.keys.map(key => this.maskApiKey(key));
-      console.log(`[CONFIG] Provider '${providerName}' (${config.apiType}): ${config.keys.length} keys [${maskedKeys.join(', ')}] → ${config.baseUrl}`);
+      const keys = config.keyless ? 'no API key' : `${config.keys.length} keys [${maskedKeys.join(', ')}]`;
+      console.log(`[CONFIG] Provider '${providerName}' (${config.apiType}): ${keys} → ${config.baseUrl}`);
     }
 
     if (this.providers.size === 0) {
@@ -156,104 +157,65 @@ class Config {
     // Parse {API_TYPE}_{PROVIDER}_API_KEYS, {API_TYPE}_{PROVIDER}_BASE_URL, and {API_TYPE}_{PROVIDER}_ACCESS_KEY format
     const providerConfigs = new Map();
 
-    const defaultConfig = () => ({ apiType: null, keys: [], allKeys: [], baseUrl: null, accessKey: null, defaultModel: null, modelsUrl: null, disabled: false, proxy: null });
+    const defaultConfig = () => ({ apiType: null, named: false, keyless: false, keys: [], allKeys: [], baseUrl: null, accessKey: null, defaultModel: null, modelsUrl: null, disabled: false, proxy: null });
+
+    // {TYPE}_{NAME}_{SUFFIX}, or {TYPE}_{SUFFIX} for the legacy single-provider
+    // form. Anchored on the suffix so a name like "proxyapi" can't be mistaken for it.
+    const SUFFIX_RE = /^([^_]+)(?:_(.+?))?_(API_KEYS|BASE_URL|ACCESS_KEY|DEFAULT_MODEL|MODELS_URL|PROXY|DISABLED)$/;
+    const typeOf = new Map(); // provider -> the API type it was first seen with
 
     for (const [key, value] of Object.entries(envVars)) {
-      if (key.endsWith('_API_KEYS') && value) {
-        const parts = key.replace('_API_KEYS', '').split('_');
-        if (parts.length >= 1) {
-          const apiType = parts[0].toLowerCase();
-          const provider = parts.length === 1 ? apiType : parts.slice(1).join('_').toLowerCase();
+      const m = key.match(SUFFIX_RE);
+      if (!m || !value) continue;
+      const apiType = m[1].toLowerCase();
+      const provider = (m[2] || m[1]).toLowerCase();
+      const suffix = m[3];
 
-          if (!providerConfigs.has(provider)) {
-            providerConfigs.set(provider, defaultConfig());
-          }
+      // Providers are keyed by name, so OPENAI_FOO and GEMINI_FOO would merge into one
+      if (typeOf.has(provider) && typeOf.get(provider) !== apiType) {
+        console.log(`[CONFIG] Skipping ${key}: provider '${provider}' is already defined as ${typeOf.get(provider)}`);
+        continue;
+      }
+      typeOf.set(provider, apiType);
 
-          // Parse keys with disabled state (~ prefix)
-          const { allKeys, enabledKeys } = this.parseApiKeysWithState(value);
-          providerConfigs.get(provider).keys = enabledKeys;
-          providerConfigs.get(provider).allKeys = allKeys;
-          providerConfigs.get(provider).apiType = apiType;
-        }
-      } else if (key.endsWith('_BASE_URL') && value) {
-        const parts = key.replace('_BASE_URL', '').split('_');
-        if (parts.length >= 1) {
-          const apiType = parts[0].toLowerCase();
-          const provider = parts.length === 1 ? apiType : parts.slice(1).join('_').toLowerCase();
+      if (!providerConfigs.has(provider)) {
+        providerConfigs.set(provider, defaultConfig());
+      }
+      const cfg = providerConfigs.get(provider);
+      cfg.apiType = apiType;
+      if (m[2]) cfg.named = true;
 
-          if (!providerConfigs.has(provider)) {
-            providerConfigs.set(provider, defaultConfig());
-          }
-
-          providerConfigs.get(provider).baseUrl = value.trim();
-        }
-      } else if (key.endsWith('_ACCESS_KEY') && value) {
-        const parts = key.replace('_ACCESS_KEY', '').split('_');
-        if (parts.length >= 1) {
-          const apiType = parts[0].toLowerCase();
-          const provider = parts.length === 1 ? apiType : parts.slice(1).join('_').toLowerCase();
-
-          if (!providerConfigs.has(provider)) {
-            providerConfigs.set(provider, defaultConfig());
-          }
-
-          providerConfigs.get(provider).accessKey = value.trim();
-        }
-      } else if (key.endsWith('_DEFAULT_MODEL') && value) {
-        const parts = key.replace('_DEFAULT_MODEL', '').split('_');
-        if (parts.length >= 1) {
-          const apiType = parts[0].toLowerCase();
-          const provider = parts.length === 1 ? apiType : parts.slice(1).join('_').toLowerCase();
-
-          if (!providerConfigs.has(provider)) {
-            providerConfigs.set(provider, defaultConfig());
-          }
-
-          providerConfigs.get(provider).defaultModel = value.trim();
-        }
-      } else if (key.endsWith('_MODELS_URL') && value) {
+      if (suffix === 'API_KEYS') {
+        // Parse keys with disabled state (~ prefix)
+        const { allKeys, enabledKeys } = this.parseApiKeysWithState(value);
+        cfg.keys = enabledKeys;
+        cfg.allKeys = allKeys;
+      } else if (suffix === 'BASE_URL') {
+        cfg.baseUrl = value.trim();
+      } else if (suffix === 'ACCESS_KEY') {
+        cfg.accessKey = value.trim();
+      } else if (suffix === 'DEFAULT_MODEL') {
+        cfg.defaultModel = value.trim();
+      } else if (suffix === 'MODELS_URL') {
         // Where this provider lists its models, when that isn't {base}/models
-        const parts = key.replace('_MODELS_URL', '').split('_');
-        if (parts.length >= 1) {
-          const apiType = parts[0].toLowerCase();
-          const provider = parts.length === 1 ? apiType : parts.slice(1).join('_').toLowerCase();
-
-          if (!providerConfigs.has(provider)) {
-            providerConfigs.set(provider, defaultConfig());
-          }
-
-          providerConfigs.get(provider).modelsUrl = value.trim();
-        }
-      } else if (key.endsWith('_PROXY') && value) {
-        const parts = key.replace('_PROXY', '').split('_');
-        if (parts.length >= 1) {
-          const apiType = parts[0].toLowerCase();
-          const provider = parts.length === 1 ? apiType : parts.slice(1).join('_').toLowerCase();
-
-          if (!providerConfigs.has(provider)) {
-            providerConfigs.set(provider, defaultConfig());
-          }
-
-          providerConfigs.get(provider).proxy = (value.trim().toLowerCase() === 'true');
-        }
-      } else if (key.endsWith('_DISABLED') && value) {
-        const parts = key.replace('_DISABLED', '').split('_');
-        if (parts.length >= 1) {
-          const apiType = parts[0].toLowerCase();
-          const provider = parts.length === 1 ? apiType : parts.slice(1).join('_').toLowerCase();
-
-          if (!providerConfigs.has(provider)) {
-            providerConfigs.set(provider, defaultConfig());
-          }
-
-          providerConfigs.get(provider).disabled = (value.trim().toLowerCase() === 'true');
-        }
+        cfg.modelsUrl = value.trim();
+      } else if (suffix === 'PROXY') {
+        cfg.proxy = (value.trim().toLowerCase() === 'true');
+      } else if (suffix === 'DISABLED') {
+        cfg.disabled = (value.trim().toLowerCase() === 'true');
       }
     }
 
     // Add valid providers to the main providers map
     for (const [provider, config] of providerConfigs.entries()) {
-      if (config.allKeys.length > 0) {
+      // No keys at all but its own base URL: a keyless provider (added after its
+      // /models answered without a key). One empty "key" lets it share the
+      // rotation path, proxies included - requests just carry no auth.
+      if (config.allKeys.length === 0 && config.named && config.baseUrl) {
+        config.keyless = true;
+        config.keys = [''];
+      }
+      if (config.allKeys.length > 0 || config.keyless) {
         // Set default base URLs if not specified
         if (!config.baseUrl) {
           if (config.apiType === 'openai') {
@@ -318,7 +280,12 @@ class Config {
     // is somewhere for proxies to come from.
     this.proxyEnabled = proxied.length > 0 && (this.proxyUrls.length > 0 || this.proxyAutoFetch);
 
-    this.proxyManager = new ProxyManager(this.proxyUrls, this.proxyEnabled);
+    // Green/red line and tries per request, both editable in the Proxy tab
+    const int = (v, min, max) => { const n = parseInt(v, 10); return n >= min && n <= max ? n : undefined; };
+    this.proxyManager = new ProxyManager(this.proxyUrls, this.proxyEnabled, {
+      goodMs: int(envVars.PROXY_GOOD_MS, 100, 30000),
+      maxTries: int(envVars.PROXY_MAX_TRIES, 1, 50),
+    });
 
     if (proxied.length === 0) {
       if (this.proxyUrls.length > 0) {

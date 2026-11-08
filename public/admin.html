@@ -542,23 +542,26 @@
             #logs .ds-table, #logs .ds-table tbody { display: block; }
             #logs .ds-table tbody tr {
                 display: grid;
-                grid-template-columns: auto minmax(0, 1fr) auto auto;
-                grid-template-areas: "status provider provider time" "req req req req" "key key lat view" "proxy proxy proxy proxy";
+                grid-template-columns: auto auto minmax(0, 1fr) auto auto;
+                grid-template-areas: "status provider model model time" "req req req req req" "key key key lat view" "proxy proxy proxy proxy proxy";
                 gap: 0.25rem 0.5rem; align-items: center;
                 padding: 0.625rem 0.75rem;
                 border-bottom: 1px solid var(--border);
             }
             /* "direct" on every row is noise; only show the proxy when one was used */
-            #logs .ds-table tbody td:nth-child(7):has(span[title^="Sent directly"]) { display: none; }
+            #logs .ds-table tbody td:nth-child(8):has(span[title^="Sent directly"]) { display: none; }
             #logs .ds-table tbody td { padding: 0; white-space: normal; min-width: 0; }
             #logs .ds-table tbody td:nth-child(1) { grid-area: time; text-align: right; }
             #logs .ds-table tbody td:nth-child(2) { grid-area: req; overflow-wrap: anywhere; }
             #logs .ds-table tbody td:nth-child(3) { grid-area: provider; }
-            #logs .ds-table tbody td:nth-child(4) { grid-area: status; }
-            #logs .ds-table tbody td:nth-child(5) { grid-area: lat; text-align: right; }
-            #logs .ds-table tbody td:nth-child(6) { grid-area: key; overflow-wrap: anywhere; }
-            #logs .ds-table tbody td:nth-child(7) { grid-area: proxy; }
-            #logs .ds-table tbody td:nth-child(8) { grid-area: view; }
+            #logs .ds-table tbody td:nth-child(4) { grid-area: model; }
+            #logs .ds-table tbody td:nth-child(4) span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+            #logs .ds-table tbody td:nth-child(4):has(> .text-muted-foreground) { display: none; }
+            #logs .ds-table tbody td:nth-child(5) { grid-area: status; }
+            #logs .ds-table tbody td:nth-child(6) { grid-area: lat; text-align: right; }
+            #logs .ds-table tbody td:nth-child(7) { grid-area: key; overflow-wrap: anywhere; }
+            #logs .ds-table tbody td:nth-child(8) { grid-area: proxy; }
+            #logs .ds-table tbody td:nth-child(9) { grid-area: view; }
             #logs .ds-table tbody td:empty { display: none; }
             #logs .ds-table tbody .lat-track { display: none; }
         }
@@ -570,6 +573,16 @@
             padding: var(--space-3) 0;
             background: linear-gradient(to top, var(--background) 70%, transparent);
         }
+
+        /* Behind an open dialog the page stays put: no scrolling, and the scrollbar's
+           space is always reserved so it appearing can't shift a centred dialog */
+        html { scrollbar-gutter: stable; }
+        html:has(.ds-overlay:not(.hidden)), html:has(#confirmDialog:not(.hidden)) { overflow: hidden; }
+
+        /* Logs: long model names get trimmed, full name on hover */
+        .log-model > span, .log-key { display: inline-block; max-width: 11rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; font-size: var(--text-xs); }
+
+        .log-request { min-width: 10rem; }
 
         /* Key check results */
         .key-status { width: 0.5rem; height: 0.5rem; border-radius: var(--radius-full); flex-shrink: 0; }
@@ -1171,9 +1184,6 @@
                             <option value="direct">Direct</option>
                         </select>
                         <div class="log-actions flex items-center gap-2">
-                        <label class="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none px-1" title="Auto-refresh every 5s">
-                            <input type="checkbox" id="logAutoRefresh" onchange="toggleLogAutoRefresh()" class="w-3.5 h-3.5"> Live
-                        </label>
                         <button onclick="handleRefreshLogs(this)" class="btn btn-secondary btn-sm" title="Refresh logs">
                             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
@@ -1205,6 +1215,7 @@
                                         <th class="sortable" onclick="setLogSort('time')" data-sort="time">Time <span class="sort-ind"></span></th>
                                         <th>Request</th>
                                         <th class="sortable" onclick="setLogSort('provider')" data-sort="provider">Provider <span class="sort-ind"></span></th>
+                                        <th class="sortable" onclick="setLogSort('model')" data-sort="model">Model <span class="sort-ind"></span></th>
                                         <th class="sortable" onclick="setLogSort('status')" data-sort="status">Status <span class="sort-ind"></span></th>
                                         <th class="sortable text-right" onclick="setLogSort('latency')" data-sort="latency">Latency <span class="sort-ind"></span></th>
                                         <th>Key</th>
@@ -1243,7 +1254,7 @@
                             <div class="flex items-start justify-between gap-4">
                                 <div>
                                     <div class="text-xs font-medium text-foreground">Automatically fetch free proxies</div>
-                                    <p class="text-xs text-muted-foreground mt-1">Pulls the SOCKS4 and SOCKS5 lists from <span class="text-foreground">monosans/proxy-list</span>, tests every entry against your provider, and keeps only the ones that answer. Re-checked every 30 minutes, and again whenever they have all stopped responding.</p>
+                                    <p class="text-xs text-muted-foreground mt-1">Pulls the SOCKS5, SOCKS4 and HTTP lists from <span class="text-foreground">monosans/proxy-list</span> and <span class="text-foreground">proxifly/free-proxy-list</span> (~10k entries), tests every entry against your provider, and keeps the ones that answer. The list is re-fetched every 30 minutes, and while rotato is idle every proxy is re-checked every couple of minutes.</p>
                                     <p class="text-xs text-muted-foreground mt-1">These are run by strangers. Your API keys stay encrypted inside the TLS tunnel, but whoever runs the proxy can see which hosts you reach and can stall or drop traffic.</p>
                                 </div>
                                 <label class="toggle-switch flex-shrink-0" title="Automatically fetch free proxies">
@@ -1264,7 +1275,7 @@
                             </div>
 
                             <div class="pt-3 border-t border-border">
-                                <label class="block text-xs font-medium text-muted-foreground mb-1">Your own proxy URLs <span class="font-normal">(one per line, rotated round-robin)</span></label>
+                                <label class="block text-xs font-medium text-muted-foreground mb-1">Your own proxy URLs <span class="font-normal">(one per line, picked at random along with the rest)</span></label>
                                 <textarea
                                     id="proxyUrls"
                                     rows="5"
@@ -1276,6 +1287,33 @@
                         </div>
                     </div>
 
+                    <!-- How a proxy is chosen -->
+                    <div class="section" style="margin:0">
+                        <h3 class="text-sm font-medium text-foreground mb-3 flex items-center gap-2">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                            </svg>
+                            How a proxy is picked
+                        </h3>
+                        <p class="text-xs text-muted-foreground mb-3">Each request gets a random <span style="color:var(--success)">green</span> proxy that no other request is using, and none is reused until all the others have had a turn. If one fails, the same key moves on to the next proxy, and a rotated key gets a different one. With too few green proxies a request reuses one or takes the fastest red one — it only goes direct when the list is empty.</p>
+                        <div class="flex flex-wrap gap-4">
+                            <div>
+                                <label for="proxyGoodMs" class="block text-xs font-medium text-muted-foreground mb-1">Green below</label>
+                                <div class="flex items-center gap-2">
+                                    <input type="number" id="proxyGoodMs" class="input-field w-28 px-3 py-2 rounded-md text-sm tabular-nums" min="100" max="30000" step="50" value="1000">
+                                    <span class="text-xs text-muted-foreground">ms — slower ones show red and aren't used</span>
+                                </div>
+                            </div>
+                            <div>
+                                <label for="proxyMaxTries" class="block text-xs font-medium text-muted-foreground mb-1">Proxies to try per request</label>
+                                <div class="flex items-center gap-2">
+                                    <input type="number" id="proxyMaxTries" class="input-field w-28 px-3 py-2 rounded-md text-sm tabular-nums" min="1" max="50" step="1" value="5">
+                                    <span class="text-xs text-muted-foreground">then the next API key is tried</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- Which providers route through the proxy -->
                     <div class="section" style="margin:0">
                         <h3 class="text-sm font-medium text-foreground mb-3 flex items-center gap-2">
@@ -1283,6 +1321,7 @@
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
                             </svg>
                             Providers using the proxy
+                            <button id="proxySelectAllBtn" type="button" onclick="toggleAllProxyProviders()" class="btn btn-secondary btn-sm ml-auto hidden">Select all</button>
                         </h3>
                         <div class="space-y-3">
                             <p class="text-xs text-muted-foreground">Proxying is per provider. Anything left off connects directly, so you can route only the provider that is rate-limiting you.</p>
@@ -1334,6 +1373,7 @@
                                 <a href="https://spys.one/en/socks-proxy-list/" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">spys.one</a>
                                 <a href="https://github.com/TheSpeedX/PROXY-List" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">TheSpeedX/PROXY-List</a>
                                 <a href="https://github.com/monosans/proxy-list" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">monosans/proxy-list</a>
+                                <a href="https://github.com/proxifly/free-proxy-list" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">proxifly/free-proxy-list</a>
                             </div>
                         </div>
                     </div>
@@ -1677,7 +1717,7 @@
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.25" d="M12 5v14M5 12h14"/></svg>
                         Add another key
                     </button>
-                    <p class="field-hint">More keys means more rotation room when one gets rate-limited.</p>
+                    <p class="field-hint">More keys means more rotation room when one gets rate-limited. Leave it empty for a provider that needs no key — it's added only if its models list answers without one.</p>
                 </div>
                 <div id="newProviderPreview" class="p-3 bg-muted/40 border border-border rounded-md text-xs text-muted-foreground">
                     <span id="previewText">Will create the default OpenAI provider</span>
@@ -1688,6 +1728,21 @@
                 <button onclick="closeAddProviderDialog()" class="btn btn-secondary btn-md">Cancel</button>
                 <button onclick="addNewProvider()" class="btn btn-primary btn-md">Test keys &amp; add</button>
             </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Test through the proxy or directly? -->
+    <div id="testRouteDialog" class="ds-overlay hidden fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-modal" onclick="if(event.target===this)answerTestRoute(null)" role="dialog" aria-modal="true" aria-labelledby="testRouteTitle">
+        <div class="ds-dialog-panel bg-card border border-border rounded-xl w-full max-w-md shadow-xl">
+            <div class="px-5 pt-4 pb-3 border-b border-border">
+                <h3 id="testRouteTitle" class="text-base font-semibold text-foreground">Test through the proxy?</h3>
+                <p id="testRouteMessage" class="text-xs text-muted-foreground mt-1"></p>
+            </div>
+            <div class="flex flex-wrap items-center justify-end gap-2 px-5 py-3">
+                <button onclick="answerTestRoute(null)" class="btn btn-ghost btn-md mr-auto">Cancel</button>
+                <button onclick="answerTestRoute('direct')" class="btn btn-secondary btn-md">Directly</button>
+                <button id="testRouteProxyBtn" onclick="answerTestRoute('proxy')" class="btn btn-primary btn-md">Through the proxy</button>
             </div>
         </div>
     </div>
@@ -1990,7 +2045,7 @@
                 // Add dismiss button for each notification
                 div.innerHTML = `
                     ${notification.iconSvg}
-                    <span class="flex-1">${notification.message}</span>
+                    <span class="flex-1">${escapeHtml(notification.message)}</span>
                     <span class="text-xs opacity-75">${new Date(notification.timestamp).toLocaleTimeString()}</span>
                     <button onclick="hideNotification(${notification.id})" class="flex-shrink-0 text-muted-foreground hover:text-foreground transition-colors p-1" title="Dismiss">
                         <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2128,7 +2183,25 @@
         }
 
         (function installPendingIndicator() {
-            const nativeFetch = window.fetch.bind(window);
+            const rawFetch = window.fetch.bind(window);
+
+            // Every admin call passes through here, so two cross-cutting rules live here:
+            // an expired session goes back to the login screen, and a provider save that
+            // failed reloads the settings - the handlers change their local copy before
+            // saving, and a stale copy would otherwise be written by the next save.
+            const afterFetch = (input, init, response) => {
+                const url = typeof input === 'string' ? input : (input && input.url) || '';
+                const method = ((init && init.method) || 'GET').toUpperCase();
+                if (response && response.status === 401 && url.startsWith('/admin/api/')) {
+                    endSession('Your session ended — log in again.');
+                } else if (method === 'POST' && url === '/admin/api/env' && !(response && response.ok)) {
+                    setTimeout(() => loadEnvVars(), 0);
+                }
+            };
+            const nativeFetch = (input, init) => rawFetch(input, init).then(
+                (response) => { afterFetch(input, init, response); return response; },
+                (error) => { afterFetch(input, init, null); throw error; }
+            );
 
             window.fetch = function (input, init) {
                 const url = typeof input === 'string' ? input : (input && input.url) || '';
@@ -2238,10 +2311,8 @@
                     }
                 } else {
                     // Show error with attempts remaining if available
+                    // The server's message already says how many attempts are left
                     errorDiv.textContent = data.error || 'Invalid password';
-                    if (data.attemptsRemaining !== undefined) {
-                        errorDiv.textContent += ` (${data.attemptsRemaining} attempt(s) remaining)`;
-                    }
                     errorDiv.classList.remove('hidden');
                 }
             } catch (error) {
@@ -2295,10 +2366,23 @@
             } catch (error) {
                 console.log('Logout request failed, but continuing with local logout');
             }
-            
+            endSession();
+        }
+
+        // Back to the login screen, with nothing left polling in the background
+        function endSession(message) {
+            if (_statusTimer) { clearInterval(_statusTimer); _statusTimer = null; }
+            if (_logAutoRefreshTimer) { clearInterval(_logAutoRefreshTimer); _logAutoRefreshTimer = null; }
+            stopProxyProgressPolling();
+            stopProxyLiveRefresh();
             document.getElementById('loginForm').classList.remove('hidden');
             document.getElementById('adminPanel').classList.add('hidden');
             document.getElementById('password').value = '';
+            const errorDiv = document.getElementById('loginError');
+            if (message && errorDiv) {
+                errorDiv.textContent = message;
+                errorDiv.classList.remove('hidden');
+            }
         }
         
         // Environment variables functionality
@@ -2309,6 +2393,7 @@
                     fetch('/admin/api/key-usage').catch(() => ({ ok: false })),
                     fetch('/admin/api/telegram').catch(() => ({ ok: false }))
                 ]);
+                if (!envResponse.ok) return; // keep what we have; a 401 already sent us to login
                 envVars = await envResponse.json();
                 if (usageResponse.ok) {
                     keyUsageData = await usageResponse.json();
@@ -2341,6 +2426,16 @@
 
         function saveExpandedProviders() {
             try { localStorage.setItem('rotato.expandedProviders', JSON.stringify([...expandedProviders])); } catch { /* private mode */ }
+        }
+
+        // A renamed provider keeps its place, open/closed state, test dots and model list
+        function carryProviderState(oldPk, newPk, oldName, newName) {
+            if (_providerOrder) _providerOrder = _providerOrder.map(k => k === oldPk ? newPk : k);
+            if (expandedProviders.delete(oldPk)) { expandedProviders.add(newPk); saveExpandedProviders(); }
+            for (const [k, v] of [...keyTestResults]) {
+                if (k.startsWith(oldPk + '|')) { keyTestResults.delete(k); keyTestResults.set(newPk + k.slice(oldPk.length), v); }
+            }
+            if (modelsCache.has(oldName)) { modelsCache.set(newName, modelsCache.get(oldName)); modelsCache.delete(oldName); }
         }
 
         function setProviderExpanded(pk, open) {
@@ -2409,6 +2504,26 @@
             updateToggleAllButton();
         }
 
+        const PROVIDER_VAR_RE = /^([^_]+)_(.+?)_(API_KEYS|BASE_URL|MODELS_URL|ACCESS_KEY|DEFAULT_MODEL|MODEL_HISTORY|DISABLED|PROXY)$/;
+
+        function providerNameTaken(name) {
+            const n = name.toUpperCase();
+            return Object.keys(envVars).some(k => {
+                const m = k.match(PROVIDER_VAR_RE);
+                return m && (m[3] === 'API_KEYS' || m[3] === 'BASE_URL') && m[2].toUpperCase() === n; // keyless ones have no keys
+            });
+        }
+
+        // This provider's own settings only - a plain prefix match on OPENAI_FOO_
+        // would also catch provider "foo_bar"
+        function providerVarKeys(apiType, providerName) {
+            const t = apiType.toUpperCase(), n = providerName.toUpperCase();
+            return Object.keys(envVars).filter(k => {
+                const m = k.match(PROVIDER_VAR_RE);
+                return m && m[1].toUpperCase() === t && m[2].toUpperCase() === n;
+            });
+        }
+
         // Remembers provider display order for the current page session (see sorting below).
         // Null on a fresh load -> providers get sorted enabled-first, A–Z, then.
         let _providerOrder = null;
@@ -2419,140 +2534,29 @@
             // Group environment variables by provider
             const providers = {};
             
+            // {TYPE}_{NAME}_{SUFFIX}: split on the first underscore and anchor the
+            // suffix, so names with underscores ("foo_bar") parse the same everywhere
             for (const [key, value] of Object.entries(envVars)) {
-                if (key.endsWith('_API_KEYS') && value) {
-                    // First try to match the pattern APITYPE_PROVIDERNAME_API_KEYS
-                    // We need to split only on the FIRST underscore to preserve provider names with underscores
-                    const keyWithoutSuffix = key.replace('_API_KEYS', '');
-                    const firstUnderscoreIndex = keyWithoutSuffix.indexOf('_');
-
-                    if (firstUnderscoreIndex > 0) {
-                        const apiType = keyWithoutSuffix.substring(0, firstUnderscoreIndex).toLowerCase();
-                        const providerName = keyWithoutSuffix.substring(firstUnderscoreIndex + 1).toLowerCase();
-                        const providerKey = `${apiType}_${providerName}`;
-                        
-                        if (!providers[providerKey]) {
-                            providers[providerKey] = {
-                                name: providerName,
-                                apiType: apiType,
-                                keys: [],
-                                baseUrl: '',
-                                accessKey: '',
-                                defaultModel: '',
-                                modelHistory: []
-                            };
-                        }
-                        const rawKeys = value.split(',').map(k => k.trim()).filter(k => k);
-                        providers[providerKey].keys = rawKeys.map(k => {
-                            if (k.startsWith('~')) {
-                                return { key: k.substring(1), disabled: true };
-                            }
-                            return { key: k, disabled: false };
-                        });
-                    }
-                } else if (key.endsWith('_DISABLED') && value) {
-                    const keyWithoutSuffix = key.replace('_DISABLED', '');
-                    const firstUnderscoreIndex = keyWithoutSuffix.indexOf('_');
-                    if (firstUnderscoreIndex > 0) {
-                        const apiType = keyWithoutSuffix.substring(0, firstUnderscoreIndex).toLowerCase();
-                        const providerName = keyWithoutSuffix.substring(firstUnderscoreIndex + 1).toLowerCase();
-                        const providerKey = `${apiType}_${providerName}`;
-                        if (!providers[providerKey]) {
-                            providers[providerKey] = { name: providerName, apiType: apiType, keys: [], baseUrl: '', accessKey: '', defaultModel: '', modelHistory: [] };
-                        }
-                        providers[providerKey].disabled = (value.trim().toLowerCase() === 'true');
-                    }
-                } else if (key.endsWith('_BASE_URL') && value) {
-                    const match = key.match(/^(.+)_(.+)_BASE_URL$/);
-                    if (match && match.length >= 3) {
-                        const apiType = match[1].toLowerCase();
-                        const providerName = match[2].toLowerCase();
-                        const providerKey = `${apiType}_${providerName}`;
-                        
-                        if (!providers[providerKey]) {
-                            providers[providerKey] = {
-                                name: providerName,
-                                apiType: apiType,
-                                keys: [],
-                                baseUrl: '',
-                                accessKey: '',
-                                defaultModel: '',
-                                modelHistory: []
-                            };
-                        }
-                        providers[providerKey].baseUrl = value;
-                    }
-                } else if (key.endsWith('_MODELS_URL') && value) {
-                    const match = key.match(/^(.+?)_(.+)_MODELS_URL$/);
-                    if (match) {
-                        const providerKey = `${match[1].toLowerCase()}_${match[2].toLowerCase()}`;
-                        if (!providers[providerKey]) {
-                            providers[providerKey] = { name: match[2].toLowerCase(), apiType: match[1].toLowerCase(), keys: [], baseUrl: '', accessKey: '', defaultModel: '', modelHistory: [] };
-                        }
-                        providers[providerKey].modelsUrl = value;
-                    }
-                } else if (key.endsWith('_ACCESS_KEY') && value) {
-                    const match = key.match(/^(.+)_(.+)_ACCESS_KEY$/);
-                    if (match && match.length >= 3) {
-                        const apiType = match[1].toLowerCase();
-                        const providerName = match[2].toLowerCase();
-                        const providerKey = `${apiType}_${providerName}`;
-
-                        if (!providers[providerKey]) {
-                            providers[providerKey] = {
-                                name: providerName,
-                                apiType: apiType,
-                                keys: [],
-                                baseUrl: '',
-                                accessKey: '',
-                                defaultModel: '',
-                                modelHistory: []
-                            };
-                        }
-                        providers[providerKey].accessKey = value;
-                    }
-                } else if (key.endsWith('_DEFAULT_MODEL') && value) {
-                    // Extract API_TYPE and PROVIDER from key
-                    const parts = key.replace('_DEFAULT_MODEL', '').split('_');
-                    if (parts.length < 2) continue;
-
-                    const apiType = parts[0].toLowerCase();
-                    const providerName = parts.slice(1).join('_').toLowerCase();
-                    const providerKey = `${apiType}_${providerName}`;
-
-                    if (!providers[providerKey]) {
-                        providers[providerKey] = {
-                            name: providerName,
-                            apiType: apiType,
-                            keys: [],
-                            baseUrl: '',
-                            accessKey: '',
-                            defaultModel: '',
-                            modelHistory: []
-                        };
-                    }
-                    providers[providerKey].defaultModel = value;
-                } else if (key.endsWith('_MODEL_HISTORY') && value) {
-                    // Extract API_TYPE and PROVIDER from key
-                    const parts = key.replace('_MODEL_HISTORY', '').split('_');
-                    if (parts.length < 2) continue;
-
-                    const apiType = parts[0].toLowerCase();
-                    const providerName = parts.slice(1).join('_').toLowerCase();
-                    const providerKey = `${apiType}_${providerName}`;
-
-                    if (!providers[providerKey]) {
-                        providers[providerKey] = {
-                            name: providerName,
-                            apiType: apiType,
-                            keys: [],
-                            baseUrl: '',
-                            accessKey: '',
-                            defaultModel: '',
-                            modelHistory: []
-                        };
-                    }
-                    providers[providerKey].modelHistory = value.split(',').map(m => m.trim()).filter(m => m);
+                const m = value && key.match(PROVIDER_VAR_RE);
+                if (!m) continue;
+                const apiType = m[1].toLowerCase();
+                const providerName = m[2].toLowerCase();
+                const providerKey = `${apiType}_${providerName}`;
+                if (!providers[providerKey]) {
+                    providers[providerKey] = { name: providerName, apiType: apiType, keys: [], baseUrl: '', accessKey: '', defaultModel: '', modelHistory: [] };
+                }
+                const p = providers[providerKey];
+                switch (m[3]) {
+                    case 'API_KEYS':
+                        p.keys = value.split(',').map(k => k.trim()).filter(k => k)
+                            .map(k => k.startsWith('~') ? { key: k.substring(1), disabled: true } : { key: k, disabled: false });
+                        break;
+                    case 'DISABLED': p.disabled = (value.trim().toLowerCase() === 'true'); break;
+                    case 'BASE_URL': p.baseUrl = value; break;
+                    case 'MODELS_URL': p.modelsUrl = value; break;
+                    case 'ACCESS_KEY': p.accessKey = value; break;
+                    case 'DEFAULT_MODEL': p.defaultModel = value; break;
+                    case 'MODEL_HISTORY': p.modelHistory = value.split(',').map(x => x.trim()).filter(x => x); break;
                 }
             }
 
@@ -2677,7 +2681,7 @@
                                     ${isProviderDisabled ? '<span class="badge badge-error">Off</span>' : ''}
                                 </div>
                                 <p class="text-xs text-muted-foreground mt-0.5 truncate">
-                                    <span class="tabular-nums">${enabledKeyCount}/${totalKeyCount}</span> keys on<span id="providerTest_${pk}">${providerTestSummaryHtml(pk, provider.keys.map(k => k.key))}</span><span class="opacity-50"> · </span><span class="tabular-nums">${requestCount}</span> request${requestCount === 1 ? '' : 's'}${provider.defaultModel ? `<span class="opacity-50"> · </span><span class="font-mono">${escapeHtml(provider.defaultModel)}</span>` : ''}
+                                    ${totalKeyCount ? `<span class="tabular-nums">${enabledKeyCount}/${totalKeyCount}</span> keys on` : 'no API key'}<span id="providerTest_${pk}">${providerTestSummaryHtml(pk, provider.keys.map(k => k.key))}</span><span class="opacity-50"> · </span><span class="tabular-nums">${requestCount}</span> request${requestCount === 1 ? '' : 's'}${provider.defaultModel ? `<span class="opacity-50"> · </span><span class="font-mono">${escapeHtml(provider.defaultModel)}</span>` : ''}
                                 </p>
                             </div>
                             <div class="flex items-center gap-1.5 flex-shrink-0">
@@ -2731,7 +2735,7 @@
                                         <input
                                             type="text"
                                             id="baseUrl_${provider.apiType}_${provider.name}"
-                                            value="${provider.baseUrl || ''}"
+                                            value="${escapeHtml(provider.baseUrl || '')}"
                                             data-original="${provider.baseUrl || ''}"
                                             class="input-field w-full px-3 py-2 pr-16 text-xs rounded transition-colors font-mono"
                                             placeholder="Provider default"
@@ -2819,7 +2823,7 @@
                                         <input
                                             type="text"
                                             id="accessKey_${provider.apiType}_${provider.name}"
-                                            value="${provider.accessKey || ''}"
+                                            value="${escapeHtml(provider.accessKey || '')}"
                                             data-original="${provider.accessKey || ''}"
                                             class="input-field w-full px-3 py-2 pr-28 text-xs rounded transition-colors font-mono"
                                             placeholder="None, open to anyone"
@@ -2863,7 +2867,7 @@
                                         <input
                                             type="text"
                                             id="defaultModel_${provider.apiType}_${provider.name}"
-                                            value="${provider.defaultModel || ''}"
+                                            value="${escapeHtml(provider.defaultModel || '')}"
                                             data-original="${provider.defaultModel || ''}"
                                             class="input-field w-full px-3 py-2 pr-20 text-xs rounded transition-colors"
                                             placeholder="${provider.apiType === 'openai' ? 'e.g., gpt-4o-mini' : 'e.g., gemini-1.5-flash'}"
@@ -2895,13 +2899,13 @@
                                             ${(provider.modelHistory && provider.modelHistory.length > 0) ? provider.modelHistory.map(model => `
                                                 <div class="flex items-center justify-between px-3 py-2 text-xs hover:bg-secondary transition-colors group">
                                                     <button
-                                                        onclick="selectModelFromHistory('${provider.apiType}', '${provider.name}', '${model.replace(/'/g, "\\'")}')"
+                                                        onclick="selectModelFromHistory('${provider.apiType}', '${provider.name}', ${jsArg(model)})"
                                                         class="flex-1 text-left"
                                                     >
-                                                        ${model}
+                                                        ${escapeHtml(model)}
                                                     </button>
                                                     <button
-                                                        onclick="showDeleteModelConfirmation(event, '${provider.apiType}', '${provider.name}', '${model.replace(/'/g, "\\'")}')"
+                                                        onclick="showDeleteModelConfirmation(event, '${provider.apiType}', '${provider.name}', ${jsArg(model)})"
                                                         class="ml-2 text-muted-foreground hover:text-destructive transition-colors opacity-0 group-hover:opacity-100"
                                                         title="Remove from history"
                                                     >
@@ -2953,7 +2957,7 @@
                                         <!-- Usage count -->
                                         <span class="hidden sm:inline text-xs text-muted-foreground whitespace-nowrap tabular-nums" title="Successful requests with this key since the server started">${usageDisplay} use${usageDisplay === 1 ? '' : 's'}</span>
                                         <button
-                                            onclick="testProviderKey('${provider.apiType}', '${provider.name}', '${keyVal}', ${keyIndex})"
+                                            onclick="testProviderKey('${provider.apiType}', '${provider.name}', ${jsArg(keyVal)}, ${keyIndex})"
                                             class="btn btn-ghost btn-sm key-action"
                                             title="Check this key still works" aria-label="Test key"
                                         >
@@ -3294,8 +3298,10 @@
                 }
             }
             
-            if (apiKeys.length === 0) {
-                showWarningToast('At least one API key is required');
+            // No keys: a keyless provider, added only if its models list works without one
+            const keyless = apiKeys.length === 0;
+            if (keyless && !(name && baseUrl)) {
+                showWarningToast('To add a provider without an API key, give it a name and a base URL');
                 return;
             }
             if (!apiKeys.every(key => hasAllKeyValues(key, baseUrl, modelsUrl))) return;
@@ -3356,8 +3362,28 @@
                 }
             }
 
+            if (keyless) {
+                showInfoToast('No API key given - checking whether its models list works without one...');
+                try {
+                    const response = await fetch('/admin/api/test', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ apiType, baseUrl, modelsUrl, keyless: true })
+                    });
+                    const result = await response.json();
+                    if (!result.success) {
+                        showErrorToast(`Not added: this provider doesn't work without an API key. ${result.error || ''}`);
+                        return;
+                    }
+                    showSuccessToast('✅ Its models list works without a key');
+                } catch (error) {
+                    showErrorToast(`Could not check the provider: ${error.message}`);
+                    return;
+                }
+            }
+
             // Test all API keys before saving
-            showInfoToast('Testing all API keys before saving...');
+            if (!keyless) showInfoToast('Testing all API keys before saving...');
             let allKeysValid = true;
             const testedKeys = [];
             
@@ -3406,14 +3432,14 @@
             const baseUrlVar = `${apiType.toUpperCase()}_${name.toUpperCase()}_BASE_URL`;
             const modelsUrlVar = `${apiType.toUpperCase()}_${name.toUpperCase()}_MODELS_URL`;
             
-            // Check if provider already exists
-            if (envVars[keysVar]) {
+            // Names are unique across API types - the server routes by /name/ alone
+            if (providerNameTaken(name)) {
                 showErrorToast(`Provider '${name}' already exists`);
                 return;
             }
             
-            // Update envVars with tested keys only
-            envVars[keysVar] = testedKeys.join(',');
+            // Update envVars with tested keys only (a keyless provider has none)
+            if (!keyless) envVars[keysVar] = testedKeys.join(',');
             if (baseUrl) {
                 envVars[baseUrlVar] = baseUrl;
             }
@@ -3473,7 +3499,9 @@
                     renderEnvVars();
                     if (modelsUrl) probeModelsList(apiType, name.toLowerCase(), `Provider '${name.toLowerCase()}' added`);
                     
-                    showSuccessToast(`🎉 Provider '${name}' created successfully with ${testedKeys.length} tested and valid API key${testedKeys.length > 1 ? 's' : ''}!`);
+                    showSuccessToast(keyless
+                        ? `🎉 Provider '${name}' created - it works without an API key`
+                        : `🎉 Provider '${name}' created successfully with ${testedKeys.length} tested and valid API key${testedKeys.length > 1 ? 's' : ''}!`);
                 } else {
                     // Revert changes
                     delete envVars[keysVar];
@@ -3775,15 +3803,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
         }
 
         async function deleteProvider(apiType, providerName) {
-            const providerPrefix = `${apiType.toUpperCase()}_${providerName.toUpperCase()}_`;
-
-            // Delete all environment variables that start with the provider prefix
-            const keysToDelete = [];
-            for (const key in envVars) {
-                if (key.startsWith(providerPrefix)) {
-                    keysToDelete.push(key);
-                }
-            }
+            const keysToDelete = providerVarKeys(apiType, providerName);
 
             // Remove all matching keys from envVars
             keysToDelete.forEach(key => {
@@ -4297,18 +4317,45 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
         });
 
         async function testProviderKey(apiType, providerName, apiKey, keyIndex) {
+            let viaProxy = false;
+            if (providerUsesProxy(apiType, providerName)) {
+                const route = await askTestRoute(`${providerName} is set to use the proxy, so its real requests go through one. Test this key the same way, or straight from the server?`);
+                if (!route) return;
+                viaProxy = route === 'proxy';
+            }
             const maskedKey = maskKeyForDisplay(apiKey);
-            showInfoToast(`Testing API key ${maskedKey}...`);
-            const { state, error } = await testOneKey(apiType, providerName, apiKey, false);
-            if (state === 'ok') showSuccessToast(`API key ${maskedKey} works`);
-            else if (state === 'limited') showWarningToast(`API key ${maskedKey} is rate-limited right now: ${error}`);
-            else showErrorToast(`API key ${maskedKey} failed: ${error}`);
+            showInfoToast(`Testing API key ${maskedKey}${viaProxy ? ' through the proxy' : ''}...`);
+            const { state, error, proxy } = await testOneKey(apiType, providerName, apiKey, false, viaProxy);
+            const how = proxy ? ` (via ${proxy})` : '';
+            if (state === 'ok') showSuccessToast(`API key ${maskedKey} works${how}`);
+            else if (state === 'limited') showWarningToast(`API key ${maskedKey} is rate-limited right now${how}: ${error}`);
+            else showErrorToast(`API key ${maskedKey} failed${how}: ${error}`);
+        }
+
+        function providerUsesProxy(apiType, providerName) {
+            return String(envVars[`${apiType.toUpperCase()}_${providerName.toUpperCase()}_PROXY`] || '').toLowerCase() === 'true';
+        }
+
+        // Resolves 'proxy', 'direct', or null if cancelled
+        let _testRouteResolve = null;
+        function askTestRoute(message) {
+            document.getElementById('testRouteMessage').textContent = message;
+            document.getElementById('testRouteDialog').classList.remove('hidden');
+            document.getElementById('testRouteProxyBtn').focus();
+            return new Promise(resolve => { _testRouteResolve = resolve; });
+        }
+
+        function answerTestRoute(choice) {
+            document.getElementById('testRouteDialog').classList.add('hidden');
+            const resolve = _testRouteResolve;
+            _testRouteResolve = null;
+            if (resolve) resolve(choice);
         }
 
         // ---- Key checks: results shown as a dot per key and a note per provider ----
         const keyTestResults = new Map(); // "<apiType>_<name>|<stored key>" -> { state: ok | limited | fail, error }
 
-        async function testOneKey(apiType, providerName, rawKey, quiet) {
+        async function testOneKey(apiType, providerName, rawKey, quiet, viaProxy = false) {
             const pk = `${apiType}_${providerName}`;
             const baseUrl = envVars[`${apiType.toUpperCase()}_${providerName.toUpperCase()}_BASE_URL`] || null;
             let result;
@@ -4316,7 +4363,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 const res = await fetch('/admin/api/test', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ apiType, apiKey: rawKey, baseUrl, quiet }),
+                    body: JSON.stringify({ apiType, apiKey: rawKey, baseUrl, quiet, viaProxy }),
                     background: quiet
                 });
                 const data = await res.json();
@@ -4324,6 +4371,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 result = data.success ? { state: 'ok', error: '' }
                     : /\b429\b|rate.?limit/i.test(error) ? { state: 'limited', error }
                     : { state: 'fail', error };
+                if (data.proxy) result.proxy = data.proxy;
             } catch (e) {
                 result = { state: 'fail', error: e.message };
             }
@@ -4336,7 +4384,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
 
         function keyStatusDotHtml(pk, index, rawKey) {
             const r = keyTestResults.get(`${pk}|${rawKey}`);
-            const title = r ? `${KEY_STATE_LABEL[r.state]}${r.error ? ': ' + r.error : ''}` : 'Not tested yet';
+            const title = r ? `${KEY_STATE_LABEL[r.state]}${r.proxy ? ` via ${r.proxy}` : ''}${r.error ? ': ' + r.error : ''}` : 'Not tested yet';
             return `<span id="keyStatus_${pk}_${index}" class="key-status${r ? ' ' + r.state : ''}" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}"></span>`;
         }
 
@@ -4389,6 +4437,15 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             const total = providers.reduce((n, p) => n + p.keys.length, 0);
             if (!total) { showInfoToast('No keys to test yet'); return; }
 
+            // One question for the whole run; it only applies to providers set to use the proxy
+            const proxied = providers.filter(p => providerUsesProxy(p.apiType, p.name));
+            if (proxied.length) {
+                const names = proxied.map(p => p.name).join(', ');
+                const route = await askTestRoute(`${proxied.length === 1 ? `${names} is` : `${proxied.length} providers (${names}) are`} set to use the proxy. Test ${proxied.length === 1 ? 'its' : 'their'} keys through it, like real requests, or directly? Every other provider is tested directly.`);
+                if (!route) return;
+                proxied.forEach(p => { p.viaProxy = route === 'proxy'; });
+            }
+
             const run = testAllRun = { cancelled: false, done: 0, total };
             updateTestAllButton();
             const queue = [...providers];
@@ -4397,7 +4454,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                     const p = queue.shift();
                     for (const key of p.keys) {
                         if (run.cancelled) break;
-                        await testOneKey(p.apiType, p.name, key, true);
+                        await testOneKey(p.apiType, p.name, key, true, !!p.viaProxy);
                         run.done++;
                         updateTestAllButton();
                     }
@@ -4664,8 +4721,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             }
 
             // Check if new name already exists
-            const newKeysVar = `${apiType.toUpperCase()}_${newName.toUpperCase()}_API_KEYS`;
-            if (envVars[newKeysVar]) {
+            if (providerNameTaken(newName)) {
                 showErrorToast(`Provider '${newName}' already exists`);
                 return;
             }
@@ -4677,10 +4733,8 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
 
                 // Find all environment variables with the old prefix
                 const oldVars = {};
-                for (const key in envVars) {
-                    if (key.startsWith(oldPrefix)) {
-                        oldVars[key] = envVars[key];
-                    }
+                for (const key of providerVarKeys(apiType, oldName)) {
+                    oldVars[key] = envVars[key];
                 }
 
                 if (Object.keys(oldVars).length === 0) {
@@ -4709,6 +4763,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
 
                 if (response.ok) {
                     showSuccessToast(`Provider renamed from '${oldName}' to '${newName}'`);
+                    carryProviderState(`${apiType}_${oldName}`.toLowerCase(), `${apiType}_${newName}`.toLowerCase(), oldName.toLowerCase(), newName.toLowerCase());
                     await loadEnvVars();
                 } else {
                     // Rollback on error - restore old entries and remove new ones
@@ -4733,21 +4788,14 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
         async function deleteProviderKey(apiType, providerName, keyIndex) {
 
             const keysVar = `${apiType.toUpperCase()}_${providerName.toUpperCase()}_API_KEYS`;
-            const keys = envVars[keysVar] ? envVars[keysVar].split(',') : [];
+            // Same list the rows were rendered from, so keyIndex points at the right key
+            const keys = envVars[keysVar] ? envVars[keysVar].split(',').map(k => k.trim()).filter(Boolean) : [];
 
             keys.splice(keyIndex, 1);
 
             if (keys.length === 0) {
                 // If no keys left, delete the entire provider using the same logic as deleteProvider
-                const providerPrefix = `${apiType.toUpperCase()}_${providerName.toUpperCase()}_`;
-
-                // Delete all environment variables that start with the provider prefix
-                for (const key in envVars) {
-                    if (key.startsWith(providerPrefix)) {
-                        console.log(`Deleting env var: ${key}`);
-                        delete envVars[key];
-                    }
-                }
+                providerVarKeys(apiType, providerName).forEach(key => delete envVars[key]);
             } else {
                 envVars[keysVar] = keys.filter(k => k.trim()).join(',');
             }
@@ -5072,6 +5120,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 status: (log.status === 0 || log.status) ? log.status : null,
                 responseTime: log.responseTime != null ? log.responseTime : null,
                 error: log.error || null,
+                model: log.model || null,
                 keyUsed: log.keyUsed || null,
                 failedKeys: Array.isArray(log.failedKeys) ? log.failedKeys : [],
                 proxyUsed: log.proxyUsed || null,
@@ -5084,7 +5133,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             if (!body) return;
             const cell = (w) => `<td><span class="skeleton block h-3.5" style="width:${w}"></span></td>`;
             body.innerHTML = Array.from({ length: n }, () =>
-                `<tr>${cell('60px')}${cell('180px')}${cell('70px')}${cell('40px')}${cell('80px')}${cell('90px')}${cell('60px')}${cell('30px')}</tr>`
+                `<tr>${cell('60px')}${cell('180px')}${cell('70px')}${cell('120px')}${cell('40px')}${cell('80px')}${cell('90px')}${cell('60px')}${cell('30px')}</tr>`
             ).join('');
             document.getElementById('logsEmpty')?.classList.add('hidden');
         }
@@ -5248,17 +5297,15 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             } else {
                 const method = log.method
                     ? `<span class="chip mr-1.5"><span class="chip-v">${escapeHtml(log.method)}</span></span>` : '';
-                requestCell = `${method}<span class="font-mono text-foreground align-middle inline-block max-w-[320px] truncate" title="${escapeHtml(log.endpoint)}">${escapeHtml(log.endpoint || '—')}</span>`;
+                requestCell = `${method}<span class="font-mono text-foreground align-middle inline-block max-w-[14rem] truncate" title="${escapeHtml(log.endpoint)}">${escapeHtml(log.endpoint || '—')}</span>`;
             }
 
             // Key cell
             let keyCell = '<span class="text-muted-foreground">—</span>';
             if (log.keyUsed) {
-                keyCell = `<span class="font-mono" style="color:var(--success)" title="Key used">${escapeHtml(log.keyUsed)}</span>`;
-            }
-            if (log.failedKeys && log.failedKeys.length > 0) {
-                const failedList = log.failedKeys.map(fk => `${fk.key} (${fk.status || 'err'})`).join(', ');
-                keyCell += ` <span class="badge badge-warning" title="Rotated past: ${escapeHtml(failedList)}">↻${log.failedKeys.length}</span>`;
+                const ok = log.status != null && log.status < 400;
+                const title = log._attempt ? `Key ${log.keyUsed} got ${log.status || 'an error'} - rotated to the next key` : `Key used: ${log.keyUsed}`;
+                keyCell = `<span class="font-mono log-key" style="color:${ok ? 'var(--success)' : 'var(--destructive)'}" title="${escapeHtml(title)}">${escapeHtml(log.keyUsed)}</span>`;
             }
 
             // Proxy cell
@@ -5274,7 +5321,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             const errorRow = log.error
                 ? `<div class="text-[11px] mt-0.5 break-all" style="color:var(--destructive)" title="${escapeHtml(log.error)}">${escapeHtml(log.error)}</div>` : '';
 
-            const canView = (log.requestId && log.requestId !== 'unknown' && log.requestId !== 'legacy');
+            const canView = !log._attempt && (log.requestId && log.requestId !== 'unknown' && log.requestId !== 'legacy');
             const detailsBtn = canView
                 ? `<button onclick="event.stopPropagation();viewResponse('${escapeHtml(log.requestId)}')" class="text-xs underline cursor-pointer whitespace-nowrap" style="color:var(--info)">View</button>`
                 : '';
@@ -5282,8 +5329,9 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
 
             return `<tr ${rowClick}>
                 <td class="whitespace-nowrap text-muted-foreground tabular-nums" title="${escapeHtml(rt.title)}">${escapeHtml(rt.text)}</td>
-                <td>${requestCell}${errorRow}</td>
+                <td class="log-request">${requestCell}${errorRow}</td>
                 <td class="whitespace-nowrap">${providerPill(log.provider)}</td>
+                <td class="log-model">${log.model ? `<span class="font-mono" title="${escapeHtml(log.model)}">${escapeHtml(log.model)}</span>` : '<span class="text-muted-foreground">—</span>'}</td>
                 <td class="whitespace-nowrap">${statusBadge(log.status)}</td>
                 <td class="whitespace-nowrap text-right">${latencyCell(log.responseTime)}</td>
                 <td class="whitespace-nowrap">${keyCell}</td>
@@ -5292,20 +5340,36 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             </tr>`;
         }
 
+        // One row per key a request went through: each key that got rotated
+        // (429 or whatever the provider rotates on) shows as its own row with its
+        // own status and proxy, under the row of the key that answered.
+        function keyAttemptRows(log) {
+            const failed = log.failedKeys || [];
+            if (!failed.length) return [log];
+            const rows = failed.map(fk => ({
+                ...log, _attempt: true, failedKeys: [],
+                timestamp: fk.at || log.timestamp, status: fk.status ?? null,
+                responseTime: fk.ms ?? null, keyUsed: fk.key, proxyUsed: fk.proxy || null,
+                error: fk.status ? null : (fk.reason || null)
+            }));
+            // Every key rotated: the last one's answer is what the caller got
+            const main = log.keyUsed ? { ...log, failedKeys: [] } : { ...rows.pop(), _attempt: false };
+            return [main, ...rows];
+        }
+
         function _filteredLogs() {
             const q = (document.getElementById('logSearch')?.value || '').toLowerCase().trim();
             const provFilter = document.getElementById('logProviderFilter')?.value || '';
             const statFilter = document.getElementById('logStatusFilter')?.value || '';
             const proxyFilter = document.getElementById('logProxyFilter')?.value || '';
             const out = [];
-            for (const raw of _logsCache) {
-                const log = normalizeLog(raw);
+            for (const log of _logsCache.flatMap(raw => keyAttemptRows(normalizeLog(raw)))) {
                 if (provFilter && log.provider !== provFilter) continue;
                 if (statFilter && !statusMatchesFilter(log.status, statFilter)) continue;
                 if (proxyFilter === 'proxy' && !log.proxyUsed) continue;
                 if (proxyFilter === 'direct' && log.proxyUsed) continue;
                 if (q) {
-                    const hay = [log.endpoint, log.method, log.provider, log.status, log.keyUsed,
+                    const hay = [log.endpoint, log.method, log.provider, log.model, log.status, log.keyUsed,
                         log.proxyUsed, log.error, (log.failedKeys || []).map(f => f.key).join(' ')].join(' ').toLowerCase();
                     if (!hay.includes(q)) continue;
                 }
@@ -5319,6 +5383,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 else if (key === 'status') { av = a.status || 0; bv = b.status || 0; }
                 else if (key === 'latency') { av = a.responseTime || 0; bv = b.responseTime || 0; }
                 else if (key === 'provider') { av = a.provider || ''; bv = b.provider || ''; return av.localeCompare(bv) * mul; }
+                else if (key === 'model') { av = a.model || ''; bv = b.model || ''; return av.localeCompare(bv) * mul; }
                 return (av - bv) * mul;
             });
             return out;
@@ -5348,7 +5413,8 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             }
             const count = document.getElementById('logCount');
             if (count) {
-                const filtered = logs.length !== _logsCache.length ? `${logs.length} shown · ` : '';
+                const shown = logs.filter(l => !l._attempt).length;
+                const filtered = shown !== _logsCache.length ? `${shown} shown · ` : '';
                 count.textContent = `${filtered}${_logsCache.length} request${_logsCache.length === 1 ? '' : 's'}`;
             }
             updateSortIndicators();
@@ -5428,15 +5494,6 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             document.body.appendChild(a); a.click(); a.remove();
             setTimeout(() => URL.revokeObjectURL(url), 1000);
             showSuccessToast(`Exported ${logs.length} log entries`);
-        }
-
-        function toggleLogAutoRefresh() {
-            const on = document.getElementById('logAutoRefresh')?.checked;
-            if (_logAutoRefreshTimer) { clearInterval(_logAutoRefreshTimer); _logAutoRefreshTimer = null; }
-            if (on) {
-                _logAutoRefreshTimer = setInterval(refreshLogs, 5000);
-                refreshLogs();
-            }
         }
 
         // --- Response viewer state ---
@@ -5568,8 +5625,8 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 if (data.contentType) chips.push(rvChip('content-type', data.contentType, 'default'));
                 if (size) chips.push(rvChip('size', size, 'default'));
                 if (data.keyInfo && data.keyInfo.keyUsed) chips.push(rvChip('key', data.keyInfo.keyUsed, 'green'));
-                if (data.keyInfo && data.keyInfo.failedKeys && data.keyInfo.failedKeys.length)
-                    chips.push(rvChip('rotated', '↻' + data.keyInfo.failedKeys.length, 'orange'));
+                for (const fk of (data.keyInfo && data.keyInfo.failedKeys) || [])
+                    chips.push(rvChip(fk.key, fk.status ? `got ${fk.status}` : 'failed', 'orange'));
                 if (data.proxyUsed) chips.push(rvChip('proxy', data.proxyUsed, 'purple'));
                 else chips.push(`<span class="inline-block px-1.5 py-0.5 rounded text-[11px] bg-muted text-muted-foreground">direct</span>`);
                 document.getElementById('rvMeta').innerHTML = chips.join('');
@@ -5668,6 +5725,20 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
 
         function closeResponseDialog() {
             document.getElementById('responseDialog').classList.add('hidden');
+            // Catch up on anything Live held back while the dialog was open
+            if (_logsHeldBack && !isDialogOpen()) { _logsHeldBack = false; refreshLogs(); }
+        }
+
+        // An open dialog sits on a blurred view of the page; rebuilding the page under
+        // it (Live logs, status bar) makes it flicker and can shift it, so those wait.
+        function isDialogOpen() {
+            return !!document.querySelector('.ds-overlay:not(.hidden), #confirmDialog:not(.hidden)');
+        }
+
+        let _logsHeldBack = false;
+        function liveRefreshLogs() {
+            if (isDialogOpen()) { _logsHeldBack = true; return; }
+            refreshLogs();
         }
 
         // ---- Models browser ----------------------------------------------------
@@ -6289,11 +6360,13 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             const customUrl = envVars[`${apiType.toUpperCase()}_${provider.toUpperCase()}_MODELS_URL`];
             if (customUrl) subtitle.textContent += ` → ${customUrl}`;
 
+            const ctx = mdCtx; // the dialog may be reopened for another provider while we wait
             try {
                 const res = await fetch(`/${provider}/models`, { headers: modelsRequestHeaders(apiType, provider) });
                 const text = await res.text();
                 let data = null;
                 try { data = JSON.parse(text); } catch (e) { /* non-JSON below */ }
+                if (mdCtx !== ctx) return; // reply for a provider that's no longer on screen
 
                 if (!res.ok) {
                     throw new Error((data && data.error && (data.error.message || data.error)) || text.slice(0, 300) || `HTTP ${res.status}`);
@@ -6325,6 +6398,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 renderActiveFilters();
                 renderModelsList();
             } catch (error) {
+                if (mdCtx !== ctx) return;
                 mdCtx.models = [];
                 subtitle.textContent = `GET /${provider}/models`;
                 list.innerHTML = `<div class="p-8 text-center text-sm text-destructive break-words">Failed to load models<br><span class="text-xs text-muted-foreground font-mono">${escapeHtml(error.message)}</span></div>`;
@@ -6494,7 +6568,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             list.innerHTML = rows.map(m => {
                 const isDefault = m.id === currentDefault;
                 const safeId = escapeHtml(m.id);
-                const jsId = m.id.replace(/'/g, "\\'");
+                const jsId = jsArg(m.id);
                 const fields = renderModelFields(m); // also sets m._nestedCount
                 return `
                     <div class="key-row">
@@ -6507,9 +6581,9 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                                 ${isDefault ? '<span class="badge badge-info ml-1.5 font-sans align-middle">default</span>' : ''}
                             </div>
                             <div class="flex items-center gap-1.5 flex-shrink-0">
-                                <button onclick="showModelJson('${jsId}')" class="btn btn-secondary btn-sm" title="Full record from the provider">Details</button>
-                                <button onclick="copyToClipboard('${jsId}', 'Model name copied')" class="btn btn-secondary btn-sm" title="Copy model name">Copy</button>
-                                <button onclick="setModelAsDefault('${jsId}')" class="btn btn-secondary btn-sm" ${isDefault ? 'disabled style="opacity:.4;pointer-events:none"' : ''} title="Set as this provider's default model">Set default</button>
+                                <button onclick="showModelJson(${jsId})" class="btn btn-secondary btn-sm" title="Full record from the provider">Details</button>
+                                <button onclick="copyToClipboard(${jsId}, 'Model name copied')" class="btn btn-secondary btn-sm" title="Copy model name">Copy</button>
+                                <button onclick="setModelAsDefault(${jsId})" class="btn btn-secondary btn-sm" ${isDefault ? 'disabled style="opacity:.4;pointer-events:none"' : ''} title="Set as this provider's default model">Set default</button>
                             </div>
                         </div>
                         ${renderModelStats(m)}
@@ -6547,7 +6621,9 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
         // Esc closes the topmost open dialog
         document.addEventListener('keydown', (e) => {
             if (e.key !== 'Escape') return;
-            if (!document.getElementById('modelJsonDialog').classList.contains('hidden')) {
+            if (!document.getElementById('testRouteDialog').classList.contains('hidden')) {
+                answerTestRoute(null);
+            } else if (!document.getElementById('modelJsonDialog').classList.contains('hidden')) {
                 closeModelJsonDialog();
             } else if (!document.getElementById('modelsDialog').classList.contains('hidden')) {
                 closeModelsDialog();
@@ -6578,20 +6654,23 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             activeBtn.classList.add('active', 'text-foreground', 'border-primary');
             activeBtn.classList.remove('text-muted-foreground');
             
-            // Load logs if logs tab is selected; pause auto-refresh polling elsewhere
+            // Logs are always live while the tab is open; polling pauses elsewhere
             if (tabName === 'logs') {
                 refreshLogs();
-                if (document.getElementById('logAutoRefresh')?.checked && !_logAutoRefreshTimer) {
-                    _logAutoRefreshTimer = setInterval(refreshLogs, 5000);
+                if (!_logAutoRefreshTimer) {
+                    _logAutoRefreshTimer = setInterval(liveRefreshLogs, 5000);
                 }
             } else if (_logAutoRefreshTimer) {
                 clearInterval(_logAutoRefreshTimer);
                 _logAutoRefreshTimer = null;
             }
 
-            // Load proxy settings when the proxy tab is selected
+            // Load proxy settings when the proxy tab is selected; keep it live while open
             if (tabName === 'proxy') {
                 loadProxySettings();
+                startProxyLiveRefresh();
+            } else {
+                stopProxyLiveRefresh();
             }
 
             // Load settings when the settings tab is selected
@@ -6634,9 +6713,26 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                         <span class="toggle-slider"></span>
                     </label>
                 `;
-                row.querySelector('input').onchange = (e) => { _proxyProviderState[p.name] = e.target.checked; };
+                row.querySelector('input').onchange = (e) => { _proxyProviderState[p.name] = e.target.checked; updateProxySelectAllButton(); };
                 container.appendChild(row);
             });
+            updateProxySelectAllButton();
+        }
+
+        // One button: "Select all" until every provider is on, then "Select none"
+        function updateProxySelectAllButton() {
+            const btn = document.getElementById('proxySelectAllBtn');
+            if (!btn) return;
+            const states = Object.values(_proxyProviderState);
+            btn.classList.toggle('hidden', states.length === 0);
+            btn.textContent = states.length && states.every(Boolean) ? 'Select none' : 'Select all';
+        }
+
+        function toggleAllProxyProviders() {
+            const on = !Object.values(_proxyProviderState).every(Boolean);
+            for (const name of Object.keys(_proxyProviderState)) _proxyProviderState[name] = on;
+            document.querySelectorAll('#proxyProviderList input[type=checkbox]').forEach(cb => { cb.checked = on; });
+            updateProxySelectAllButton();
         }
 
         async function loadProxySettings() {
@@ -6646,6 +6742,8 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 const data = await res.json();
                 proxyState = data;
                 document.getElementById('proxyAutoFetch').checked = !!data.autoFetch;
+                document.getElementById('proxyGoodMs').value = data.goodMs || 1000;
+                document.getElementById('proxyMaxTries').value = data.maxTries || 5;
                 renderProxyProviders(data.providers || []);
                 document.getElementById('proxyUrls').value = (data.proxies || []).map(p => p.url).join('\n');
                 renderProxyList(data.proxies || []);
@@ -6656,7 +6754,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
         }
 
         // Poll the sweep while it runs so the panel shows it moving. A refresh
-        // takes ~50s, and the server may also be running one of its own (at boot
+        // takes a minute or two, and the server may also be running one of its own (at boot
         // or after every proxy failed), so the tab picks that up too.
         let _proxyProgressTimer = null;
 
@@ -6694,17 +6792,21 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             }
         }
 
-        function startProxyProgressPolling() {
+        // onDone(auto) runs once the sweep is over
+        function startProxyProgressPolling(onDone) {
             stopProxyProgressPolling();
             _proxyProgressTimer = setInterval(async () => {
                 try {
-                    const res = await fetch('/admin/api/proxy/status');
+                    const res = await fetch('/admin/api/proxy/status', { background: true });
                     if (!res.ok) return;
                     const data = await res.json();
                     if (!renderProxyProgress(data.auto)) {
-                        // sweep finished - stop polling and show the final numbers
+                        // Sweep finished - redraw only the fetched list, so unsaved
+                        // edits to the providers or manual proxies survive
                         stopProxyProgressPolling();
-                        await loadProxySettings();
+                        proxyState = { ...proxyState, auto: data.auto, pool: data.pool, details: data.details };
+                        renderProxyAuto(proxyState);
+                        if (onDone) onDone(data.auto);
                     }
                 } catch (e) {
                     stopProxyProgressPolling();
@@ -6734,18 +6836,14 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 if (unsaved) {
                     statusEl.textContent = 'Auto-fetch is not active yet — hit Save Proxy Settings.';
                 } else if (!auto.enabled) {
-                    statusEl.textContent = data && data.autoFetch
-                        ? 'Auto-fetch is on but proxy routing is off — turn routing on and save.'
-                        : 'Auto-fetch is off.';
+                    statusEl.textContent = 'Auto-fetch is off.';
                 } else if (auto.refreshing) {
                     statusEl.textContent = 'Fetching and testing free proxies…';
                 } else if (auto.lastError) {
                     statusEl.textContent = `Last refresh failed: ${auto.lastError}`;
                 } else if (auto.lastRefreshAt) {
                     const benched = pool.benched ? ` · ${pool.benched} benched` : '';
-                    const speed = pool.fastestMs != null ? ` · fastest ${pool.fastestMs}ms` : '';
-                    const rotating = pool.fastPool ? ` · rotating the ${pool.fastPool} quickest` : '';
-                    statusEl.textContent = `${auto.live} live of ${auto.tested} tested${speed}${rotating} · updated ${relativeTime(new Date(auto.lastRefreshAt).toISOString()).text}${benched}`;
+                    statusEl.textContent = `${pool.green || 0} green · ${pool.red || 0} red${benched} · ${auto.live} of ${auto.tested} answered the last fetch, ${relativeTime(new Date(auto.lastRefreshAt).toISOString()).text}`;
                 } else {
                     statusEl.textContent = 'Waiting for the first refresh…';
                 }
@@ -6760,31 +6858,66 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
 
             if (renderProxyProgress(auto) && !_proxyProgressTimer) startProxyProgressPolling();
 
-            const list = auto.proxies || [];
+            // Live state from the rotator: green (used), red (too slow), benched
+            const list = ((data && data.details) || []).filter(d => !d.manual);
             wrap.classList.toggle('hidden', list.length === 0);
             if (count) count.textContent = list.length ? `(${list.length})` : '';
 
             container.innerHTML = '';
-            const fastCount = (pool && pool.fastPool) || 0;
-            list.forEach((p, i) => {
-                const row = document.createElement('div');
-                row.className = 'flex items-center justify-between gap-3 border border-border rounded p-2 bg-muted/20';
-                // The rotator only uses the fastest slice, so mark which rows those are
-                const inFastPool = i < fastCount;
-                const speed = p.ms != null
-                    ? `<span class="text-xs tabular-nums whitespace-nowrap" style="color:${inFastPool ? 'var(--success)' : 'var(--muted-foreground)'}" title="${inFastPool ? 'In the rotation — among the fastest' : 'Measured, but slower than the ones in rotation'}">${p.ms}ms</span>`
-                    : '';
-                row.innerHTML = `
-                    <code class="text-xs text-foreground truncate flex-1" title="${escapeHtml(p.masked)}">${escapeHtml(p.masked)}</code>
-                    ${speed}
-                    <span class="proxy-test-result text-xs text-muted-foreground whitespace-nowrap"></span>
-                    <button class="btn btn-secondary px-2 py-1 text-xs font-medium flex-shrink-0">Test</button>
-                `;
-                const btn = row.querySelector('button');
-                const resultEl = row.querySelector('.proxy-test-result');
-                btn.onclick = () => testProxy(p.url, btn, resultEl);
-                container.appendChild(row);
-            });
+            list.forEach((p) => container.appendChild(proxyRow(p, p)));
+        }
+
+        // Test results survive the live redraw of the lists
+        const _proxyRowResults = new Map(); // url -> { text, cls }
+        const PROXY_STATUS = {
+            green: { color: 'var(--success)', title: (ms) => `Green — used for requests` },
+            red: { color: 'var(--destructive)', title: (ms) => `Red — slower than the green line, not used` },
+            benched: { color: 'var(--muted-foreground)', title: () => 'Benched after repeated failures — skipped until a check finds it working' },
+        };
+
+        // One proxy row: address, live speed coloured by status, Test button
+        function proxyRow(p, detail) {
+            const row = document.createElement('div');
+            row.className = 'flex items-center justify-between gap-3 border border-border rounded p-2 bg-muted/20';
+            const st = detail && PROXY_STATUS[detail.status];
+            const ms = detail && detail.latencyMs != null ? `${detail.latencyMs}ms` : (detail ? 'not measured' : '');
+            const speed = st
+                ? `<span class="text-xs tabular-nums whitespace-nowrap" style="color:${st.color}" title="${escapeHtml(st.title())}">${detail.status === 'benched' ? 'benched · ' : ''}${ms}</span>`
+                : '';
+            row.innerHTML = `
+                <code class="text-xs text-foreground truncate flex-1${detail && detail.status === 'benched' ? ' line-through opacity-60' : ''}" title="${escapeHtml(p.masked)}">${escapeHtml(p.masked)}</code>
+                ${speed}
+                <span class="proxy-test-result text-xs text-muted-foreground whitespace-nowrap"></span>
+                <button class="btn btn-secondary px-2 py-1 text-xs font-medium flex-shrink-0">Test</button>
+            `;
+            const btn = row.querySelector('button');
+            const resultEl = row.querySelector('.proxy-test-result');
+            const saved = _proxyRowResults.get(p.url);
+            if (saved) { resultEl.textContent = saved.text; resultEl.className = saved.cls; }
+            btn.onclick = () => testProxy(p.url, btn, resultEl);
+            return row;
+        }
+
+        // While the Proxy tab is open, redraw the lists every few seconds so the
+        // background checks' green/red changes show up
+        let _proxyLiveTimer = null;
+        function startProxyLiveRefresh() {
+            stopProxyLiveRefresh();
+            _proxyLiveTimer = setInterval(async () => {
+                if (_proxyProgressTimer || document.hidden) return; // a sweep has its own polling
+                try {
+                    const res = await fetch('/admin/api/proxy/status', { background: true });
+                    if (!res.ok) return;
+                    const data = await res.json();
+                    proxyState = { ...proxyState, auto: data.auto, pool: data.pool, details: data.details };
+                    renderProxyAuto(proxyState);
+                    renderProxyList(proxyState.proxies || []);
+                } catch (e) { /* next tick */ }
+            }, 5000);
+        }
+        function stopProxyLiveRefresh() {
+            if (_proxyLiveTimer) clearInterval(_proxyLiveTimer);
+            _proxyLiveTimer = null;
         }
 
         // Force a fresh fetch + validation sweep right now
@@ -6802,19 +6935,16 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                     await persistProxySettings();
                 }
 
-                startProxyProgressPolling();
+                // The server starts the sweep and answers at once; follow it from here
                 const res = await fetch('/admin/api/proxy/refresh', { method: 'POST' });
                 const data = await res.json();
                 if (!res.ok || !data.success) throw new Error(data.error || 'Refresh failed');
-                stopProxyProgressPolling();
-                await loadProxySettings();
-                const live = data.auto ? data.auto.live : 0;
-                const tested = data.auto ? data.auto.tested : 0;
-                if (tested === 0) {
-                    showWarningToast('No proxies could be fetched — check the server log');
-                } else {
-                    showSuccessToast(`${live} of ${tested} free proxies responded`);
-                }
+                renderProxyProgress(data.auto);
+                startProxyProgressPolling((auto) => {
+                    if (auto.lastError) showErrorToast('Could not refresh proxies: ' + auto.lastError);
+                    else if (!auto.tested) showWarningToast('No proxies could be fetched — check the server log');
+                    else showSuccessToast(`${auto.live} of ${auto.tested} free proxies responded`);
+                });
             } catch (e) {
                 stopProxyProgressPolling();
                 showErrorToast('Could not refresh proxies: ' + e.message);
@@ -6830,19 +6960,13 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 return;
             }
             empty.classList.add('hidden');
-            proxies.forEach((p) => {
-                const row = document.createElement('div');
-                row.className = 'flex items-center justify-between gap-3 border border-border rounded p-2 bg-muted/20';
-                row.innerHTML = `
-                    <code class="text-xs text-foreground truncate flex-1" title="${escapeHtml(p.masked)}">${escapeHtml(p.masked)}</code>
-                    <span class="proxy-test-result text-xs text-muted-foreground whitespace-nowrap"></span>
-                    <button class="btn btn-secondary px-2 py-1 text-xs font-medium flex-shrink-0">Test</button>
-                `;
-                const btn = row.querySelector('button');
-                const resultEl = row.querySelector('.proxy-test-result');
-                btn.onclick = () => testProxy(p.url, btn, resultEl);
-                container.appendChild(row);
-            });
+            const details = new Map(((proxyState && proxyState.details) || []).map(d => [d.url, d]));
+            proxies.forEach((p) => container.appendChild(proxyRow(p, details.get(p.url))));
+        }
+
+        // A JS string literal that is safe inside a double-quoted onclick="..."
+        function jsArg(value) {
+            return escapeHtml(JSON.stringify(String(value)));
         }
 
         function escapeHtml(str) {
@@ -6867,7 +6991,11 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             const res = await fetch('/admin/api/proxy', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ proxies, autoFetch, providerProxies: _proxyProviderState }),
+                body: JSON.stringify({
+                    proxies, autoFetch, providerProxies: _proxyProviderState,
+                    goodMs: Number(document.getElementById('proxyGoodMs').value) || 1000,
+                    maxTries: Number(document.getElementById('proxyMaxTries').value) || 5,
+                }),
             });
             const data = await res.json();
             if (!res.ok || !data.success) throw new Error(data.error || 'Failed to save');
@@ -6880,10 +7008,20 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             try {
                 const data = await persistProxySettings();
                 await loadProxySettings();
+                // Say what will actually happen, not how many URLs were typed in
                 const n = data.proxiedProviders;
-                const who = n === 0 ? 'no providers' : `${n} provider${n === 1 ? '' : 's'}`;
-                const autoNote = data.autoFetch ? ', auto-fetch on' : '';
-                showSuccessToast(`Saved ${data.count} proxy(ies) — routing ${who}${autoNote}`);
+                const who = n === 0 ? 'No provider uses the proxy' : `${n} provider${n === 1 ? '' : 's'} use${n === 1 ? 's' : ''} the proxy`;
+                const sources = [
+                    data.count ? `${data.count} of your own` : '',
+                    data.autoFetch ? 'auto-fetched free proxies' : '',
+                ].filter(Boolean).join(' + ');
+                const pool = proxyState.pool || {};
+                const green = pool.green ? ` (${pool.green} green right now)`
+                    : proxyState.auto && proxyState.auto.refreshing ? ' (checking the list now…)' : '';
+                const msg = !sources ? `Saved. ${who}, but there are no proxies yet — add your own or turn on auto-fetch`
+                    : n === 0 ? `Saved. No provider uses the proxy yet — turn one on below`
+                    : `Saved. ${who}: ${sources}${green}`;
+                (sources && n ? showSuccessToast : showWarningToast)(msg);
             } catch (e) {
                 showErrorToast('Failed to save proxy settings: ' + e.message);
             }
@@ -6918,6 +7056,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 }
             } finally {
                 if (btn) { btn.disabled = false; btn.textContent = original; }
+                if (resultEl) _proxyRowResults.set(url, { text: resultEl.textContent, cls: resultEl.className });
             }
         }
 
@@ -6977,7 +7116,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
         }
         async function refreshStatusBar() {
             const el = document.getElementById('statusBar');
-            if (!el) return;
+            if (!el || isDialogOpen()) return;
             try {
                 const r = await fetch('/admin/api/status');
                 if (!r.ok) return;
@@ -6986,7 +7125,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 const item = (label, valueHtml) => `<span class="inline-flex items-center gap-1.5"><span class="opacity-60">${label}</span>${valueHtml}</span>`;
                 const sep = '<span class="opacity-30">•</span>';
                 const proxyHtml = s.proxyEnabled
-                    ? `${dot('var(--success)')}<span class="text-foreground">${s.proxyCount} proxy</span>`
+                    ? `${dot(s.proxyCount ? 'var(--success)' : 'var(--warning)')}<span class="text-foreground">${s.proxyCount} green ${s.proxyCount === 1 ? 'proxy' : 'proxies'}</span>`
                     : `${dot('var(--muted-foreground)')}<span>direct</span>`;
                 el.innerHTML = [
                     item('uptime', `<span class="text-foreground tabular-nums">${fmtUptime(s.uptimeMs)}</span>`),
