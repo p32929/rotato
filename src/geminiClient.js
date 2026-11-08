@@ -181,7 +181,9 @@ class GeminiClient {
       ...headers
     };
 
-    if (useHeader) {
+    if (!apiKey) {
+      // A keyless provider: no key on the request
+    } else if (useHeader) {
       finalHeaders['x-goog-api-key'] = apiKey;
     } else {
       url.searchParams.append('key', apiKey);

@@ -140,7 +140,8 @@ class OpenAIClient {
       ...headers
     };
 
-    if (!headers || !headers.authorization) {
+    // A keyless provider sends no auth of its own (the caller's header, if any, still goes through)
+    if (apiKey && (!headers || !headers.authorization)) {
       finalHeaders['Authorization'] = `Bearer ${apiKey}`;
     }
 

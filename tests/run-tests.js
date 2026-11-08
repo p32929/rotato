@@ -122,6 +122,26 @@ assert.ok(cfg.providers.has('foo_bar'));
 assert.strictEqual(cfg.providers.get('dup').apiType, 'openai');
 assert.strictEqual(cfg.providers.get('gemini').apiType, 'gemini');
 
+// Keyless providers: a named provider with a base URL and no keys gets one empty key;
+// requests carry no auth, logs say "no API key". A legacy bare BASE_URL is not a provider.
+{
+  const kc = Object.create(Config.prototype);
+  kc.providers = new Map();
+  kc.parseProviders({ OPENAI_FREE_BASE_URL: 'https://free.example.com/v1', OPENAI_FREE_PROXY: 'true',
+    GEMINI_GFREE_BASE_URL: 'https://g.example.com/v1beta', OPENAI_BASE_URL: 'https://legacy.example.com/v1',
+    OPENAI_OFF_API_KEYS: '~k1' });
+  const free = kc.providers.get('free');
+  assert.ok(free.keyless && free.proxy && free.apiType === 'openai');
+  assert.deepStrictEqual(free.keys, ['']);
+  assert.ok(!kc.providers.has('openai'));                                   // legacy BASE_URL alone: not a provider
+  assert.ok(!kc.providers.get('off').keyless);                              // all keys disabled is not keyless
+  assert.strictEqual(require('../src/keyValues').maskKey(''), 'no API key');
+  const o = new OpenAIClient(null, free.baseUrl)._buildRequestOptions('POST', '/chat/completions', '{}', {}, '');
+  assert.strictEqual(o.headers.Authorization, undefined);
+  const g = new (require('../src/geminiClient'))(null, kc.providers.get('gfree').baseUrl)._buildRequestOptions('GET', '/models', null, {}, '', false);
+  assert.ok(!g.path.includes('key=') && !g.headers['x-goog-api-key']);
+}
+
 // A malformed URL is not a route and must not throw (it used to crash the process)
 assert.strictEqual(ProxyServer.prototype.parseRoute.call({ config: { getProvider: () => null } }, '//['), null);
 
@@ -209,6 +229,27 @@ assert.strictEqual(ProxyServer.prototype.parseRoute.call({ config: { getProvider
     dup.setAutoProxies(['socks5://9.9.9.9:1080', 'socks4://9.9.9.9:1080', 'socks4://9.9.9.9:1081']);
     assert.deepStrictEqual(dup.proxyUrls, ['socks5://9.9.9.9:1080', 'socks4://9.9.9.9:1081']);
     assert.ok(first);
+  }
+
+  // A keyless provider still rotates through proxies, and is logged as "no API key"
+  {
+    const KeyRotator = require('../src/keyRotator');
+    const pm = new ProxyManager([], true);
+    pm.setAutoProxies(['1', '2', '3'].map(n => ({ url: `socks5://10.0.7.${n}:1`, ms: 100 })));
+    const c = new OpenAIClient(new KeyRotator([''], 'openai'), 'https://free.example.com/v1', pm);
+    const via = [];
+    c.sendRequest = (m, p, b, h, key, tried) => {
+      const o = c._buildRequestOptions(m, p, b, h, key, tried);
+      assert.strictEqual(o.headers.Authorization, undefined);
+      via.push(o._proxyUrl);
+      return Promise.resolve(via.length < 2
+        ? Promise.reject(Object.assign(new Error('dead'), { _proxyFailure: true }))
+        : { statusCode: 200, data: '{}', proxyUsed: o._proxyMasked });
+    };
+    const res = await c.makeRequest('POST', '/chat/completions', '{}', {});
+    assert.strictEqual(res.statusCode, 200);
+    assert.strictEqual(res._keyInfo.keyUsed, 'no API key');
+    assert.ok(via.length === 2 && via[0] && via[1] && via[0] !== via[1]);    // proxied, and moved on to another proxy
   }
 
   // Just after a start: a proxied request waits for the list instead of going direct

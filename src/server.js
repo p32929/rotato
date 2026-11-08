@@ -1077,7 +1077,8 @@ class ProxyServer {
       // provider's flag would resurrect it as a keyless ghost on reload.
       for (const [key, value] of Object.entries(currentEnvVars)) {
         if (key in envVars || !/_(DISABLED|PROXY)$/.test(key)) continue;
-        if (key.replace(/_(DISABLED|PROXY)$/, '_API_KEYS') in finalEnvVars) {
+        // A keyless provider exists by its base URL alone
+        if (['_API_KEYS', '_BASE_URL'].some((s) => key.replace(/_(DISABLED|PROXY)$/, s) in finalEnvVars)) {
           finalEnvVars[key] = value;
         }
       }
@@ -1097,6 +1098,13 @@ class ProxyServer {
     try {
       const parsed = JSON.parse(body);
       let testResult = { success: false, error: 'Unknown API type' };
+
+      // A provider added without keys: it only goes in if its models list answers without one
+      if (parsed.keyless) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(await this.testKeyless(parsed.apiType, parsed.baseUrl, parsed.modelsUrl)));
+        return;
+      }
 
       // Test with the key's own values filled into the base URL
       let apiKey, baseUrl;
@@ -1137,6 +1145,47 @@ class ProxyServer {
     }
   }
   
+  /**
+   * Does this provider work without an API key? GET its models list (its own
+   * models URL, if it has one) with no auth at all. Only a 2xx JSON answer
+   * counts - a website's 200 HTML page is not an API.
+   */
+  testKeyless(apiType, baseUrl, modelsUrl = '') {
+    if (apiType !== 'openai' && apiType !== 'gemini') return Promise.resolve({ success: false, error: 'Unknown API type' });
+    let options;
+    try {
+      new URL(baseUrl);
+      const client = apiType === 'gemini' ? new this.GeminiClient(null, baseUrl, null) : new this.OpenAIClient(null, baseUrl, null);
+      const upstream = this.upstreamPath('GET', '/models', { modelsUrl });
+      options = apiType === 'gemini'
+        ? client._buildRequestOptions('GET', upstream, null, {}, '', true)
+        : client._buildRequestOptions('GET', upstream, null, {}, '');
+    } catch (e) {
+      return Promise.resolve({ success: false, error: `Bad URL: ${e.message}` });
+    }
+    const where = `https://${options.hostname}${options.path}`;
+    return new Promise((resolve) => {
+      const req = https.request({ ...options, timeout: 15000 }, (r) => {
+        const chunks = [];
+        r.on('data', (c) => chunks.push(c));
+        r.on('end', () => {
+          const text = Buffer.concat(chunks).toString('utf8');
+          console.log(`[TEST-KEYLESS] GET ${where} → ${r.statusCode} ${text.length}b`);
+          if (r.statusCode < 200 || r.statusCode >= 300) {
+            return resolve({ success: false, error: `${where} answered ${r.statusCode} without a key${upstreamErrorText(text) ? `: ${upstreamErrorText(text)}` : ''}` });
+          }
+          try { JSON.parse(text); } catch (e) {
+            return resolve({ success: false, error: `${where} answered 200 but not with JSON - is this the API's base URL?` });
+          }
+          resolve({ success: true, error: null });
+        });
+      });
+      req.on('timeout', () => req.destroy(new Error('no answer within 15s')));
+      req.on('error', (err) => resolve({ success: false, error: `${where}: ${err.message}` }));
+      req.end();
+    });
+  }
+
   /**
    * fetch() for key checks. Direct uses the built-in fetch; through a proxy it
    * goes over https.request with the proxy's agent (fetch can't take one) and
@@ -1958,10 +2007,10 @@ class ProxyServer {
           if (p.accessKey) envContent += `${p.apiType}_${p.providerName}_ACCESS_KEY=${p.accessKey}\n`;
           if (p.defaultModel) envContent += `${p.apiType}_${p.providerName}_DEFAULT_MODEL=${p.defaultModel}\n`;
           if (p.modelHistory) envContent += `${p.apiType}_${p.providerName}_MODEL_HISTORY=${p.modelHistory}\n`;
-          // Only persist a disabled flag for a provider that actually has keys —
-          // an orphaned DISABLED flag would otherwise render as a keyless ghost provider.
-          if (p.disabled === 'true' && p.keys) envContent += `${p.apiType}_${p.providerName}_DISABLED=true\n`;
-          if (p.proxy === 'true' && p.keys) envContent += `${p.apiType}_${p.providerName}_PROXY=true\n`;
+          // Only persist these flags for a provider that exists (keys, or a keyless
+          // provider's base URL) - an orphaned flag would render as a ghost provider.
+          if (p.disabled === 'true' && (p.keys || p.baseUrl)) envContent += `${p.apiType}_${p.providerName}_DISABLED=true\n`;
+          if (p.proxy === 'true' && (p.keys || p.baseUrl)) envContent += `${p.apiType}_${p.providerName}_PROXY=true\n`;
           envContent += '\n';
         }
       }

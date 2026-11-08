@@ -1716,7 +1716,7 @@
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.25" d="M12 5v14M5 12h14"/></svg>
                         Add another key
                     </button>
-                    <p class="field-hint">More keys means more rotation room when one gets rate-limited.</p>
+                    <p class="field-hint">More keys means more rotation room when one gets rate-limited. Leave it empty for a provider that needs no key — it's added only if its models list answers without one.</p>
                 </div>
                 <div id="newProviderPreview" class="p-3 bg-muted/40 border border-border rounded-md text-xs text-muted-foreground">
                     <span id="previewText">Will create the default OpenAI provider</span>
@@ -2509,7 +2509,7 @@
             const n = name.toUpperCase();
             return Object.keys(envVars).some(k => {
                 const m = k.match(PROVIDER_VAR_RE);
-                return m && m[3] === 'API_KEYS' && m[2].toUpperCase() === n;
+                return m && (m[3] === 'API_KEYS' || m[3] === 'BASE_URL') && m[2].toUpperCase() === n; // keyless ones have no keys
             });
         }
 
@@ -2680,7 +2680,7 @@
                                     ${isProviderDisabled ? '<span class="badge badge-error">Off</span>' : ''}
                                 </div>
                                 <p class="text-xs text-muted-foreground mt-0.5 truncate">
-                                    <span class="tabular-nums">${enabledKeyCount}/${totalKeyCount}</span> keys on<span id="providerTest_${pk}">${providerTestSummaryHtml(pk, provider.keys.map(k => k.key))}</span><span class="opacity-50"> · </span><span class="tabular-nums">${requestCount}</span> request${requestCount === 1 ? '' : 's'}${provider.defaultModel ? `<span class="opacity-50"> · </span><span class="font-mono">${escapeHtml(provider.defaultModel)}</span>` : ''}
+                                    ${totalKeyCount ? `<span class="tabular-nums">${enabledKeyCount}/${totalKeyCount}</span> keys on` : 'no API key'}<span id="providerTest_${pk}">${providerTestSummaryHtml(pk, provider.keys.map(k => k.key))}</span><span class="opacity-50"> · </span><span class="tabular-nums">${requestCount}</span> request${requestCount === 1 ? '' : 's'}${provider.defaultModel ? `<span class="opacity-50"> · </span><span class="font-mono">${escapeHtml(provider.defaultModel)}</span>` : ''}
                                 </p>
                             </div>
                             <div class="flex items-center gap-1.5 flex-shrink-0">
@@ -3297,8 +3297,10 @@
                 }
             }
             
-            if (apiKeys.length === 0) {
-                showWarningToast('At least one API key is required');
+            // No keys: a keyless provider, added only if its models list works without one
+            const keyless = apiKeys.length === 0;
+            if (keyless && !(name && baseUrl)) {
+                showWarningToast('To add a provider without an API key, give it a name and a base URL');
                 return;
             }
             if (!apiKeys.every(key => hasAllKeyValues(key, baseUrl, modelsUrl))) return;
@@ -3359,8 +3361,28 @@
                 }
             }
 
+            if (keyless) {
+                showInfoToast('No API key given - checking whether its models list works without one...');
+                try {
+                    const response = await fetch('/admin/api/test', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ apiType, baseUrl, modelsUrl, keyless: true })
+                    });
+                    const result = await response.json();
+                    if (!result.success) {
+                        showErrorToast(`Not added: this provider doesn't work without an API key. ${result.error || ''}`);
+                        return;
+                    }
+                    showSuccessToast('✅ Its models list works without a key');
+                } catch (error) {
+                    showErrorToast(`Could not check the provider: ${error.message}`);
+                    return;
+                }
+            }
+
             // Test all API keys before saving
-            showInfoToast('Testing all API keys before saving...');
+            if (!keyless) showInfoToast('Testing all API keys before saving...');
             let allKeysValid = true;
             const testedKeys = [];
             
@@ -3415,8 +3437,8 @@
                 return;
             }
             
-            // Update envVars with tested keys only
-            envVars[keysVar] = testedKeys.join(',');
+            // Update envVars with tested keys only (a keyless provider has none)
+            if (!keyless) envVars[keysVar] = testedKeys.join(',');
             if (baseUrl) {
                 envVars[baseUrlVar] = baseUrl;
             }
@@ -3476,7 +3498,9 @@
                     renderEnvVars();
                     if (modelsUrl) probeModelsList(apiType, name.toLowerCase(), `Provider '${name.toLowerCase()}' added`);
                     
-                    showSuccessToast(`🎉 Provider '${name}' created successfully with ${testedKeys.length} tested and valid API key${testedKeys.length > 1 ? 's' : ''}!`);
+                    showSuccessToast(keyless
+                        ? `🎉 Provider '${name}' created - it works without an API key`
+                        : `🎉 Provider '${name}' created successfully with ${testedKeys.length} tested and valid API key${testedKeys.length > 1 ? 's' : ''}!`);
                 } else {
                     // Revert changes
                     delete envVars[keysVar];

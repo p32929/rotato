@@ -79,7 +79,8 @@ class Config {
     // Log each provider
     for (const [providerName, config] of this.providers.entries()) {
       const maskedKeys = config.keys.map(key => this.maskApiKey(key));
-      console.log(`[CONFIG] Provider '${providerName}' (${config.apiType}): ${config.keys.length} keys [${maskedKeys.join(', ')}] → ${config.baseUrl}`);
+      const keys = config.keyless ? 'no API key' : `${config.keys.length} keys [${maskedKeys.join(', ')}]`;
+      console.log(`[CONFIG] Provider '${providerName}' (${config.apiType}): ${keys} → ${config.baseUrl}`);
     }
 
     if (this.providers.size === 0) {
@@ -156,7 +157,7 @@ class Config {
     // Parse {API_TYPE}_{PROVIDER}_API_KEYS, {API_TYPE}_{PROVIDER}_BASE_URL, and {API_TYPE}_{PROVIDER}_ACCESS_KEY format
     const providerConfigs = new Map();
 
-    const defaultConfig = () => ({ apiType: null, keys: [], allKeys: [], baseUrl: null, accessKey: null, defaultModel: null, modelsUrl: null, disabled: false, proxy: null });
+    const defaultConfig = () => ({ apiType: null, named: false, keyless: false, keys: [], allKeys: [], baseUrl: null, accessKey: null, defaultModel: null, modelsUrl: null, disabled: false, proxy: null });
 
     // {TYPE}_{NAME}_{SUFFIX}, or {TYPE}_{SUFFIX} for the legacy single-provider
     // form. Anchored on the suffix so a name like "proxyapi" can't be mistaken for it.
@@ -181,13 +182,14 @@ class Config {
         providerConfigs.set(provider, defaultConfig());
       }
       const cfg = providerConfigs.get(provider);
+      cfg.apiType = apiType;
+      if (m[2]) cfg.named = true;
 
       if (suffix === 'API_KEYS') {
         // Parse keys with disabled state (~ prefix)
         const { allKeys, enabledKeys } = this.parseApiKeysWithState(value);
         cfg.keys = enabledKeys;
         cfg.allKeys = allKeys;
-        cfg.apiType = apiType;
       } else if (suffix === 'BASE_URL') {
         cfg.baseUrl = value.trim();
       } else if (suffix === 'ACCESS_KEY') {
@@ -206,7 +208,14 @@ class Config {
 
     // Add valid providers to the main providers map
     for (const [provider, config] of providerConfigs.entries()) {
-      if (config.allKeys.length > 0) {
+      // No keys at all but its own base URL: a keyless provider (added after its
+      // /models answered without a key). One empty "key" lets it share the
+      // rotation path, proxies included - requests just carry no auth.
+      if (config.allKeys.length === 0 && config.named && config.baseUrl) {
+        config.keyless = true;
+        config.keys = [''];
+      }
+      if (config.allKeys.length > 0 || config.keyless) {
         // Set default base URLs if not specified
         if (!config.baseUrl) {
           if (config.apiType === 'openai') {

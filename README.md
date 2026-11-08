@@ -143,6 +143,16 @@ Every request fills the placeholders from whichever key is being tried, so rotat
 
 In the admin panel you never type the `|` format: once the base URL has a `{placeholder}`, every key row gets a field for it, existing keys show their values as tags (a missing one shows red; click it to fill it in), and **Edit** changes a key's values.
 
+## Providers Without a Key
+
+Some APIs work without a key. Leave the keys empty in the **Add provider** dialog (with a name and base URL): rotato calls the provider's models list (its custom models URL, if set) with no auth, and only adds it if that answers 2xx with JSON. In `.env` such a provider is just its base URL:
+
+```env
+OPENAI_POLLINATIONS_BASE_URL=https://text.pollinations.ai/openai
+```
+
+Requests go out with no key of their own (a caller's own `Authorization` header still goes through), everything else works as usual — proxies, retries, access key, logs — and the logs show **no API key** in the key column. Adding a key later turns it into a normal provider; deleting its last key still removes the whole provider.
+
 ## Custom Models URL
 
 Some providers list their models somewhere other than `{base URL}/models` (Cloudflare Workers AI's OpenAI-compatible API has no `/models` at all). Set a models list URL for that provider (in the **Add provider** dialog, later under the provider's **Connection** settings, or in `.env`), and every `GET /{provider}/models` (the models browser, the Telegram bot, your own apps) is fetched from there instead:
@@ -268,6 +278,7 @@ Old day directories are deleted at startup and hourly after that. `logs/` is git
 - Request logs show the model each request asked for (searchable and sortable)
 - Keys are validated even for providers without a `/models` endpoint
 - **Proxy picking** — proxies are green (under 1000ms by default) or red; each request takes a random green one no other request is using, moves on to the next on failure (5 tries by default), and background checks keep the list and its colours current. Both numbers are set in the Proxy tab
+- **Providers without a key** — leave the keys empty when adding a provider; it's added only if its models list answers without one, and it works with proxies like any other
 - **Proxy on means proxied** — a rotated key gets a different proxy; with few or no green proxies a request reuses one or takes a red one rather than going direct; right after a start it waits for the list to load
 - Key tests can go through the proxy or direct for providers that use it, and the Proxy tab can select all/none
 - Removed the keep-alive ping setting: it pinged the server from inside itself, so it couldn't keep a free host awake
