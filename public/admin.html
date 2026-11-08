@@ -1254,7 +1254,7 @@
                             <div class="flex items-start justify-between gap-4">
                                 <div>
                                     <div class="text-xs font-medium text-foreground">Automatically fetch free proxies</div>
-                                    <p class="text-xs text-muted-foreground mt-1">Pulls the SOCKS4 and SOCKS5 lists from <span class="text-foreground">monosans/proxy-list</span>, tests every entry against your provider, and keeps the ones that answer. The list is re-fetched every 30 minutes, and while rotato is idle every proxy is re-checked every couple of minutes.</p>
+                                    <p class="text-xs text-muted-foreground mt-1">Pulls the SOCKS5, SOCKS4 and HTTP lists from <span class="text-foreground">monosans/proxy-list</span> and <span class="text-foreground">proxifly/free-proxy-list</span> (~10k entries), tests every entry against your provider, and keeps the ones that answer. The list is re-fetched every 30 minutes, and while rotato is idle every proxy is re-checked every couple of minutes.</p>
                                     <p class="text-xs text-muted-foreground mt-1">These are run by strangers. Your API keys stay encrypted inside the TLS tunnel, but whoever runs the proxy can see which hosts you reach and can stall or drop traffic.</p>
                                 </div>
                                 <label class="toggle-switch flex-shrink-0" title="Automatically fetch free proxies">
@@ -1373,6 +1373,7 @@
                                 <a href="https://spys.one/en/socks-proxy-list/" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">spys.one</a>
                                 <a href="https://github.com/TheSpeedX/PROXY-List" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">TheSpeedX/PROXY-List</a>
                                 <a href="https://github.com/monosans/proxy-list" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">monosans/proxy-list</a>
+                                <a href="https://github.com/proxifly/free-proxy-list" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">proxifly/free-proxy-list</a>
                             </div>
                         </div>
                     </div>

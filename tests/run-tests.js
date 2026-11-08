@@ -163,6 +163,32 @@ assert.strictEqual(ProxyServer.prototype.parseRoute.call({ config: { getProvider
   assert.strictEqual(pool.live.length, 2);
   assert.strictEqual(pool.refreshing, false);
 
+  // An empty pool gets proxies while the sweep is still running, not only at the end
+  {
+    const p = new ProxyPool();
+    const updates = [];
+    p.enabled = true;
+    p.onUpdate = () => updates.push({ n: p.live.length, refreshing: p.refreshing });
+    p.fetchCandidates = async () => ['socks5://1.1.1.1:1', 'socks5://2.2.2.2:2', 'socks5://3.3.3.3:3'];
+    p.probe = (u) => new Promise(r => setTimeout(() => r({ ok: true, ms: 5 }), u.includes('1.1.1.1') ? 1 : 60));
+    await p.refresh('test', true);
+    assert.ok(updates.some(u => u.refreshing && u.n === 1));            // first proxy handed over mid-sweep
+    assert.strictEqual(p.live.length, 3);
+    updates.length = 0;                                                 // a pool that has proxies waits for the full sweep
+    await p.refresh('test', true);
+    assert.deepStrictEqual(updates.map(u => u.n), [3]);
+  }
+
+  // Lists that write the scheme on each line are read the same as bare host:port
+  {
+    const p = new ProxyPool();
+    const orig = ProxyPool.httpGetWithRetry;
+    ProxyPool.httpGetWithRetry = async () => 'socks5://5.5.5.5:1080\n5.5.5.5:1080\n6.6.6.6:8080:US\nnot a proxy\n';
+    const c = await p.fetchCandidates();
+    ProxyPool.httpGetWithRetry = orig;
+    assert.deepStrictEqual(c, ['socks5://5.5.5.5:1080']);                // deduped across lists, junk dropped
+  }
+
   // Green/red picking: random, no reuse until all have had a turn, never twice per request
   {
     const pm = new ProxyManager([], true, { goodMs: 1000, maxTries: 3 });

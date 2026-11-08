@@ -184,7 +184,7 @@ Supported schemes: `http://`, `https://`, `socks4://` (SOCKS4a), `socks5://`, ea
 PROXY_AUTO_FETCH=true
 ```
 
-Pulls the SOCKS4 and SOCKS5 lists from [monosans/proxy-list](https://github.com/monosans/proxy-list) (~1–2k entries between them), **validates every one**, and keeps only those that respond. Validation opens the proxy tunnel to one of your configured providers and completes the TLS handshake, then hangs up — no HTTP request is sent, no API key is used, and no third-party "what is my IP" service is involved.
+Pulls the SOCKS5, SOCKS4 and HTTP lists from [monosans/proxy-list](https://github.com/monosans/proxy-list) and [proxifly/free-proxy-list](https://github.com/proxifly/free-proxy-list) (~10k entries after removing duplicates), **validates every one**, and keeps only those that respond — typically several hundred. A full sweep takes a few minutes; when the pool starts empty, proxies are handed over as they are found, so the first requests don't wait for the whole sweep. Validation opens the proxy tunnel to one of your configured providers and completes the TLS handshake, then hangs up — no HTTP request is sent, no API key is used, and no third-party "what is my IP" service is involved.
 
 The pool is held in memory and never written to `.env`. The list is re-fetched every 30 minutes, and sooner when fewer than 5 green proxies are left (at most one fetch every 5 minutes). Auto-fetch works on its own — you don't need any proxies of your own.
 
@@ -279,6 +279,7 @@ Old day directories are deleted at startup and hourly after that. `logs/` is git
 - Keys are validated even for providers without a `/models` endpoint
 - **Proxy picking** — proxies are green (under 1000ms by default) or red; each request takes a random green one no other request is using, moves on to the next on failure (5 tries by default), and background checks keep the list and its colours current. Both numbers are set in the Proxy tab
 - **Providers without a key** — leave the keys empty when adding a provider; it's added only if its models list answers without one, and it works with proxies like any other
+- **More free proxies** — the auto-fetched pool also pulls proxifly/free-proxy-list and HTTP proxies (~10k candidates, several hundred usually alive, up from a few dozen), and an empty pool starts using proxies while the first sweep is still running
 - **Proxy on means proxied** — a rotated key gets a different proxy; with few or no green proxies a request reuses one or takes a red one rather than going direct; right after a start it waits for the list to load
 - Key tests can go through the proxy or direct for providers that use it, and the Proxy tab can select all/none
 - Removed the keep-alive ping setting: it pinged the server from inside itself, so it couldn't keep a free host awake

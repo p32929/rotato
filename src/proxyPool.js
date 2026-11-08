@@ -4,10 +4,11 @@ const ProxyManager = require('./proxyManager');
 /**
  * Auto-fetched pool of free public proxies.
  *
- * Lists come from monosans/proxy-list, which publishes small, frequently
- * regenerated SOCKS4 and SOCKS5 lists (~1.5k entries between them, versus
- * ~10k in the big HTTP lists). Small enough that every entry can be validated
- * on each refresh instead of sampling.
+ * Lists come from monosans/proxy-list and proxifly/free-proxy-list, both
+ * regenerated every few minutes: SOCKS5, SOCKS4 and HTTP, ~10k entries after
+ * de-duplication. Free proxies are mostly dead or slow, so the more lists the
+ * more usable ones survive - a sweep keeps several hundred, against a few
+ * dozen from monosans alone. Every entry is validated, a few hundred at a time.
  *
  * Nothing here is ever written to .env - the pool lives in memory only.
  *
@@ -20,6 +21,10 @@ const ProxyManager = require('./proxyManager');
 const SOURCES = [
   { scheme: 'socks5', url: 'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/socks5.txt' },
   { scheme: 'socks4', url: 'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/socks4.txt' },
+  { scheme: 'http', url: 'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt' },
+  { scheme: 'socks5', url: 'https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/socks5/data.txt' },
+  { scheme: 'socks4', url: 'https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/socks4/data.txt' },
+  { scheme: 'http', url: 'https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/http/data.txt' },
 ];
 
 const ENTRY_RE = /^(?:(?:\d{1,3}\.){3}\d{1,3}|[a-z0-9][a-z0-9.-]*):\d{1,5}$/i;
@@ -31,7 +36,7 @@ class ProxyPool {
     this.onUpdate = options.onUpdate || (() => {});
 
     this.enabled = false;
-    this.concurrency = options.concurrency || 100;
+    this.concurrency = options.concurrency || 300;
     this.probeTimeoutMs = options.probeTimeoutMs || 6000;
     this.refreshIntervalMs = options.refreshIntervalMs || 30 * 60 * 1000;
     // Floor between refreshes so a burst of failures can't hammer GitHub
@@ -149,7 +154,16 @@ class ProxyPool {
       const target = this.getProbeTarget() || 'api.openai.com';
       console.log(`[PROXY-POOL] ${reason}: validating ${candidates.length} proxies against ${target}...`);
 
-      const live = await this.validate(candidates, target, stale);
+      // Nothing to use yet (first start, no cache): hand over proxies as they
+      // are found instead of after the whole sweep, which takes a few minutes
+      let lastPublish = 0;
+      const onFound = this.live.length ? null : (found) => {
+        if (Date.now() - lastPublish < 2000 || stale()) return;
+        lastPublish = Date.now();
+        this.live = found.slice().sort((a, b) => a.ms - b.ms);
+        this.onUpdate(this);
+      };
+      const live = await this.validate(candidates, target, stale, onFound);
       if (stale()) return this.getStatus(); // turned off mid-sweep - keep it empty
 
       this.live = live;
@@ -177,29 +191,24 @@ class ProxyPool {
   async fetchCandidates() {
     const seen = new Set();
     const out = [];
+    const texts = await Promise.all(SOURCES.map((source) => ProxyPool.httpGetWithRetry(source.url).catch((err) => {
+      // One source failing is survivable - carry on with whatever else loaded
+      console.log(`[PROXY-POOL] Could not fetch ${source.url}: ${err.message}`);
+      return '';
+    })));
 
-    for (const source of SOURCES) {
-      let text;
-      try {
-        text = await ProxyPool.httpGetWithRetry(source.url);
-      } catch (err) {
-        // One source failing is survivable - carry on with whatever else loaded
-        console.log(`[PROXY-POOL] Could not fetch ${source.scheme} list: ${err.message}`);
-        continue;
-      }
-
+    SOURCES.forEach((source, i) => {
       let added = 0;
-      for (const raw of text.split('\n')) {
-        const entry = raw.trim();
+      for (const raw of texts[i].split('\n')) {
+        const entry = raw.trim().replace(/^[a-z0-9]+:\/\//i, ''); // some lists write socks5://host:port
         if (!ENTRY_RE.test(entry)) continue;
-        const url = `${source.scheme}://${entry}`;
         if (seen.has(entry)) continue; // same host:port in another list is the same machine
         seen.add(entry);
-        out.push(url);
+        out.push(`${source.scheme}://${entry}`);
         added += 1;
       }
-      console.log(`[PROXY-POOL] ${source.scheme}: ${added} entries`);
-    }
+      console.log(`[PROXY-POOL] ${new URL(source.url).pathname.split('/')[1]} ${source.scheme}: ${added} new entries`);
+    });
 
     return out;
   }
@@ -209,7 +218,7 @@ class ProxyPool {
    * answer along with how long they took - that timing seeds the rotator's
    * ranking so the first request already picks a fast proxy.
    */
-  async validate(candidates, targetHost, stale = () => false) {
+  async validate(candidates, targetHost, stale = () => false, onFound = null) {
     const live = [];
     let cursor = 0;
 
@@ -222,6 +231,7 @@ class ProxyPool {
         if (result.ok) {
           live.push({ url, ms: result.ms });
           this.progress.live += 1;
+          if (onFound) onFound(live);
         }
       }
     };
