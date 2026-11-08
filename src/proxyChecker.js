@@ -1,18 +1,18 @@
 /**
- * Keeps the proxy list fresh while rotato is idle.
+ * Keeps the proxy list fresh.
  *
- * Every couple of minutes, if no proxied request has gone out for a while, it
- * walks the list (least recently checked first) and:
+ * Every couple of minutes it walks the list (least recently checked first) and:
  *   1. handshake-checks every proxy: tunnel + TLS handshake to a provider's
- *      host, then hang up - no request, no API key. The timing feeds the live
- *      average, so proxies move between green and red and the list re-sorts.
- *      A benched proxy that passes is back in play at once.
- *   2. lists models through green proxies, each at most once per
- *      modelEveryMs, one call every modelGapMs, taking turns across the
- *      providers routed through the proxy and their keys. Listing models is free,
- *      and unlike a handshake it catches a provider blocking the proxy's IP.
- *
- * It stops the moment real traffic shows up, so it never competes with it.
+ *      host, then hang up - no request, no API key. This is the only thing
+ *      that sets a proxy's speed, so proxies move between green and red and
+ *      the list re-sorts. A benched proxy that passes is back in play at once.
+ *      It runs under traffic too: real requests never use red proxies, so
+ *      without it a proxy that turned red during a burst would stay red.
+ *   2. while idle only, lists models through green proxies, each at most once
+ *      per modelEveryMs, one call every modelGapMs, taking turns across the
+ *      providers routed through the proxy and their keys. Listing models is
+ *      free, and unlike a handshake it catches a provider blocking the proxy's
+ *      IP. It stops the moment real traffic shows up.
  *
  * The one exception is rescue(): when green proxies run short during traffic,
  * red and benched ones get an immediate handshake check (no API calls), so
@@ -58,16 +58,17 @@ class ProxyChecker {
 
   async cycle() {
     const manager = this.getManager();
-    if (this.running || !manager || !manager.isEnabled() || !this.isIdle(manager)) return;
+    if (this.running || !manager || !manager.isEnabled()) return;
     const targets = this.getTargets();
     if (!targets.length) return;
 
     this.running = true;
-    // Stop as soon as traffic arrives or the settings were reloaded
-    const go = () => this.timer && this.getManager() === manager && this.isIdle(manager);
+    // Handshakes stop only if the settings were reloaded; model calls also wait for quiet
+    const current = () => this.timer && this.getManager() === manager;
+    const go = () => current() && this.isIdle(manager);
     let ok = 0, failed = 0, models = 0;
     try {
-      ({ ok, failed } = await this.handshakePass(manager, manager.proxyUrls, targets, go));
+      ({ ok, failed } = await this.handshakePass(manager, manager.proxyUrls, targets, current));
       if (ok + failed) {
         const stats = manager.getStats();
         console.log(`[PROXY-CHECK] Handshake pass: ${ok} ok, ${failed} failed - ${stats.green} green, ${stats.red} red, ${stats.benched} benched`);

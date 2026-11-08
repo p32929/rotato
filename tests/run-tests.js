@@ -161,25 +161,74 @@ assert.strictEqual(ProxyServer.prototype.parseRoute.call({ config: { getProvider
     const tried = new Set();
     for (let i = 0; i < 5; i++) assert.ok(pm.pick(tried));
     assert.strictEqual(tried.size, 5);
-    const lastTried = [...tried].pop();
-    const reused = pm.pick(tried);                                                  // tried them all: reuse one rather than go direct...
-    assert.ok(reused && reused.url !== lastTried);                                  // ...but not the one used last
-    pm.recordLatency(urls[0], 5000); pm.recordLatency(urls[0], 5000); pm.recordLatency(urls[0], 5000);
-    assert.strictEqual(pm.isGreen(urls[0]), false);                                 // slowed down -> red
+    const order = [...tried];
+    const reused = pm.pick(tried);                                                  // tried them all: reuse rather than go direct...
+    assert.strictEqual(reused.url, order[0]);                                       // ...the one used longest ago
+    assert.strictEqual([...tried].pop(), reused.url);                               // and it's now the last used
+    pm.recordCheck(urls[0], 5000);
+    assert.strictEqual(pm.isGreen(urls[0]), false);                                 // checked slow -> red
     pm.recordCheck(urls[0], 100);
     for (let i = 0; i < 3; i++) pm.reportFailure(urls[1]);
     assert.ok(pm.isBenched(urls[1]) && !pm.isGreen(urls[1]));
     pm.recordCheck(urls[1], 300);
     assert.ok(pm.isGreen(urls[1]));                                                 // a passing check un-benches
-    // A successful request doesn't touch the speed: that's connect time, recorded by the agent
+    // A successful request doesn't touch the speed: only checks set it
     const before = pm.latencyOf(urls[2]);
     pm.reportSuccess(urls[2]);
     assert.strictEqual(pm.latencyOf(urls[2]), before);
-    pm.getAgentFor(urls[2]).onConnected(before);                                     // agent reports its connect time
-    assert.strictEqual(pm.latencyOf(urls[2]), before);
-        const none = new ProxyManager([], true);
-    none.setAutoProxies([{ url: 'socks5://10.0.0.7:1', ms: 3000 }]);
-    assert.strictEqual(none.pick(), null);                                          // no green: go direct
+    assert.strictEqual(new ProxyManager([], true).pick(), null);                    // empty list: the only way to go direct
+  }
+
+  // Proxy on means a proxy, always: reuse, red, benched - never direct while the list has any
+  {
+    const mk = (n, ms = 300) => {
+      const pm = new ProxyManager([], true);
+      pm.setAutoProxies(Array.from({ length: n }, (_, i) => ({ url: `socks5://10.0.5.${i + 1}:1`, ms })));
+      return pm;
+    };
+    const run = (pm, n) => { const tried = new Set(); return Array.from({ length: n }, () => pm.pick(tried).url.split('.').pop()); };
+    assert.deepStrictEqual(run(mk(1), 5), ['1:1', '1:1', '1:1', '1:1', '1:1']);      // one green: every key through it
+    const two = run(mk(2), 5);
+    assert.ok(two.every((u, i) => i === 0 || u !== two[i - 1]));                    // two green: they alternate
+    const red = mk(3, 2000);
+    red.recordCheck('socks5://10.0.5.2:1', 1500);
+    assert.deepStrictEqual(run(red, 4), ['2:1', '1:1', '3:1', '2:1']);              // no green: fastest red first, each once
+    const benched = mk(2);
+    for (const u of benched.proxyUrls) for (let i = 0; i < 3; i++) benched.reportFailure(u);
+    benched.health.get('socks5://10.0.5.2:1').deadUntil = Date.now() + 1000;        // its bench ends first
+    assert.strictEqual(benched.pick().url, 'socks5://10.0.5.2:1');
+    // A proxy that just failed waits at the back of the bag
+    const pm = mk(6);
+    const first = pm.pick().url;
+    const next = pm._bag[0];
+    pm.reportFailure(next);
+    assert.notStrictEqual(pm.pick().url, next);
+    assert.strictEqual(pm._bag[pm._bag.length - 1], next);
+    // Same host:port as socks4 and socks5 is one proxy
+    const dup = new ProxyManager([], true);
+    dup.setAutoProxies(['socks5://9.9.9.9:1080', 'socks4://9.9.9.9:1080', 'socks4://9.9.9.9:1081']);
+    assert.deepStrictEqual(dup.proxyUrls, ['socks5://9.9.9.9:1080', 'socks4://9.9.9.9:1081']);
+    assert.ok(first);
+  }
+
+  // Just after a start: a proxied request waits for the list instead of going direct
+  {
+    const pm = new ProxyManager([], true);
+    let loading = true;
+    pm.isLoading = () => loading;
+    const OpenAIClient = require('../src/openaiClient');
+    const c = new OpenAIClient(null, 'https://x', pm);
+    let via;
+    const req = c._withProxyRetry((tried) => { via = pm.pick(tried); return Promise.resolve({ statusCode: 200 }); });
+    await new Promise(r => setTimeout(r, 20));
+    assert.strictEqual(via, undefined);                                             // still waiting
+    pm.setAutoProxies([{ url: 'socks5://10.0.6.1:1', ms: 300 }]); loading = false;
+    await req;
+    assert.strictEqual(via.url, 'socks5://10.0.6.1:1');                             // went out through the proxy
+    const idle = new ProxyManager([], true);
+    idle.isLoading = () => false;
+    const t = Date.now(); await idle.waitForProxies();
+    assert.ok(Date.now() - t < 50);                                                 // nothing loading: no wait
   }
 
   // A request moves on to another proxy on failure or 403, up to maxTries, then gives up
@@ -227,7 +276,7 @@ assert.strictEqual(ProxyServer.prototype.parseRoute.call({ config: { getProvider
     }
   }
 
-  // Background checker: checks while idle, un-benches what passes, stops on traffic
+  // Background checker: re-measures, un-benches what passes; handshakes go on under traffic, model calls don't
   {
     const ProxyChecker = require('../src/proxyChecker');
     const pm = new ProxyManager([], true);
@@ -249,8 +298,10 @@ assert.strictEqual(ProxyServer.prototype.parseRoute.call({ config: { getProvider
     assert.strictEqual(modelChecked.length, 3);                                       // not again within 10 min
     pm.lastPickAt = Date.now();                                                       // traffic arrives
     let probed = 0; ck.probe = async () => { probed++; return { ok: true, ms: 1 }; };
+    for (const u of urls) pm._entry(u).modelCheckedAt = 0;
     await ck.cycle();
-    assert.strictEqual(probed, 0);
+    assert.strictEqual(probed, 4);                                                    // red ones still get their chance back
+    assert.strictEqual(modelChecked.length, 3);                                       // but no model calls while busy
     ck.stop();
   }
 
@@ -279,7 +330,7 @@ assert.strictEqual(ProxyServer.prototype.parseRoute.call({ config: { getProvider
     ck.start();
     await ck.rescue();
     assert.ok(pm.getGreen().length >= 10);                                            // checks replace the average
-    for (const u of urls) pm.recordLatency(u, 9000), pm.recordLatency(u, 9000), pm.recordLatency(u, 9000);
+    for (const u of urls) pm.recordCheck(u, 9000);
     await ck.rescue();
     assert.ok(pm.getGreen().length < 10);                                             // at most once a minute
     ck.stop();

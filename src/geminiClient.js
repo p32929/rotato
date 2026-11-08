@@ -210,7 +210,7 @@ class GeminiClient {
         const known = picked.latencyMs != null ? ` (~${picked.latencyMs}ms)` : '';
         console.log(`[GEMINI] Routing request via proxy ${picked.maskedUrl}${known}`);
       } else {
-        console.log(`[GEMINI] No green proxy available - sending this request direct`);
+        console.log(`[GEMINI] Proxy list is empty - sending this request direct`);
       }
     }
 
@@ -394,6 +394,8 @@ class GeminiClient {
     // green proxy (never one this request already tried, across all its keys),
     // up to maxTries of them.
     const maxTries = (this.proxyManager && this.proxyManager.maxTries) || 1;
+    // Just after a start the list may still be loading: wait for it, don't go direct
+    if (this.proxyManager) await this.proxyManager.waitForProxies();
     let attempt = 1;
     for (;;) {
       const more = () => attempt < maxTries && this.proxyManager && this.proxyManager.isEnabled();

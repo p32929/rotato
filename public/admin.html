@@ -1295,7 +1295,7 @@
                             </svg>
                             How a proxy is picked
                         </h3>
-                        <p class="text-xs text-muted-foreground mb-3">Each request gets a random <span style="color:var(--success)">green</span> proxy that no other request is using, and none is reused until all the others have had a turn. If one fails, the same key moves on to the next proxy. With no green proxy at all, requests go direct.</p>
+                        <p class="text-xs text-muted-foreground mb-3">Each request gets a random <span style="color:var(--success)">green</span> proxy that no other request is using, and none is reused until all the others have had a turn. If one fails, the same key moves on to the next proxy, and a rotated key gets a different one. With too few green proxies a request reuses one or takes the fastest red one — it only goes direct when the list is empty.</p>
                         <div class="flex flex-wrap gap-4">
                             <div>
                                 <label for="proxyGoodMs" class="block text-xs font-medium text-muted-foreground mb-1">Green below</label>

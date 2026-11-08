@@ -193,8 +193,8 @@ class ProxyPool {
         const entry = raw.trim();
         if (!ENTRY_RE.test(entry)) continue;
         const url = `${source.scheme}://${entry}`;
-        if (seen.has(url)) continue;
-        seen.add(url);
+        if (seen.has(entry)) continue; // same host:port in another list is the same machine
+        seen.add(entry);
         out.push(url);
         added += 1;
       }

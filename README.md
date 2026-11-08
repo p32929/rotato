@@ -182,9 +182,11 @@ Expect heavy attrition: typically a quarter to a third of the entries answer, an
 
 ### Green, red, and how a proxy is picked
 
-Every proxy has a live speed: how long it takes to open the tunnel and finish the TLS handshake with the provider — the part the proxy controls, not the provider's own response time. A check (fetch, background, rescue) sets it; real requests blend their connect times in. Below the line (`PROXY_GOOD_MS`, default 1000ms) it is **green** and used; at or above it, **red** and only shown. The Proxy tab colours the list accordingly and keeps it live while open.
+Every proxy has a live speed: how long it takes to open the tunnel and finish the TLS handshake with the provider — the part the proxy controls, not the provider's own response time. Only checks (fetch, background, rescue) set it — real requests don't, so a proxy that was briefly slow during a burst doesn't turn red. Below the line (`PROXY_GOOD_MS`, default 1000ms) it is **green** and used; at or above it, **red** and only shown. The Proxy tab colours the list accordingly and keeps it live while open.
 
-Each request gets a **random green proxy**. Proxies come out of a shuffled list, so concurrent requests never share one and none is reused until every other green proxy has had a turn. The shuffle spreads proxies on the same IP evenly through the cycle — free lists often carry dozens of ports on one machine, and picking those back to back would overload it. If a proxy fails, the **same key moves on to the next proxy**, never one this request already tried, up to `PROXY_MAX_TRIES` (default 5) — then the next API key gets its own fresh proxies. With no green proxy at all, the request goes direct.
+Each request gets a **random green proxy**. Proxies come out of a shuffled list, so concurrent requests never share one and none is reused until every other green proxy has had a turn. The shuffle spreads proxies on the same IP evenly through the cycle — free lists often carry dozens of ports on one machine, and picking those back to back would overload it. If a proxy fails, the **same key moves on to the next proxy**, never one this request already tried, up to `PROXY_MAX_TRIES` (default 5), and the failed proxy waits at the back of the shuffle. When a key is rotated (429 and so on — that's the key's fault, not the proxy's), the next key gets a proxy this request hasn't used yet.
+
+**A provider with the proxy on always goes through a proxy.** When a request has used every green proxy it reuses the one it used longest ago (the same one, if it's the only green one); with no green at all, it takes the fastest red one; with everything benched, the one whose bench ends soonest. Right after a start, while the list is still loading, requests wait for it (up to 30s) instead of going direct. A request only goes direct when the list is empty. The same host:port listed as both socks4 and socks5 counts as one proxy.
 
 ```env
 PROXY_GOOD_MS=1000     # green below this many ms
@@ -195,11 +197,11 @@ Both are editable in the Proxy tab.
 
 ### Background checks
 
-While no proxied request has gone out for 30 seconds, rotato re-checks the list every couple of minutes, least recently checked first, and stops the moment real traffic arrives:
+Every couple of minutes rotato re-checks the list, least recently checked first:
 
-- **Every proxy** gets a handshake check: tunnel + TLS handshake to a proxied provider's host, then hang up. No request, no API key. The timing feeds the live average, so proxies move between green and red, and a benched proxy that passes is back in play at once.
+- **Every proxy** gets a handshake check, under traffic too: tunnel + TLS handshake to a proxied provider's host, then hang up. No request, no API key. Its timing becomes the proxy's speed, so proxies move between green and red, and a benched proxy that passes is back in play at once. Real requests never use red proxies, so without this a proxy that turned red would stay red.
 - **When green runs low** (fewer than 5) even during traffic, red and benched proxies get an immediate handshake check — at most once a minute, until 10 are green again — so proxies that were only slow under load come back instead of requests going direct.
-- **Green proxies** also list a provider's models through the proxy, each at most once every 10 minutes, one call every few seconds, taking turns across proxied providers and their keys. Listing models is free, and unlike a handshake it catches a provider blocking the proxy's IP (a 403/407 counts against it).
+- **Green proxies**, while no proxied request has gone out for 30 seconds, also list a provider's models through the proxy, each at most once every 10 minutes, one call every few seconds, taking turns across proxied providers and their keys. Listing models is free, and unlike a handshake it catches a provider blocking the proxy's IP (a 403/407 counts against it).
 
 ### Timeouts and recovery
 
@@ -265,7 +267,8 @@ Old day directories are deleted at startup and hourly after that. `logs/` is git
 - **Test all** — one button checks every key of every provider without spending tokens; each key gets a status dot and each provider a summary
 - Request logs show the model each request asked for (searchable and sortable)
 - Keys are validated even for providers without a `/models` endpoint
-- **Proxy picking** — proxies are green (under 1000ms by default) or red; each request takes a random green one no other request is using, moves on to the next on failure (5 tries by default), and idle background checks keep the list and its colours current. Both numbers are set in the Proxy tab
+- **Proxy picking** — proxies are green (under 1000ms by default) or red; each request takes a random green one no other request is using, moves on to the next on failure (5 tries by default), and background checks keep the list and its colours current. Both numbers are set in the Proxy tab
+- **Proxy on means proxied** — a rotated key gets a different proxy; with few or no green proxies a request reuses one or takes a red one rather than going direct; right after a start it waits for the list to load
 - Key tests can go through the proxy or direct for providers that use it, and the Proxy tab can select all/none
 - Removed the keep-alive ping setting: it pinged the server from inside itself, so it couldn't keep a free host awake
 

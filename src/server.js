@@ -2155,6 +2155,7 @@ class ProxyServer {
       this.proxyChecker.rescue();
       if (this.proxyPool.enabled) this.proxyPool.refresh('pool exhausted');
     };
+    manager.isLoading = () => this.proxyPool.enabled && this.proxyPool.refreshing;
 
     // Fetch whenever auto-fetch is on, even before any provider is routed
     // through it - routing is per provider, so this only fills the list.

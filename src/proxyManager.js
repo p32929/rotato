@@ -353,8 +353,6 @@ class ProxyAgent extends https.Agent {
     this.proxy.timeoutMs = options.proxyTimeoutMs != null
       ? options.proxyTimeoutMs
       : ProxyAgent.DEFAULT_TIMEOUT_MS;
-    // Told how long tunnel + TLS handshake took - the part the proxy controls
-    this.onConnected = options.onConnected || null;
   }
 
   createConnection(options, callback) {
@@ -369,7 +367,6 @@ class ProxyAgent extends https.Agent {
     let settled = false;
     let raw = null;
     let secure = null;
-    const startedAt = Date.now();
 
     const done = (err, socket) => {
       if (settled) return;
@@ -380,7 +377,6 @@ class ProxyAgent extends https.Agent {
         try { if (secure) secure.destroy(); } catch (e) { /* ignore */ }
         return callback(err);
       }
-      if (this.onConnected) this.onConnected(Date.now() - startedAt);
       callback(null, socket);
     };
 
@@ -441,7 +437,6 @@ class ProxyManager {
     this.health = new Map();            // url -> { fails, deadUntil, latencyMs, checkedAt, modelCheckedAt }
     this.maxFailures = 3;
     this.benchMs = 10 * 60 * 1000;
-    this.latencySmoothing = 0.3;        // weight of the newest sample
 
     // Shuffle bag: green proxies in random order, each handed out once before
     // any is reused, so concurrent requests never share one.
@@ -452,6 +447,9 @@ class ProxyManager {
     // Set by the server: called when green proxies run short, so the auto pool
     // can go and fetch a fresh batch.
     this.onPoolExhausted = null;
+    // Set by the server: true while the auto-fetched list is being loaded
+    this.isLoading = null;
+    this._waiters = [];
   }
 
   static normalize(urls) {
@@ -472,7 +470,10 @@ class ProxyManager {
    */
   setAutoProxies(entries) {
     const list = Array.isArray(entries) ? entries : [];
-    const next = ProxyManager.normalize(list.map((e) => (typeof e === 'string' ? e : e && e.url)));
+    // One entry per host:port: free lists carry the same machine as socks4 and socks5
+    const seen = new Set(this.manualUrls.map(ProxyManager.hostPort));
+    const next = ProxyManager.normalize(list.map((e) => (typeof e === 'string' ? e : e && e.url)))
+      .filter((u) => !seen.has(ProxyManager.hostPort(u)) && seen.add(ProxyManager.hostPort(u)));
 
     for (const entry of list) {
       if (entry && typeof entry === 'object' && entry.url && entry.ms != null) {
@@ -489,6 +490,28 @@ class ProxyManager {
     for (const url of [...this._agentCache.keys()]) {
       if (!keep.has(url) && !this.manualUrls.includes(url)) this._agentCache.delete(url);
     }
+    // The list has loaded (or the fetch finished empty): stop waiting for it
+    for (const wake of this._waiters.splice(0)) wake();
+  }
+
+  /**
+   * Right after a start the fetched list can still be loading. A proxied
+   * request waits for it (up to STARTUP_WAIT_MS) instead of slipping out
+   * direct. Returns at once when there are proxies, or nothing is loading.
+   */
+  async waitForProxies() {
+    if (!this.enabled || this.proxyUrls.length || !(this.isLoading && this.isLoading())) return;
+    console.log(`[PROXY] Proxy list still loading - waiting up to ${ProxyManager.STARTUP_WAIT_MS / 1000}s for it`);
+    await new Promise((resolve) => {
+      const timer = setTimeout(wake, ProxyManager.STARTUP_WAIT_MS);
+      function wake() { clearTimeout(timer); resolve(); }
+      this._waiters.push(wake);
+    });
+    if (!this.proxyUrls.length) console.log('[PROXY] Still no proxies loaded - this request goes direct');
+  }
+
+  static hostPort(url) {
+    try { const p = parseProxyUrl(url); return `${p.hostname}:${p.port}`; } catch (e) { return url; }
   }
 
   getAutoProxies() {
@@ -538,9 +561,6 @@ class ProxyManager {
     if (!this._agentCache.has(proxyUrl)) {
       this._agentCache.set(proxyUrl, new ProxyAgent(proxyUrl, {
         proxyTimeoutMs: this.connectTimeoutFor(proxyUrl),
-        // Speed = connect time only. Timing the whole request would count the
-        // provider's own thinking time against the proxy and turn it red.
-        onConnected: (ms) => this.recordLatency(proxyUrl, ms),
       }));
     }
     return this._agentCache.get(proxyUrl);
@@ -554,9 +574,10 @@ class ProxyManager {
   }
 
   /**
-   * A proxy carried a request: clear its failure streak. Its speed is recorded
-   * by the agent when the connection opens, not here - a full request includes
-   * the provider's own response time.
+   * A proxy carried a request: clear its failure streak. Speed is left alone:
+   * it comes from the background checks only. Timing real requests turned
+   * proxies red whenever a burst of traffic slowed them for a moment, and red
+   * ones never got picked again to prove otherwise.
    */
   reportSuccess(proxyUrl) {
     if (!proxyUrl) return;
@@ -579,15 +600,6 @@ class ProxyManager {
     entry.latencyMs = ms;
   }
 
-  /** Exponentially weighted average, so one slow request can't dominate. */
-  recordLatency(proxyUrl, ms) {
-    if (!proxyUrl || !(ms >= 0)) return;
-    const entry = this._entry(proxyUrl);
-    entry.latencyMs = entry.latencyMs == null
-      ? ms
-      : Math.round(entry.latencyMs * (1 - this.latencySmoothing) + ms * this.latencySmoothing);
-  }
-
   /** Average round-trip in ms, or -1 if never measured. */
   latencyOf(proxyUrl) {
     const entry = this.health.get(proxyUrl);
@@ -605,6 +617,8 @@ class ProxyManager {
     const entry = this._entry(proxyUrl);
     entry.checkedAt = Date.now();
     entry.fails = immediate ? this.maxFailures : entry.fails + 1;
+    const i = this._bag.indexOf(proxyUrl);
+    if (i >= 0) this._bag.push(...this._bag.splice(i, 1));
 
     if (entry.fails >= this.maxFailures) {
       entry.deadUntil = Date.now() + this.benchMs;
@@ -635,14 +649,19 @@ class ProxyManager {
   }
 
   /**
-   * Pick a random green proxy that this request hasn't tried yet (`tried`).
-   * Proxies come out of a shuffled bag, so none is reused until every green one
-   * has had a turn; the bag is reshuffled when empty, never starting with the
-   * one just used.
+   * Pick a proxy for one attempt. `tried` is every proxy this request has used
+   * so far, across all its keys, oldest first.
    *
-   * Returns { url, maskedUrl, agent, latencyMs } or null when disabled, when no
-   * green proxy is left, or when this request has tried them all - in which
-   * case the request goes direct.
+   * 1. A green proxy this request hasn't used, from a shuffled bag shared by
+   *    all traffic: none is reused until every green one has had a turn, and a
+   *    proxy that just failed waits at the back.
+   * 2. Every green one used already: the one this request used longest ago -
+   *    the one it just used only if it is the only green one.
+   * 3. No green at all: the fastest red one that isn't benched.
+   * 4. Everything benched: the one whose bench ends soonest.
+   *
+   * Returns { url, maskedUrl, agent, latencyMs }, or null only when proxying
+   * is off or the list is empty.
    */
   pick(tried = null) {
     if (!this.isEnabled()) return null;
@@ -650,14 +669,8 @@ class ProxyManager {
 
     const green = this.getGreen();
     if (green.length < ProxyManager.MIN_GREEN) this.notifyExhausted();
-    let candidates = new Set(green.filter((u) => !(tried && tried.has(u))));
-    if (candidates.size === 0 && tried && tried.size) {
-      // This request (across all its keys) has been through every green proxy:
-      // reuse one rather than go direct, just not the one it used last
-      const last = [...tried].pop();
-      candidates = new Set(green.filter((u) => u !== last));
-    }
-    if (candidates.size === 0) return null;
+    const candidates = new Set(green.filter((u) => !(tried && tried.has(u))));
+    if (candidates.size === 0) return this._picked(this._fallback(green, tried), tried);
 
     for (let refills = 0; refills < 2; refills++) {
       while (this._bag.length) {
@@ -671,12 +684,23 @@ class ProxyManager {
         this._bag.push(this._bag.shift());
       }
     }
-    return null;
+    return this._picked(this._fallback(green, tried), tried);
+  }
+
+  /** Steps 2-4 of pick(): reuse rather than go direct. */
+  _fallback(green, tried) {
+    const order = tried ? [...tried] : [];
+    const age = (u) => order.indexOf(u); // -1 = not used by this request yet
+    const byAge = (score) => (a, b) => (age(a) - age(b)) || (score(a) - score(b));
+    if (green.length) return green.slice().sort(byAge(() => 0))[0];
+    const usable = this.getUsable();
+    if (usable.length) return usable.sort(byAge((u) => this.latencyOf(u)))[0];
+    return this.proxyUrls.slice().sort(byAge((u) => this.health.get(u).deadUntil))[0];
   }
 
   _picked(url, tried) {
     this._lastPicked = url;
-    if (tried) tried.add(url);
+    if (tried) { tried.delete(url); tried.add(url); } // keep it in order of last use
     const ms = this.latencyOf(url);
     return {
       url,
@@ -780,6 +804,7 @@ class ProxyManager {
 
 ProxyManager.DEFAULT_GOOD_MS = 1000;
 ProxyManager.DEFAULT_MAX_TRIES = 5;
+ProxyManager.STARTUP_WAIT_MS = 30000; // a fresh fetch + check takes ~20s
 ProxyManager.MIN_GREEN = 5; // fewer green than this and a fresh list is fetched
 
 module.exports = ProxyManager;
