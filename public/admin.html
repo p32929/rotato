@@ -792,6 +792,24 @@
         .seg-item.active { background: var(--card); color: var(--foreground); box-shadow: var(--shadow-sm); }
         .seg-item:disabled { opacity: 0.4; cursor: not-allowed; }
 
+        /* Loading state: the area's content is hidden and a spinner with
+           data-loading text sits in its place until the data arrives */
+        .is-loading { position: relative; min-height: 240px; }
+        .is-loading > * { visibility: hidden; }
+        .is-loading::before, .spinner {
+            content: ""; display: inline-block; width: 22px; height: 22px; border-radius: 50%;
+            border: 2.5px solid color-mix(in srgb, currentColor 20%, transparent); border-top-color: currentColor;
+            animation: spin 0.8s linear infinite; color: var(--foreground);
+        }
+        .is-loading::before { position: absolute; left: 50%; top: 96px; margin-left: -11px; }
+        .is-loading::after {
+            content: attr(data-loading); position: absolute; left: 0; right: 0; top: 130px;
+            text-align: center; font-size: var(--text-xs); color: var(--muted-foreground);
+        }
+        .spinner { width: 14px; height: 14px; border-width: 2px; vertical-align: -2px; color: inherit; }
+        #loginForm.is-loading::before { top: calc(50% - 30px); }
+        #loginForm.is-loading::after { top: calc(50% + 4px); }
+
         /* Skeleton loader (F2) */
         .skeleton {
             background: linear-gradient(90deg, var(--muted) 25%, color-mix(in srgb, var(--muted) 60%, var(--card)) 37%, var(--muted) 63%);
@@ -939,7 +957,7 @@
 </head>
 <body class="min-h-screen bg-background" id="mainBody">
     <!-- Login Form -->
-    <div id="loginForm" class="min-h-screen flex items-center justify-center p-4">
+    <div id="loginForm" class="min-h-screen flex items-center justify-center p-4 is-loading" data-loading="Loading…">
         <div class="w-full max-w-md space-y-8">
             <div class="text-center">
                 <div class="mx-auto h-12 w-12 flex items-center justify-center bg-primary text-primary-foreground rounded-lg mb-4">
@@ -2281,6 +2299,10 @@
         async function login() {
             const password = document.getElementById('password').value;
             const errorDiv = document.getElementById('loginError');
+            const button = document.getElementById('loginButton');
+            const buttonHtml = button.innerHTML;
+            button.disabled = true;
+            button.innerHTML = '<span class="spinner"></span> Signing in…';
 
             try {
                 const response = await fetch('/admin/login', {
@@ -2318,7 +2340,17 @@
             } catch (error) {
                 errorDiv.textContent = 'Login failed: ' + error.message;
                 errorDiv.classList.remove('hidden');
+            } finally {
+                button.innerHTML = buttonHtml;
+                if (!document.getElementById('rateLimitMessage') || document.getElementById('rateLimitMessage').classList.contains('hidden')) button.disabled = false;
             }
+        }
+
+        // Spinner in place of an area's content (see .is-loading)
+        function setLoading(el, on, text = 'Loading…') {
+            if (!el) return;
+            el.classList.toggle('is-loading', on);
+            if (on) el.dataset.loading = text;
         }
 
         function startLoginCountdown(seconds, passwordInput, loginButton, errorDiv) {
@@ -2386,7 +2418,10 @@
         }
         
         // Environment variables functionality
+        let _envLoaded = false;
         async function loadEnvVars() {
+            // First load only - later reloads keep the providers on screen
+            if (!_envLoaded) setLoading(document.getElementById('environment'), true, 'Loading providers…');
             try {
                 const [envResponse, usageResponse, settingsResponse] = await Promise.all([
                     fetch('/admin/api/env'),
@@ -2404,8 +2439,11 @@
                 }
                 renderEnvVars();
                 updateProviderPreview();
+                _envLoaded = true;
             } catch (error) {
                 showError('envError', 'Failed to load environment variables: ' + error.message);
+            } finally {
+                setLoading(document.getElementById('environment'), false);
             }
         }
         
@@ -5206,10 +5244,13 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             }
         }
 
+        let _logsLoaded = false;
         async function refreshLogs() {
             // Show skeletons only on the very first load
-            if (_logsCache.length === 0 && document.getElementById('logsTableBody') && !document.getElementById('logsTableBody').children.length) {
+            if (!_logsLoaded) {
                 logSkeletonRows();
+                const count = document.getElementById('logCount');
+                if (count) count.innerHTML = '<span class="spinner"></span> Loading logs…';
             }
             try {
                 const response = await fetch('/admin/api/logs');
@@ -5219,6 +5260,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 _logHasMore = !!data.hasMore;
                 if (data.storage) _logStorage = data.storage;
                 _mergeLogs(logs);
+                _logsLoaded = true;
 
                 populateLogProviderFilter();
                 renderLogs();
@@ -6353,7 +6395,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 return;
             }
 
-            list.innerHTML = '<div class="p-8 text-center text-sm text-muted-foreground">Loading models…</div>';
+            list.innerHTML = '<div class="p-8 text-center text-sm text-muted-foreground"><span class="spinner"></span> Loading models…</div>';
             document.getElementById('mdCount').textContent = '';
             subtitle.textContent = `GET /${provider}/models`;
 
@@ -6735,7 +6777,9 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             updateProxySelectAllButton();
         }
 
+        let _proxyLoaded = false;
         async function loadProxySettings() {
+            if (!_proxyLoaded) setLoading(document.getElementById('proxy'), true, 'Loading proxy settings…');
             try {
                 const res = await fetch('/admin/api/proxy');
                 if (!res.ok) throw new Error('Failed to load proxy settings');
@@ -6748,8 +6792,11 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 document.getElementById('proxyUrls').value = (data.proxies || []).map(p => p.url).join('\n');
                 renderProxyList(data.proxies || []);
                 renderProxyAuto(data);
+                _proxyLoaded = true;
             } catch (e) {
                 showErrorToast('Failed to load proxy settings: ' + e.message);
+            } finally {
+                setLoading(document.getElementById('proxy'), false);
             }
         }
 
@@ -7163,6 +7210,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             } catch (error) {
                 console.log('Auth check failed, showing login form');
             }
+            setLoading(document.getElementById('loginForm'), false);
         }
 
         async function checkLoginRateLimit() {
@@ -7298,7 +7346,9 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
         }
     }
 
+    let _settingsLoaded = false;
     async function loadTelegramSettings() {
+        if (!_settingsLoaded) setLoading(document.getElementById('settings'), true, 'Loading settings…');
         try {
             const response = await fetch('/admin/api/telegram');
             if (!response.ok) return;
@@ -7320,8 +7370,11 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             } else {
                 statusEl.innerHTML = '<span class="text-muted-foreground">Bot not configured</span>';
             }
+            _settingsLoaded = true;
         } catch (err) {
             console.error('Failed to load telegram settings:', err);
+        } finally {
+            setLoading(document.getElementById('settings'), false);
         }
     }
 
