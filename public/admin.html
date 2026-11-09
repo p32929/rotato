@@ -586,7 +586,8 @@
 
         /* Key check results */
         .key-status { width: 0.5rem; height: 0.5rem; border-radius: var(--radius-full); flex-shrink: 0; }
-        .key-status:not(.ok):not(.limited):not(.fail) { display: none; } /* untested: no dot */
+        .key-status:not(.ok):not(.limited):not(.fail):not(.testing) { display: none; } /* untested: no dot */
+        .key-status.testing { width: 0.7rem; height: 0.7rem; border: 2px solid color-mix(in srgb, var(--muted-foreground) 30%, transparent); border-top-color: var(--foreground); animation: spin 0.8s linear infinite; }
         .key-status.ok { background: var(--success); }
         .key-status.limited { background: var(--warning); }
         .key-status.fail { background: var(--destructive); }
@@ -1139,7 +1140,8 @@
                             class="btn btn-secondary btn-md"
                             title="Check every key of every provider (no tokens are spent)"
                         >
-                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                            <svg id="testAllIcon" class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                            <span id="testAllSpinner" class="spinner hidden"></span>
                             <span id="testAllLabel">Test all</span>
                         </button>
                         <button
@@ -4409,8 +4411,11 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
         // ---- Key checks: results shown as a dot per key and a note per provider ----
         const keyTestResults = new Map(); // "<apiType>_<name>|<stored key>" -> { state: ok | limited | fail, error }
 
+        const _keysTesting = new Set(); // `${pk}|${rawKey}` with a test in flight
         async function testOneKey(apiType, providerName, rawKey, quiet, viaProxy = false) {
             const pk = `${apiType}_${providerName}`;
+            _keysTesting.add(`${pk}|${rawKey}`);
+            refreshKeyTestUi(apiType, providerName);
             const baseUrl = envVars[`${apiType.toUpperCase()}_${providerName.toUpperCase()}_BASE_URL`] || null;
             let result;
             try {
@@ -4429,6 +4434,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             } catch (e) {
                 result = { state: 'fail', error: e.message };
             }
+            _keysTesting.delete(`${pk}|${rawKey}`);
             keyTestResults.set(`${pk}|${rawKey}`, result);
             refreshKeyTestUi(apiType, providerName);
             return result;
@@ -4438,11 +4444,13 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
 
         function keyStatusDotHtml(pk, index, rawKey) {
             const r = keyTestResults.get(`${pk}|${rawKey}`);
+            if (_keysTesting.has(`${pk}|${rawKey}`)) return `<span id="keyStatus_${pk}_${index}" class="key-status testing" title="Testing…" aria-label="Testing…"></span>`;
             const title = r ? `${KEY_STATE_LABEL[r.state]}${r.proxy ? ` via ${r.proxy}` : ''}${r.error ? ': ' + r.error : ''}` : 'Not tested yet';
             return `<span id="keyStatus_${pk}_${index}" class="key-status${r ? ' ' + r.state : ''}" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}"></span>`;
         }
 
         function providerTestSummaryHtml(pk, rawKeys) {
+            if (rawKeys.some(k => _keysTesting.has(`${pk}|${k}`))) return '<span class="opacity-50"> · </span><span class="spinner"></span> testing…';
             const results = rawKeys.map(k => keyTestResults.get(`${pk}|${k}`)).filter(Boolean);
             if (!results.length) return '';
             const count = (st) => results.filter(r => r.state === st).length;
@@ -4473,7 +4481,9 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
         function updateTestAllButton() {
             const label = document.getElementById('testAllLabel');
             if (!label) return;
-            label.textContent = testAllRun ? (testAllRun.cancelled ? 'Stopping…' : `Stop · ${testAllRun.done}/${testAllRun.total}`) : 'Test all';
+            label.textContent = testAllRun ? (testAllRun.cancelled ? 'Stopping…' : `Testing ${testAllRun.done}/${testAllRun.total} · Stop`) : 'Test all';
+            document.getElementById('testAllIcon')?.classList.toggle('hidden', !!testAllRun);
+            document.getElementById('testAllSpinner')?.classList.toggle('hidden', !testAllRun);
             document.getElementById('testAllBtn').title = testAllRun ? 'Stop testing' : 'Check every key of every provider (no tokens are spent)';
         }
 
@@ -6913,7 +6923,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                     statusEl.textContent = `Last refresh failed: ${auto.lastError}`;
                 } else if (auto.lastRefreshAt) {
                     const benched = pool.benched ? ` · ${pool.benched} benched` : '';
-                    statusEl.textContent = `${pool.green || 0} green · ${pool.red || 0} red${benched} · refreshed ${relativeTime(new Date(auto.lastRefreshAt).toISOString()).text}`;
+                    statusEl.textContent = `${pool.green || 0} green · ${pool.red || 0} red${benched} · ${(auto.lastLive ?? auto.live).toLocaleString()} of ${(auto.tested || 0).toLocaleString()} answered the last refresh, ${relativeTime(new Date(auto.lastRefreshAt).toISOString()).text}`;
                 } else {
                     statusEl.textContent = 'Waiting for the first refresh…';
                 }

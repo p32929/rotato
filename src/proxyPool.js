@@ -47,6 +47,7 @@ class ProxyPool {
     this.live = [];
     this.lastRefreshAt = null;
     this.lastTested = 0;
+    this.lastLive = null;
     this.lastError = null;
     this.refreshing = false;
     this.timer = null;
@@ -109,6 +110,7 @@ class ProxyPool {
     this.live = [];
     this.lastRefreshAt = null;
     this.lastTested = 0;
+    this.lastLive = null;
     this.lastError = null;
     this.onUpdate(this);
   }
@@ -118,6 +120,7 @@ class ProxyPool {
       enabled: this.enabled,
       refreshing: this.refreshing,
       live: this.live.length,
+      lastLive: this.lastLive, // answered the last refresh; live shrinks as dead ones are dropped
       tested: this.lastTested,
       lastRefreshAt: this.lastRefreshAt,
       lastError: this.lastError,
@@ -189,6 +192,7 @@ class ProxyPool {
       if (stale()) return this.getStatus(); // turned off mid-sweep - keep it empty
 
       this.live = live;
+      this.lastLive = live.length;
       this.lastTested = candidates.length;
       this.lastRefreshAt = Date.now();
       const fastest = live.length ? `${live[0].ms}ms` : 'n/a';
