@@ -80,6 +80,7 @@ class ProxyServer {
       probe: (url, host) => this.proxyPool.probe(url, host),
       getTargets: () => this.proxyedProviders().map(([, p]) => new URL(p.baseUrl).hostname),
       modelCheck: (url) => this.proxyModelCheck(url),
+      onDead: (urls) => { this.proxyPool.remove(urls); this.saveProxyCache(); },
     });
     this._modelCheckTurn = 0;
 
@@ -1867,25 +1868,33 @@ class ProxyServer {
     res.end(JSON.stringify({
       auto: this.proxyPool.getStatus(),
       pool: this.config.getProxyManager().getStats(),
-      details: this.config.getProxyManager().getProxyDetails()
+      details: this.config.getProxyManager().getProxyDetails(),
+      check: this.proxyChecker.checkProgress
     }));
   }
 
+  // The panel's one Refresh: fetch the lists again and test everything (a
+  // sweep), and test your own proxies too. Takes minutes, so answer at once;
+  // the panel follows it via /proxy/status.
   async handleRefreshProxyPool(res) {
     try {
-      if (!this.proxyPool.enabled) {
+      const manual = this.config.getProxyManager().manualUrls;
+      if (!this.proxyPool.enabled && !manual.length) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, error: 'Auto-fetch is off — turn it on and save first' }));
+        res.end(JSON.stringify({ success: false, error: 'Nothing to refresh — turn on auto-fetch or add your own proxies' }));
         return;
       }
 
-      // A sweep takes minutes - longer than an HTTP request should stay open -
-      // so start it and answer now; the panel follows it via /proxy/status.
-      this.proxyPool.refresh('manual', true).catch((e) => console.log(`[PROXY-POOL] Refresh failed: ${e.message}`));
+      if (this.proxyPool.enabled) {
+        this.proxyPool.refresh('manual', true).catch((e) => console.log(`[PROXY-POOL] Refresh failed: ${e.message}`));
+      }
+      if (manual.length) {
+        this.proxyChecker.checkAll(this.getProxyProbeTarget(), manual.slice()).catch((e) => console.log(`[PROXY-CHECK] Check failed: ${e.message}`));
+      }
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: true, auto: this.proxyPool.getStatus(), pool: this.config.getProxyManager().getStats() }));
+      res.end(JSON.stringify({ success: true, auto: this.proxyPool.getStatus(), check: this.proxyChecker.checkProgress }));
     } catch (error) {
-      this.sendError(res, 500, 'Failed to refresh proxy pool: ' + error.message);
+      this.sendError(res, 500, 'Failed to refresh proxies: ' + error.message);
     }
   }
 

@@ -14,6 +14,13 @@
  *      free, and unlike a handshake it catches a provider blocking the proxy's
  *      IP. It stops the moment real traffic shows up.
  *
+ * A fetched proxy that fails DEAD_AFTER checks in a row is dropped (onDead):
+ * free proxies die for good all the time, and keeping them as "red" hides how
+ * many actually work. The next sweep brings it back if it revives. After each
+ * pass, too few green asks for a rescue and a fresh list (onPoolExhausted).
+ *
+ * checkAll() is the panel's Refresh for proxies a sweep doesn't cover (yours).
+ *
  * The one exception is rescue(): when green proxies run short during traffic,
  * red and benched ones get an immediate handshake check (no API calls), so
  * proxies that were only slow under load come back instead of requests going
@@ -25,10 +32,11 @@ class ProxyChecker {
     this.probe = options.probe;             // (proxyUrl, host) => Promise<{ ok, ms }>
     this.getTargets = options.getTargets;   // () => hostnames of proxied providers
     this.modelCheck = options.modelCheck;   // (proxyUrl) => Promise<void>, reports its own outcome
+    this.onDead = options.onDead || (() => {}); // (urls) => void, fetched proxies that stopped answering
 
     this.intervalMs = options.intervalMs || 2 * 60 * 1000;
     this.idleMs = options.idleMs || 30 * 1000;
-    this.concurrency = options.concurrency || 10;
+    this.concurrency = options.concurrency || 50;
     this.modelEveryMs = options.modelEveryMs || 10 * 60 * 1000;
     this.modelGapMs = options.modelGapMs != null ? options.modelGapMs : 3000;
 
@@ -39,6 +47,7 @@ class ProxyChecker {
     this.running = false;
     this.rescuing = false;
     this.lastRescueAt = 0;
+    this.checkProgress = { running: false, done: 0, total: 0, ok: 0, failed: 0 };
   }
 
   start() {
@@ -70,8 +79,10 @@ class ProxyChecker {
     try {
       ({ ok, failed } = await this.handshakePass(manager, manager.proxyUrls, targets, current));
       if (ok + failed) {
+        const dropped = this.dropDead(manager);
         const stats = manager.getStats();
-        console.log(`[PROXY-CHECK] Handshake pass: ${ok} ok, ${failed} failed - ${stats.green} green, ${stats.red} red, ${stats.benched} benched`);
+        console.log(`[PROXY-CHECK] Handshake pass: ${ok} ok, ${failed} failed${dropped ? `, ${dropped} dead dropped` : ''} - ${stats.green} green, ${stats.red} red, ${stats.benched} benched`);
+        if (current() && manager.isRunningLow()) manager.notifyExhausted();
       }
 
       const due = manager.getGreen().filter((url) => {
@@ -94,7 +105,7 @@ class ProxyChecker {
     }
   }
 
-  async handshakePass(manager, urls, targets, go) {
+  async handshakePass(manager, urls, targets, go, progress = null) {
     // Least recently checked first, `concurrency` at a time, until done or go() says stop
     const checkedAt = (url) => (manager.health.get(url) || {}).checkedAt || 0;
     const queue = urls.slice().sort((a, b) => checkedAt(a) - checkedAt(b));
@@ -104,11 +115,44 @@ class ProxyChecker {
         const url = queue.shift();
         const result = await this.probe(url, targets[n++ % targets.length]);
         if (!go()) return;
-        if (result.ok) { manager.recordCheck(url, result.ms); ok++; } else { manager.reportFailure(url); failed++; }
+        if (result.ok) { manager.recordCheck(url, result.ms); ok++; } else {
+          manager.reportFailure(url);
+          const entry = manager._entry(url);
+          entry.checkFails = (entry.checkFails || 0) + 1;
+          failed++;
+        }
+        if (progress) Object.assign(progress, { done: ok + failed, ok, failed });
       }
     };
     await Promise.all(Array.from({ length: this.concurrency }, worker));
     return { ok, failed };
+  }
+
+  /** Fetched proxies that failed their last DEAD_AFTER checks leave the list. Returns how many. */
+  dropDead(manager) {
+    const dead = manager.autoUrls.filter((u) => ((manager.health.get(u) || {}).checkFails || 0) >= ProxyChecker.DEAD_AFTER);
+    if (dead.length) { manager.removeAuto(dead); this.onDead(dead); }
+    return dead.length;
+  }
+
+  /** Handshake-check proxies now (all of them by default), idle or not. checkProgress follows it. */
+  async checkAll(fallbackTarget, only = null) {
+    if (this.checkProgress.running) return this.checkProgress;
+    const manager = this.getManager();
+    const urls = only || (manager ? manager.proxyUrls : []);
+    const targets = this.getTargets();
+    if (!targets.length && fallbackTarget) targets.push(fallbackTarget);
+    this.checkProgress = { running: true, done: 0, total: urls.length, ok: 0, failed: 0 };
+    try {
+      if (urls.length && targets.length) {
+        await this.handshakePass(manager, urls, targets, () => this.getManager() === manager, this.checkProgress);
+        const stats = manager.getStats();
+        console.log(`[PROXY-CHECK] Checked ${urls.length}: ${this.checkProgress.ok} ok, ${this.checkProgress.failed} failed - ${stats.green} green, ${stats.red} red, ${stats.benched} benched`);
+      }
+    } finally {
+      this.checkProgress.running = false;
+    }
+    return this.checkProgress;
   }
 
   /** Green is running out: re-check the red and benched ones right away, even under traffic. */
@@ -132,5 +176,7 @@ class ProxyChecker {
     }
   }
 }
+
+ProxyChecker.DEAD_AFTER = 2;
 
 module.exports = ProxyChecker;

@@ -179,6 +179,20 @@ assert.strictEqual(ProxyServer.prototype.parseRoute.call({ config: { getProvider
     assert.deepStrictEqual(updates.map(u => u.n), [3]);
   }
 
+  // A refresh re-tests the proxies we already have, even if the lists dropped them
+  {
+    const p = new ProxyPool();
+    p.enabled = true;
+    p.live = [{ url: 'socks5://9.9.9.9:1', ms: 100 }];
+    p.fetchCandidates = async () => ['socks5://8.8.8.8:1', 'socks4://9.9.9.9:1'];   // same machine, other scheme
+    const tested = [];
+    p.probe = async (u) => { tested.push(u); return { ok: true, ms: 5 }; };
+    await p.refresh('test', true);
+    assert.deepStrictEqual(tested.sort(), ['socks4://9.9.9.9:1', 'socks5://8.8.8.8:1']);
+    p.remove(['socks5://8.8.8.8:1']);
+    assert.deepStrictEqual(p.live.map(e => e.url), ['socks4://9.9.9.9:1']);
+  }
+
   // Lists that write the scheme on each line are read the same as bare host:port
   {
     const p = new ProxyPool();
@@ -367,8 +381,37 @@ assert.strictEqual(ProxyServer.prototype.parseRoute.call({ config: { getProvider
     let probed = 0; ck.probe = async () => { probed++; return { ok: true, ms: 1 }; };
     for (const u of urls) pm._entry(u).modelCheckedAt = 0;
     await ck.cycle();
-    assert.strictEqual(probed, 4);                                                    // red ones still get their chance back
+    assert.strictEqual(probed, 3);                                                    // red ones still get their chance back; the one that failed twice was dropped
+    assert.ok(!pm.autoUrls.includes(urls[2]));
     assert.strictEqual(modelChecked.length, 3);                                       // but no model calls while busy
+    ck.stop();
+
+    // Test all: every proxy, with no timer running and nothing proxied yet (falls back to the probe target)
+    const hosts = [];
+    const all = new ProxyChecker({ getManager: () => pm, getTargets: () => [], probe: async (url, host) => { hosts.push(host); return { ok: url !== urls[0], ms: 200 }; }, modelCheck: async () => {} });
+    const done = await all.checkAll('api.fallback.com');
+    assert.deepStrictEqual({ ...done }, { running: false, done: 3, total: 3, ok: 2, failed: 1 });
+    assert.ok(hosts.every(h => h === 'api.fallback.com'));
+    assert.deepStrictEqual(urls.map(u => pm.isGreen(u)), [true, true, true, true]);   // 200ms now; one failure is not a bench
+  }
+
+  // Dead fetched proxies leave; your own never do; too few green after a pass asks for more
+  {
+    const mine = 'socks5://10.0.7.1:1080', fetched = 'socks5://10.0.7.2:1080';
+    const pm = new ProxyManager([mine], true, { goodMs: 1000 });
+    pm.setAutoProxies([{ url: fetched, ms: 300 }]);
+    let asked = 0; pm.onPoolExhausted = () => { asked++; };
+    const dropped = [];
+    const ck = new (require('../src/proxyChecker'))({ getManager: () => pm, getTargets: () => ['h'], probe: async () => ({ ok: false }), modelCheck: async () => {}, onDead: (u) => dropped.push(...u) });
+    ck.start();
+    await ck.cycle();
+    assert.ok(asked > 0);                                                             // 2 green is under MIN_GREEN
+    assert.deepStrictEqual(pm.proxyUrls, [mine, fetched]);                            // one failed check isn't dead
+    await ck.cycle();
+    assert.deepStrictEqual(pm.proxyUrls, [mine]);                                     // two in a row is
+    assert.deepStrictEqual(dropped, [fetched]);
+    await ck.cycle(); await ck.cycle();
+    assert.deepStrictEqual(pm.proxyUrls, [mine]);                                     // yours stays, however often it fails
     ck.stop();
   }
 

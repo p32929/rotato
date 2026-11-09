@@ -186,7 +186,7 @@ PROXY_AUTO_FETCH=true
 
 Pulls the SOCKS5, SOCKS4 and HTTP lists from [monosans/proxy-list](https://github.com/monosans/proxy-list) and [proxifly/free-proxy-list](https://github.com/proxifly/free-proxy-list) (~10k entries after removing duplicates), **validates every one**, and keeps only those that respond — typically several hundred. A full sweep takes a few minutes; when the pool starts empty, proxies are handed over as they are found, so the first requests don't wait for the whole sweep. Validation opens the proxy tunnel to one of your configured providers and completes the TLS handshake, then hangs up — no HTTP request is sent, no API key is used, and no third-party "what is my IP" service is involved.
 
-The pool is held in memory and never written to `.env`. The list is re-fetched every 30 minutes, and sooner when fewer than 5 green proxies are left (at most one fetch every 5 minutes). Auto-fetch works on its own — you don't need any proxies of your own.
+The pool is held in memory and never written to `.env`. The list is re-fetched every 15 minutes, and sooner when fewer than 15 green proxies are left (at most one fetch every 5 minutes). Each refresh re-tests the proxies already in the list along with the fresh downloads, so a good one isn't lost because it dropped off its source list. **Refresh & test** in the Proxy tab does it now — and tests your own proxies too; with auto-fetch off it tests just yours. Auto-fetch works on its own — you don't need any proxies of your own.
 
 Expect heavy attrition: typically a quarter to a third of the entries answer, and SOCKS5 fares far better than SOCKS4 (many SOCKS4 proxies don't implement the SOCKS4a hostname extension this needs). Some providers (Groq, for one) block most free-proxy IPs outright. Treat proxy rotation as best-effort.
 
@@ -207,10 +207,11 @@ Both are editable in the Proxy tab.
 
 ### Background checks
 
-Every couple of minutes rotato re-checks the list, least recently checked first:
+Every couple of minutes rotato re-checks the list, least recently checked first, 50 at a time:
 
 - **Every proxy** gets a handshake check, under traffic too: tunnel + TLS handshake to a proxied provider's host, then hang up. No request, no API key. Its timing becomes the proxy's speed, so proxies move between green and red, and a benched proxy that passes is back in play at once. Real requests never use red proxies, so without this a proxy that turned red would stay red.
-- **When green runs low** (fewer than 5) even during traffic, red and benched proxies get an immediate handshake check — at most once a minute, until 10 are green again — so proxies that were only slow under load come back instead of requests going direct.
+- **Dead ones are dropped.** A fetched proxy that fails two checks in a row leaves the list; the next refresh brings it back if it revives. Your own proxies are never dropped.
+- **When green runs low** (fewer than 15) after a check or during traffic, a fresh list is fetched, and red and benched proxies get an immediate handshake check — at most once a minute, until 10 are green again — so proxies that were only slow under load come back instead of requests going direct.
 - **Green proxies**, while no proxied request has gone out for 30 seconds, also list a provider's models through the proxy, each at most once every 10 minutes, one call every few seconds, taking turns across proxied providers and their keys. Listing models is free, and unlike a handshake it catches a provider blocking the proxy's IP (a 403/407 counts against it).
 
 ### Timeouts and recovery
@@ -279,6 +280,7 @@ Old day directories are deleted at startup and hourly after that. `logs/` is git
 - Keys are validated even for providers without a `/models` endpoint
 - **Proxy picking** — proxies are green (under 1000ms by default) or red; each request takes a random green one no other request is using, moves on to the next on failure (5 tries by default), and background checks keep the list and its colours current. Both numbers are set in the Proxy tab
 - **Providers without a key** — leave the keys empty when adding a provider; it's added only if its models list answers without one, and it works with proxies like any other
+- **Refresh & test** — one button in the Proxy tab fetches fresh lists and tests every proxy, yours included. Refreshes every 15 minutes and whenever green drops under 15, keeps the proxies that still work, and drops fetched ones that fail two checks in a row, so the list shows what actually works
 - **More free proxies** — the auto-fetched pool also pulls proxifly/free-proxy-list and HTTP proxies (~10k candidates, several hundred usually alive, up from a few dozen), and an empty pool starts using proxies while the first sweep is still running
 - **Proxy on means proxied** — a rotated key gets a different proxy; with few or no green proxies a request reuses one or takes a red one rather than going direct; right after a start it waits for the list to load
 - Key tests can go through the proxy or direct for providers that use it, and the Proxy tab can select all/none

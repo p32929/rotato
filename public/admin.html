@@ -1272,7 +1272,7 @@
                             <div class="flex items-start justify-between gap-4">
                                 <div>
                                     <div class="text-xs font-medium text-foreground">Automatically fetch free proxies</div>
-                                    <p class="text-xs text-muted-foreground mt-1">Pulls the SOCKS5, SOCKS4 and HTTP lists from <span class="text-foreground">monosans/proxy-list</span> and <span class="text-foreground">proxifly/free-proxy-list</span> (~10k entries), tests every entry against your provider, and keeps the ones that answer. The list is re-fetched every 30 minutes, and while rotato is idle every proxy is re-checked every couple of minutes.</p>
+                                    <p class="text-xs text-muted-foreground mt-1">Pulls the SOCKS5, SOCKS4 and HTTP lists from <span class="text-foreground">monosans/proxy-list</span> and <span class="text-foreground">proxifly/free-proxy-list</span> (~10k entries), tests every entry against your provider, and keeps the ones that answer. The list is re-fetched every 15 minutes (sooner when green runs low), every proxy is re-checked every couple of minutes, and ones that stop answering are dropped. Refresh &amp; test does all of it now.</p>
                                     <p class="text-xs text-muted-foreground mt-1">These are run by strangers. Your API keys stay encrypted inside the TLS tunnel, but whoever runs the proxy can see which hosts you reach and can stall or drop traffic.</p>
                                 </div>
                                 <label class="toggle-switch flex-shrink-0" title="Automatically fetch free proxies">
@@ -1283,7 +1283,7 @@
                             <div>
                                 <div class="flex items-center gap-2">
                                     <span id="proxyAutoStatus" class="text-xs text-muted-foreground flex-1">—</span>
-                                    <button id="proxyRefreshBtn" onclick="refreshProxyPool(this)" class="btn btn-secondary px-3 py-1.5 text-xs font-medium flex-shrink-0">Refresh now</button>
+                                    <button id="proxyRefreshBtn" onclick="refreshProxyPool(this)" class="btn btn-secondary px-3 py-1.5 text-xs font-medium flex-shrink-0">Refresh &amp; test</button>
                                 </div>
                                 <div id="proxyAutoProgress" class="hidden mt-2">
                                     <div class="h-1.5 w-full rounded-full overflow-hidden" style="background:var(--muted)">
@@ -1357,7 +1357,6 @@
                                 </svg>
                                 Saved proxies
                             </h3>
-                            <button onclick="testAllProxies(this)" class="btn btn-secondary px-3 py-1.5 text-xs font-medium flex-shrink-0">Test All</button>
                         </div>
                         <div class="space-y-3">
                             <div>
@@ -1382,7 +1381,7 @@
                             Where to get proxies
                         </h3>
                         <div class="space-y-3">
-                            <p class="text-xs text-muted-foreground">Grab a few from these public lists, paste them above, then hit <span class="text-foreground">Test All</span> to keep the ones that respond. Free proxies rotate and die often, so add several. These are third-party lists — not endorsements.</p>
+                            <p class="text-xs text-muted-foreground">Grab a few from these public lists, paste them above, then hit <span class="text-foreground">Refresh &amp; test</span> to keep the ones that respond. Free proxies rotate and die often, so add several. These are third-party lists — not endorsements.</p>
                             <div class="flex flex-wrap gap-2">
                                 <a href="https://free-proxy-list.net/" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">free-proxy-list.net</a>
                                 <a href="https://geonode.com/free-proxy-list" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">geonode.com</a>
@@ -6805,14 +6804,15 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
         // or after every proxy failed), so the tab picks that up too.
         let _proxyProgressTimer = null;
 
-        function renderProxyProgress(auto) {
+        function renderProxyProgress(auto, check) {
             const wrap = document.getElementById('proxyAutoProgress');
             const bar = document.getElementById('proxyAutoProgressBar');
             const statusEl = document.getElementById('proxyAutoStatus');
             if (!wrap || !bar) return false;
 
             const p = (auto && auto.progress) || {};
-            const running = !!(auto && auto.refreshing);
+            const checking = !!(check && check.running);
+            const running = !!(auto && auto.refreshing) || checking;
 
             if (!running) {
                 wrap.classList.add('hidden');
@@ -6825,6 +6825,10 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 const pct = Math.round((p.tested / p.total) * 100);
                 bar.style.width = pct + '%';
                 if (statusEl) statusEl.textContent = `Testing ${p.tested} of ${p.total} — ${p.live} alive so far (${pct}%)`;
+            } else if (checking && !(auto && auto.refreshing)) {
+                const pct = check.total ? Math.round((check.done / check.total) * 100) : 0;
+                bar.style.width = pct + '%';
+                if (statusEl) statusEl.textContent = `Testing your proxies: ${check.done} of ${check.total}`;
             } else {
                 bar.style.width = '8%';
                 if (statusEl) statusEl.textContent = 'Fetching proxy lists…';
@@ -6847,13 +6851,13 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                     const res = await fetch('/admin/api/proxy/status', { background: true });
                     if (!res.ok) return;
                     const data = await res.json();
-                    if (!renderProxyProgress(data.auto)) {
+                    if (!renderProxyProgress(data.auto, data.check)) {
                         // Sweep finished - redraw only the fetched list, so unsaved
                         // edits to the providers or manual proxies survive
                         stopProxyProgressPolling();
-                        proxyState = { ...proxyState, auto: data.auto, pool: data.pool, details: data.details };
+                        proxyState = { ...proxyState, auto: data.auto, pool: data.pool, details: data.details, check: data.check };
                         renderProxyAuto(proxyState);
-                        if (onDone) onDone(data.auto);
+                        if (onDone) onDone(data.auto, data.pool || {});
                     }
                 } catch (e) {
                     stopProxyProgressPolling();
@@ -6867,8 +6871,8 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             if (!btn || !checkbox) return;
 
             btn.title = checkbox.checked
-                ? 'Fetch the lists again and re-test every proxy'
-                : "Turn on 'Automatically fetch free proxies' first";
+                ? 'Fetch the lists again and test every proxy, yours included'
+                : 'Test your own proxies';
         }
 
         // Auto-fetched pool: read-only list plus a one-line summary of the last sweep
@@ -6883,14 +6887,14 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 if (unsaved) {
                     statusEl.textContent = 'Auto-fetch is not active yet — hit Save Proxy Settings.';
                 } else if (!auto.enabled) {
-                    statusEl.textContent = 'Auto-fetch is off.';
+                    statusEl.textContent = pool.total ? `Auto-fetch is off · your proxies: ${pool.green || 0} green · ${pool.red || 0} red` : 'Auto-fetch is off.';
                 } else if (auto.refreshing) {
                     statusEl.textContent = 'Fetching and testing free proxies…';
                 } else if (auto.lastError) {
                     statusEl.textContent = `Last refresh failed: ${auto.lastError}`;
                 } else if (auto.lastRefreshAt) {
                     const benched = pool.benched ? ` · ${pool.benched} benched` : '';
-                    statusEl.textContent = `${pool.green || 0} green · ${pool.red || 0} red${benched} · ${auto.live} of ${auto.tested} answered the last fetch, ${relativeTime(new Date(auto.lastRefreshAt).toISOString()).text}`;
+                    statusEl.textContent = `${pool.green || 0} green · ${pool.red || 0} red${benched} · refreshed ${relativeTime(new Date(auto.lastRefreshAt).toISOString()).text}`;
                 } else {
                     statusEl.textContent = 'Waiting for the first refresh…';
                 }
@@ -6903,7 +6907,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
 
             updateProxyAutoControls();
 
-            if (renderProxyProgress(auto) && !_proxyProgressTimer) startProxyProgressPolling();
+            if (renderProxyProgress(auto, data && data.check) && !_proxyProgressTimer) startProxyProgressPolling();
 
             // Live state from the rotator: green (used), red (too slow), benched
             const list = ((data && data.details) || []).filter(d => !d.manual);
@@ -6956,7 +6960,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                     const res = await fetch('/admin/api/proxy/status', { background: true });
                     if (!res.ok) return;
                     const data = await res.json();
-                    proxyState = { ...proxyState, auto: data.auto, pool: data.pool, details: data.details };
+                    proxyState = { ...proxyState, auto: data.auto, pool: data.pool, details: data.details, check: data.check };
                     renderProxyAuto(proxyState);
                     renderProxyList(proxyState.proxies || []);
                 } catch (e) { /* next tick */ }
@@ -6970,15 +6974,9 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
         // Force a fresh fetch + validation sweep right now
         async function refreshProxyPool(btn) {
             const checkbox = document.getElementById('proxyAutoFetch');
-            if (checkbox && !checkbox.checked) {
-                showWarningToast("Turn on 'Automatically fetch free proxies' first");
-                return;
-            }
-
             try {
-                // The server acts on saved settings, so apply the toggle if the
-                // user turned it on but hasn't pressed Save yet.
-                if (!(proxyState && proxyState.autoFetch)) {
+                // The server acts on saved settings, so apply an unsaved toggle first
+                if (checkbox && checkbox.checked !== !!(proxyState && proxyState.autoFetch)) {
                     await persistProxySettings();
                 }
 
@@ -6986,11 +6984,11 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 const res = await fetch('/admin/api/proxy/refresh', { method: 'POST' });
                 const data = await res.json();
                 if (!res.ok || !data.success) throw new Error(data.error || 'Refresh failed');
-                renderProxyProgress(data.auto);
-                startProxyProgressPolling((auto) => {
+                renderProxyProgress(data.auto, data.check);
+                startProxyProgressPolling((auto, pool) => {
+                    renderProxyList(proxyState.proxies || []);
                     if (auto.lastError) showErrorToast('Could not refresh proxies: ' + auto.lastError);
-                    else if (!auto.tested) showWarningToast('No proxies could be fetched — check the server log');
-                    else showSuccessToast(`${auto.live} of ${auto.tested} free proxies responded`);
+                    else showSuccessToast(`Done — ${pool.green || 0} green, ${pool.red || 0} red${auto.enabled ? ` (${auto.live} of ${auto.tested} fetched proxies answered)` : ''}`);
                 });
             } catch (e) {
                 stopProxyProgressPolling();
@@ -7107,19 +7105,6 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             }
         }
 
-        async function testAllProxies(btn) {
-            const original = btn ? btn.textContent : '';
-            if (btn) { btn.disabled = true; btn.textContent = 'Testing...'; }
-            const rows = document.querySelectorAll('#proxyListContainer > div');
-            const proxies = proxyState.proxies || [];
-            for (let i = 0; i < rows.length; i++) {
-                const rowBtn = rows[i].querySelector('button');
-                const resultEl = rows[i].querySelector('.proxy-test-result');
-                if (proxies[i]) await testProxy(proxies[i].url, rowBtn, resultEl);
-            }
-            if (btn) { btn.disabled = false; btn.textContent = original; }
-        }
-        
         // Utility functions
         // These used to paint inline banners that only had light-theme colours, so
         // the same event looked different depending on which tab you were on. They
