@@ -1025,7 +1025,7 @@
                         </div>
                         <div>
                             <h1 class="text-base font-semibold text-foreground leading-tight">rotato</h1>
-                            <p class="text-xs text-muted-foreground">API key rotation proxy</p>
+                            <p class="text-xs text-muted-foreground">API key rotation proxy<span id="appVersion"></span></p>
                         </div>
                     </div>
                     <div class="flex items-center space-x-3">
@@ -7184,6 +7184,8 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 const r = await fetch('/admin/api/status');
                 if (!r.ok) return;
                 const s = await r.json();
+                const ver = document.getElementById('appVersion');
+                if (ver && s.version) ver.textContent = ` · v${s.version}`;
                 const dot = (color) => `<span class="provider-dot" style="--pc:${color}"></span>`;
                 const item = (label, valueHtml) => `<span class="inline-flex items-center gap-1.5"><span class="opacity-60">${label}</span>${valueHtml}</span>`;
                 const sep = '<span class="opacity-30">•</span>';

@@ -8,6 +8,7 @@ const TelegramBot = require('./telegramBot');
 const ProxyManager = require('./proxyManager');
 const ApiLogStore = require('./apiLogStore');
 const ProxyPool = require('./proxyPool');
+const { version: APP_VERSION } = require('../package.json');
 const ProxyChecker = require('./proxyChecker');
 const proxyCache = require('./proxyCache');
 const { resolveKey } = require('./keyValues');
@@ -1434,6 +1435,7 @@ class ProxyServer {
       for (const [, cfg] of providers.entries()) { total++; if (!cfg.disabled) enabled++; }
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
+        version: APP_VERSION,
         uptimeMs: Date.now() - this.startTime,
         totalRequests: this.totalApiRequests,
         providers: total,
