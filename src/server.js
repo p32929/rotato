@@ -1725,6 +1725,8 @@ class ProxyServer {
         autoFetch,
         goodMs: this.config.getProxyManager().goodMs,
         maxTries: this.config.getProxyManager().maxTries,
+        fetchMinutes: this.config.proxyFetchMinutes,
+        checkMinutes: this.config.proxyCheckMinutes,
         proxies,
         providers,
         auto: this.proxyPool.getStatus(),
@@ -1742,13 +1744,18 @@ class ProxyServer {
    */
   async handleUpdateProxySettings(res, body) {
     try {
-      const { proxies, autoFetch, providerProxies, goodMs, maxTries } = JSON.parse(body);
+      const { proxies, autoFetch, providerProxies, goodMs, maxTries, fetchMinutes, checkMinutes } = JSON.parse(body);
 
       // Green/red line and tries per request
       const numberIn = (v, min, max) => v === undefined || (Number.isInteger(Number(v)) && Number(v) >= min && Number(v) <= max);
       if (!numberIn(goodMs, 100, 30000) || !numberIn(maxTries, 1, 50)) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: 'Green below must be 100–30000 ms and tries per request 1–50' }));
+        return;
+      }
+      if (!numberIn(fetchMinutes, 5, 1440) || !numberIn(checkMinutes, 1, 60)) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'Fetch new lists every 5–1440 minutes and re-test every 1–60 minutes' }));
         return;
       }
 
@@ -1782,6 +1789,8 @@ class ProxyServer {
 
       if (goodMs !== undefined) envVars.PROXY_GOOD_MS = String(Number(goodMs));
       if (maxTries !== undefined) envVars.PROXY_MAX_TRIES = String(Number(maxTries));
+      if (fetchMinutes !== undefined) envVars.PROXY_FETCH_MINUTES = String(Number(fetchMinutes));
+      if (checkMinutes !== undefined) envVars.PROXY_CHECK_MINUTES = String(Number(checkMinutes));
 
       const useAuto = !!autoFetch;
       if (useAuto) {
@@ -2214,6 +2223,8 @@ class ProxyServer {
       if (this.proxyPool.enabled) this.proxyPool.refresh('pool exhausted');
     };
     manager.isLoading = () => this.proxyPool.enabled && this.proxyPool.refreshing;
+    this.proxyPool.setRefreshInterval(this.config.proxyFetchMinutes * 60 * 1000);
+    this.proxyChecker.setInterval(this.config.proxyCheckMinutes * 60 * 1000);
 
     // Fetch whenever auto-fetch is on, even before any provider is routed
     // through it - routing is per provider, so this only fills the list.

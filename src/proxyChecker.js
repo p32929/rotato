@@ -61,6 +61,13 @@ class ProxyChecker {
     this.timer = null;
   }
 
+  /** Set from the Proxy tab (PROXY_CHECK_MINUTES); takes effect at once if running. */
+  setInterval(ms) {
+    if (!(ms > 0) || ms === this.intervalMs) return;
+    this.intervalMs = ms;
+    if (this.timer) { this.stop(); this.start(); }
+  }
+
   isIdle(manager) {
     return Date.now() - manager.lastPickAt > this.idleMs;
   }

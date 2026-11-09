@@ -1272,7 +1272,7 @@
                             <div class="flex items-start justify-between gap-4">
                                 <div>
                                     <div class="text-xs font-medium text-foreground">Automatically fetch free proxies</div>
-                                    <p class="text-xs text-muted-foreground mt-1">Pulls the SOCKS5, SOCKS4 and HTTP lists from <span class="text-foreground">monosans/proxy-list</span> and <span class="text-foreground">proxifly/free-proxy-list</span> (~10k entries), tests every entry against your provider, and keeps the ones that answer. The list is re-fetched every 15 minutes (sooner when green runs low), every proxy is re-checked every couple of minutes, and ones that stop answering are dropped. Refresh &amp; test does all of it now.</p>
+                                    <p class="text-xs text-muted-foreground mt-1">Pulls the SOCKS5, SOCKS4 and HTTP lists from <span class="text-foreground">monosans/proxy-list</span> and <span class="text-foreground">proxifly/free-proxy-list</span> (~10k entries), tests every entry against your provider, and keeps the ones that answer, then keeps re-testing them. Both run on the timers below; Refresh &amp; test does both right now.</p>
                                     <p class="text-xs text-muted-foreground mt-1">These are run by strangers. Your API keys stay encrypted inside the TLS tunnel, but whoever runs the proxy can see which hosts you reach and can stall or drop traffic.</p>
                                 </div>
                                 <label class="toggle-switch flex-shrink-0" title="Automatically fetch free proxies">
@@ -1288,6 +1288,23 @@
                                 <div id="proxyAutoProgress" class="hidden mt-2">
                                     <div class="h-1.5 w-full rounded-full overflow-hidden" style="background:var(--muted)">
                                         <div id="proxyAutoProgressBar" class="h-full rounded-full transition-all duration-300" style="width:0%;background:var(--info)"></div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                <div>
+                                    <label for="proxyFetchMinutes" class="block text-xs font-medium text-muted-foreground mb-1">Fetch new lists every</label>
+                                    <div class="flex items-center gap-2">
+                                        <input type="number" id="proxyFetchMinutes" class="input-field w-28 px-3 py-2 rounded-md text-sm tabular-nums" min="5" max="1440" step="1" value="30">
+                                        <span class="text-xs text-muted-foreground">minutes — sooner when green runs low</span>
+                                    </div>
+                                </div>
+                                <div>
+                                    <label for="proxyCheckMinutes" class="block text-xs font-medium text-muted-foreground mb-1">Re-test every proxy every</label>
+                                    <div class="flex items-center gap-2">
+                                        <input type="number" id="proxyCheckMinutes" class="input-field w-28 px-3 py-2 rounded-md text-sm tabular-nums" min="1" max="60" step="1" value="2">
+                                        <span class="text-xs text-muted-foreground">minutes — ones that stop answering are dropped</span>
                                     </div>
                                 </div>
                             </div>
@@ -6787,6 +6804,8 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 document.getElementById('proxyAutoFetch').checked = !!data.autoFetch;
                 document.getElementById('proxyGoodMs').value = data.goodMs || 1000;
                 document.getElementById('proxyMaxTries').value = data.maxTries || 5;
+                document.getElementById('proxyFetchMinutes').value = data.fetchMinutes || 30;
+                document.getElementById('proxyCheckMinutes').value = data.checkMinutes || 2;
                 renderProxyProviders(data.providers || []);
                 document.getElementById('proxyUrls').value = (data.proxies || []).map(p => p.url).join('\n');
                 renderProxyList(data.proxies || []);
@@ -7040,6 +7059,8 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                     proxies, autoFetch, providerProxies: _proxyProviderState,
                     goodMs: Number(document.getElementById('proxyGoodMs').value) || 1000,
                     maxTries: Number(document.getElementById('proxyMaxTries').value) || 5,
+                    fetchMinutes: Number(document.getElementById('proxyFetchMinutes').value) || 30,
+                    checkMinutes: Number(document.getElementById('proxyCheckMinutes').value) || 2,
                 }),
             });
             const data = await res.json();

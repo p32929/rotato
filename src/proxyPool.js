@@ -39,8 +39,8 @@ class ProxyPool {
     this.concurrency = options.concurrency || 300;
     // A proxy that needs over 4s just to open a tunnel is no use for requests
     this.probeTimeoutMs = options.probeTimeoutMs || 4000;
-    // The source lists regenerate every few minutes and free proxies die fast
-    this.refreshIntervalMs = options.refreshIntervalMs || 15 * 60 * 1000;
+    // Set from the Proxy tab (PROXY_FETCH_MINUTES); setRefreshInterval() changes it live
+    this.refreshIntervalMs = options.refreshIntervalMs || 30 * 60 * 1000;
     // Floor between refreshes so a burst of failures can't hammer GitHub
     this.minRefreshGapMs = options.minRefreshGapMs || 5 * 60 * 1000;
 
@@ -69,6 +69,16 @@ class ProxyPool {
     const fresh = this.live.length && this.lastRefreshAt && Date.now() - this.lastRefreshAt < this.refreshIntervalMs;
     if (!fresh) this.refresh('enabled', true);
     if (!this.timer) {
+      this.timer = setInterval(() => this.refresh('scheduled'), this.refreshIntervalMs);
+      if (this.timer.unref) this.timer.unref();
+    }
+  }
+
+  setRefreshInterval(ms) {
+    if (!(ms > 0) || ms === this.refreshIntervalMs) return;
+    this.refreshIntervalMs = ms;
+    if (this.timer) {
+      clearInterval(this.timer);
       this.timer = setInterval(() => this.refresh('scheduled'), this.refreshIntervalMs);
       if (this.timer.unref) this.timer.unref();
     }

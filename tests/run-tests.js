@@ -122,6 +122,32 @@ assert.ok(cfg.providers.has('foo_bar'));
 assert.strictEqual(cfg.providers.get('dup').apiType, 'openai');
 assert.strictEqual(cfg.providers.get('gemini').apiType, 'gemini');
 
+// Proxy timers: 30 min fetch / 2 min re-test by default; out-of-range values fall back
+{
+  const pc = Object.create(Config.prototype);
+  pc.providers = new Map();
+  pc.parseProxyConfig({});
+  assert.deepStrictEqual([pc.proxyFetchMinutes, pc.proxyCheckMinutes], [30, 2]);
+  pc.parseProxyConfig({ PROXY_FETCH_MINUTES: '45', PROXY_CHECK_MINUTES: '5' });
+  assert.deepStrictEqual([pc.proxyFetchMinutes, pc.proxyCheckMinutes], [45, 5]);
+  pc.parseProxyConfig({ PROXY_FETCH_MINUTES: '1', PROXY_CHECK_MINUTES: '999' });
+  assert.deepStrictEqual([pc.proxyFetchMinutes, pc.proxyCheckMinutes], [30, 2]);
+
+  // A new interval takes effect on the running timers
+  const pool = new (require('../src/proxyPool'))();
+  pool.timer = setInterval(() => {}, 1e9);
+  const before = pool.timer;
+  pool.setRefreshInterval(45 * 60 * 1000);
+  assert.ok(pool.timer !== before && pool.refreshIntervalMs === 45 * 60 * 1000);
+  clearInterval(pool.timer);
+  const ck = new (require('../src/proxyChecker'))({ getManager: () => null, getTargets: () => [] });
+  ck.start();
+  const t = ck.timer;
+  ck.setInterval(5 * 60 * 1000);
+  assert.ok(ck.timer && ck.timer !== t && ck.intervalMs === 5 * 60 * 1000);
+  ck.stop();
+}
+
 // Keyless providers: a named provider with a base URL and no keys gets one empty key;
 // requests carry no auth, logs say "no API key". A legacy bare BASE_URL is not a provider.
 {

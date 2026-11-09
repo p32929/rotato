@@ -286,6 +286,9 @@ class Config {
       goodMs: int(envVars.PROXY_GOOD_MS, 100, 30000),
       maxTries: int(envVars.PROXY_MAX_TRIES, 1, 50),
     });
+    // How often the free lists are fetched again, and every proxy re-tested
+    this.proxyFetchMinutes = int(envVars.PROXY_FETCH_MINUTES, 5, 1440) || 30;
+    this.proxyCheckMinutes = int(envVars.PROXY_CHECK_MINUTES, 1, 60) || 2;
 
     if (proxied.length === 0) {
       if (this.proxyUrls.length > 0) {
