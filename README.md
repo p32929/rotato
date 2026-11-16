@@ -2,6 +2,8 @@
 
 Node.js proxy server for automatic API key rotation across multiple LLM providers (OpenAI, Gemini, Groq, OpenRouter, etc.). Includes a built-in Telegram bot for chatting with any model. ***Zero external dependencies***.
 
+**No third-party packages, so there is no supply chain to attack.** Most tools like this pull in hundreds of npm packages, and any one of them could be hijacked to steal the API keys you give it. rotato uses only Node.js itself: there is nothing to `npm install`, no `node_modules`, and every line that touches your keys is in this repo where you can read it. Even the admin panel's styles are served from this repo, not from a CDN.
+
 <img width="3024" height="1714" alt="rotato admin panel" src="https://github.com/user-attachments/assets/f265cc8f-941e-43e4-998e-c713dacfd248" />
 
 ## Features

@@ -175,7 +175,7 @@ class ProxyServer {
       // Serve static files from public directory
       if (req.url === '/tailwind-3.4.17.js' && (req.method === 'GET' || req.method === 'HEAD')) {
         try {
-          const filePath = path.join(process.cwd(), 'public', 'tailwind-3.4.17.js');
+          const filePath = require('path').join(process.cwd(), 'public', 'tailwind-3.4.17.js');
           console.log(`[STATIC] Serving file from: ${filePath}`);
 
           if (req.method === 'HEAD') {
