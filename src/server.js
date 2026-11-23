@@ -865,8 +865,10 @@ class ProxyServer {
     // Admin API routes
     if (path === '/admin/api/env' && req.method === 'GET') {
       await this.handleGetEnvVars(res);
-    } else if (path === '/admin/api/env-file' && req.method === 'GET') {
-      await this.handleGetEnvFile(res);
+    } else if (path === '/admin/api/env-file' && req.method === 'POST') {
+      await this.handleGetEnvFile(req, res, body);
+    } else if (path === '/admin/api/verify-password' && req.method === 'POST') {
+      await this.handleVerifyPassword(req, res, body);
     } else if (path === '/admin/api/env' && req.method === 'POST') {
       await this.handleUpdateEnvVars(res, body);
     } else if (path === '/admin/api/test' && req.method === 'POST') {
@@ -944,69 +946,67 @@ class ProxyServer {
     return this.loginAttempts.get(ip);
   }
 
-  async handleAdminLogin(req, res, body) {
-    try {
-      const st = this.loginState(req);
-      // Check if login is currently blocked
-      if (st.blockedUntil && Date.now() < st.blockedUntil) {
-        const remainingSeconds = Math.ceil((st.blockedUntil - Date.now()) / 1000);
-        const remainingMinutes = Math.ceil(remainingSeconds / 60);
-        res.writeHead(429, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({
-          error: `Too many failed login attempts. Please wait ${remainingMinutes} minute(s).`,
-          blockedUntil: st.blockedUntil,
-          remainingSeconds: remainingSeconds
-        }));
-        return;
-      }
-
-      const data = JSON.parse(body);
-      const adminPassword = this.getAdminPassword();
-
-      if (ProxyServer.safeEqual(data && data.password, adminPassword)) {
-        // Successful login - reset counters
-        st.fails = 0;
-        st.blockedUntil = null;
-        this.adminSessionToken = this.generateSessionToken();
-        this.adminSessionIssuedAt = Date.now();
-
-        // Set session cookie (expires in 24 hours)
-        const expires = new Date(Date.now() + 24 * 60 * 60 * 1000).toUTCString();
-        res.writeHead(200, {
-          'Content-Type': 'application/json',
-          'Set-Cookie': `adminSession=${this.adminSessionToken}; HttpOnly; SameSite=Strict; Expires=${expires}; Path=/admin`
-        });
-        res.end(JSON.stringify({ success: true }));
-      } else {
-        // Failed login - increment counter
-        st.fails++;
-        const attemptsRemaining = 5 - st.fails;
-
-        // Block if reached 5 attempts
-        if (st.fails >= 5) {
-          st.fails = 0;
-          st.blockedUntil = Date.now() + (5 * 60 * 1000); // 5 minutes
-          console.log('[SECURITY] Login blocked due to 5 failed attempts. Blocked until:', new Date(st.blockedUntil).toISOString());
-          res.writeHead(429, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({
-            error: 'Too many failed login attempts. Please wait 5 minutes.',
-            blockedUntil: this.loginBlockedUntil,
-            remainingSeconds: 300
-          }));
-        } else {
-          console.log(`[SECURITY] Failed login attempt ${st.fails}/5`);
-          res.writeHead(401, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({
-            error: `Invalid password. ${attemptsRemaining} attempt(s) remaining.`,
-            attemptsRemaining: attemptsRemaining
-          }));
-        }
-      }
-    } catch (error) {
-      this.sendError(res, 400, 'Invalid request');
+  /**
+   * Check the admin password, with the per-IP lockout (5 misses -> 5 minutes).
+   * Returns null when it matches, else { status, body } to send back.
+   * Login, the password prompt and the .env export all go through here.
+   */
+  checkPassword(req, password) {
+    const st = this.loginState(req);
+    if (st.blockedUntil && Date.now() < st.blockedUntil) {
+      const remainingSeconds = Math.ceil((st.blockedUntil - Date.now()) / 1000);
+      return { status: 429, body: {
+        error: `Too many failed attempts. Please wait ${Math.ceil(remainingSeconds / 60)} minute(s).`,
+        blockedUntil: st.blockedUntil,
+        remainingSeconds
+      } };
     }
+    if (ProxyServer.safeEqual(password, this.getAdminPassword())) {
+      st.fails = 0;
+      st.blockedUntil = null;
+      return null;
+    }
+    st.fails++;
+    if (st.fails >= 5) {
+      st.fails = 0;
+      st.blockedUntil = Date.now() + (5 * 60 * 1000);
+      console.log('[SECURITY] Password blocked due to 5 failed attempts. Blocked until:', new Date(st.blockedUntil).toISOString());
+      return { status: 429, body: { error: 'Too many failed attempts. Please wait 5 minutes.', blockedUntil: st.blockedUntil, remainingSeconds: 300 } };
+    }
+    console.log(`[SECURITY] Failed password attempt ${st.fails}/5`);
+    // 403, not 401: the panel reads a 401 as "session gone" and signs out
+    return { status: 403, body: { error: `Invalid password. ${5 - st.fails} attempt(s) remaining.`, attemptsRemaining: 5 - st.fails } };
   }
-  
+
+  sendJson(res, status, body, headers = {}) {
+    res.writeHead(status, { 'Content-Type': 'application/json', ...headers });
+    res.end(JSON.stringify(body));
+  }
+
+  async handleAdminLogin(req, res, body) {
+    let data;
+    try { data = JSON.parse(body); } catch { this.sendError(res, 400, 'Invalid request'); return; }
+    const failure = this.checkPassword(req, data && data.password);
+    if (failure) { this.sendJson(res, failure.status, failure.body); return; }
+
+    this.adminSessionToken = this.generateSessionToken();
+    this.adminSessionIssuedAt = Date.now();
+    // Session cookie expires in 24 hours
+    const expires = new Date(Date.now() + 24 * 60 * 60 * 1000).toUTCString();
+    this.sendJson(res, 200, { success: true }, {
+      'Set-Cookie': `adminSession=${this.adminSessionToken}; HttpOnly; SameSite=Strict; Expires=${expires}; Path=/admin`
+    });
+  }
+
+  // Asked again before sensitive actions (Test all, Copy .env), on top of the session
+  async handleVerifyPassword(req, res, body) {
+    let data;
+    try { data = JSON.parse(body); } catch { this.sendError(res, 400, 'Invalid request'); return; }
+    const failure = this.checkPassword(req, data && data.password);
+    if (failure) this.sendJson(res, failure.status, failure.body);
+    else this.sendJson(res, 200, { success: true });
+  }
+
   async handleGetEnvVars(res) {
     try {
       const envPath = path.join(process.cwd(), '.env');
@@ -1025,7 +1025,12 @@ class ProxyServer {
     }
   }
 
-  async handleGetEnvFile(res) {
+  // The whole file holds every key, so it takes the password again
+  async handleGetEnvFile(req, res, body) {
+    let data;
+    try { data = JSON.parse(body); } catch { this.sendError(res, 400, 'Invalid request'); return; }
+    const failure = this.checkPassword(req, data && data.password);
+    if (failure) { this.sendJson(res, failure.status, failure.body); return; }
     try {
       const envPath = path.join(process.cwd(), '.env');
       const envContent = fs.readFileSync(envPath, 'utf8');

@@ -151,7 +151,7 @@ Some APIs work without a key. Leave the keys empty in the **Add provider** dialo
 OPENAI_POLLINATIONS_BASE_URL=https://text.pollinations.ai/openai
 ```
 
-Requests go out with no key of their own (a caller's own `Authorization` header still goes through), everything else works as usual — proxies, retries, access key, logs — and the logs show **no API key** in the key column. Adding a key later turns it into a normal provider; deleting its last key still removes the whole provider.
+Requests go out with no key of their own (a caller's own `Authorization` header still goes through), everything else works as usual — proxies, retries, access key, logs — and the logs show **no API key** in the key column. Adding a key later turns it into a normal provider.
 
 ## Custom Models URL
 
@@ -286,6 +286,9 @@ Old day directories are deleted at startup and hourly after that. `logs/` is git
 - **More free proxies** — the auto-fetched pool also pulls proxifly/free-proxy-list and HTTP proxies (~10k candidates, several hundred usually alive, up from a few dozen), and an empty pool starts using proxies while the first sweep is still running
 - **Proxy on means proxied** — a rotated key gets a different proxy; with few or no green proxies a request reuses one or takes a red one rather than going direct; right after a start it waits for the list to load
 - Key tests can go through the proxy or direct for providers that use it, and the Proxy tab can select all/none
+- **Deleting a provider's last key keeps the provider** — it's switched off and moved to the end until you add a key (deleting a provider is still its own action)
+- **Paste many keys at once** — the key boxes take several keys separated by spaces, commas or new lines; each is tested, the working ones are added, and the failed ones stay in the box
+- **Test all** and **Copy .env** ask for the admin password again first; the server checks it before handing out the `.env` file
 - Removed the keep-alive ping setting: it pinged the server from inside itself, so it couldn't keep a free host awake
 
 **Breaking Changes**:

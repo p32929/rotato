@@ -1783,6 +1783,24 @@
         </div>
     </div>
 
+    <!-- Password again before a sensitive action -->
+    <div id="passwordDialog" class="ds-overlay hidden fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-modal" onclick="if(event.target===this)answerPassword(false)" role="dialog" aria-modal="true" aria-labelledby="passwordDialogTitle">
+        <form onsubmit="event.preventDefault(); answerPassword(true)" class="ds-dialog-panel bg-card border border-border rounded-xl w-full max-w-md shadow-xl">
+            <div class="px-5 pt-4 pb-3 border-b border-border">
+                <h3 id="passwordDialogTitle" class="text-base font-semibold text-foreground">Enter your password</h3>
+                <p id="passwordDialogMessage" class="text-xs text-muted-foreground mt-1"></p>
+            </div>
+            <div class="px-5 pt-3">
+                <input type="password" id="passwordDialogInput" autocomplete="current-password" class="input-field w-full px-3 py-2 rounded-md text-sm" placeholder="Admin password">
+                <p id="passwordDialogError" class="hidden text-xs text-destructive mt-2"></p>
+            </div>
+            <div class="flex items-center justify-end gap-2 px-5 py-3">
+                <button type="button" onclick="answerPassword(false)" class="btn btn-ghost btn-md mr-auto">Cancel</button>
+                <button type="submit" id="passwordDialogBtn" class="btn btn-primary btn-md">Continue</button>
+            </div>
+        </form>
+    </div>
+
     <!-- Models browser -->
     <div id="modelsDialog" class="ds-overlay hidden fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-modal" onclick="if(event.target===this)closeModelsDialog()">
         <div class="ds-dialog-panel bg-card border border-border rounded-xl w-full max-w-dialog h-[85vh] flex flex-col shadow-xl overflow-hidden">
@@ -2161,7 +2179,8 @@
         const _PENDING_LABELS = [
             ['POST', '/admin/login', 'Signing in…'],
             ['POST', '/admin/logout', 'Signing out…'],
-            ['GET', '/admin/api/env-file', 'Preparing export…'],
+            ['POST', '/admin/api/env-file', 'Preparing export…'],
+            ['POST', '/admin/api/verify-password', 'Checking password…'],
             ['POST', '/admin/api/env', 'Saving configuration…'],
             ['POST', '/admin/api/test', 'Testing API key…'],
             ['POST', '/admin/api/toggle-key', 'Updating key…'],
@@ -3050,7 +3069,7 @@
                                         id="newKey_${provider.apiType}_${provider.name}" 
                                         data-key-token
                                         class="input-field flex-1 min-w-0 basis-40 px-2 py-1 text-xs rounded transition-colors" 
-                                        placeholder="Add another key"
+                                        placeholder="Add keys (paste several: spaces, commas or new lines)"
                                     >
                                     ${valueInputsHtml(placeholderNames(provider.baseUrl, provider.modelsUrl))}
                                     <div class="key-actions">
@@ -3348,9 +3367,8 @@
             const keyInputs = document.querySelectorAll('.new-provider-key');
             const apiKeys = [];
             for (const input of keyInputs) {
-                const key = readKeyFrom(input.parentElement);
-                if (key) {
-                    apiKeys.push(key);
+                for (const key of readKeysFrom(input.parentElement)) {
+                    if (!apiKeys.includes(key)) apiKeys.push(key);
                 }
             }
             
@@ -3665,40 +3683,44 @@
         async function testNewProviderKey(keyIndex) {
             const apiType = document.getElementById('newProviderApiType').value;
             const baseUrl = document.getElementById('newProviderBaseUrl').value.trim();
-            const apiKey = readKeyFrom(document.querySelector(`div[data-key-index="${keyIndex}"]`));
-            
-            if (!apiKey) {
+            const keys = readKeysFrom(document.querySelector(`div[data-key-index="${keyIndex}"]`));
+
+            if (!keys.length) {
                 showWarningToast('Please enter an API key to test');
                 return;
             }
-            if (!hasAllKeyValues(apiKey, baseUrl, document.getElementById('newProviderModelsUrl').value.trim())) return;
-            
-            const maskedKey = maskKeyForDisplay(apiKey);
-            showInfoToast(`Testing new API key ${maskedKey}...`);
-            
-            try {
-                const response = await fetch('/admin/api/test', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
-                        apiType: apiType, 
-                        apiKey: apiKey,
-                        baseUrl: baseUrl 
-                    })
-                });
-                
-                const result = await response.json();
-                
-                if (result.success) {
-                    showSuccessToast(`✅ API key ${maskedKey} is valid! Ready to save.`);
-                } else {
-                    showErrorToast(`❌ API key ${maskedKey} is invalid: ${result.error || 'Unknown error'}`);
-                }
-            } catch (error) {
-                showErrorToast(`❌ API key test failed: ${error.message}`);
-            }
+            if (!keys.every(k => hasAllKeyValues(k, baseUrl, document.getElementById('newProviderModelsUrl').value.trim()))) return;
+            await testKeyList(apiType, baseUrl, keys, 'Ready to save.');
         }
-        
+
+        // Test one key or a pasted list, then one toast for the lot. Resolves to [{ key, ok, error }].
+        async function testKeyList(apiType, baseUrl, keys, readyNote) {
+            showInfoToast(keys.length === 1 ? `Testing API key ${maskKeyForDisplay(keys[0])}...` : `Testing ${keys.length} keys...`);
+            const results = await Promise.all(keys.map(async (key) => {
+                try {
+                    const result = await (await fetch('/admin/api/test', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ apiType, apiKey: key, baseUrl })
+                    })).json();
+                    return { key, ok: !!result.success, error: result.error || 'Unknown error' };
+                } catch (error) {
+                    return { key, ok: false, error: error.message };
+                }
+            }));
+            if (!readyNote) return results;
+            const bad = results.filter(r => !r.ok);
+            if (keys.length === 1) {
+                if (bad.length) showErrorToast(`❌ API key ${maskKeyForDisplay(keys[0])} is invalid: ${bad[0].error}`);
+                else showSuccessToast(`✅ API key ${maskKeyForDisplay(keys[0])} is valid! ${readyNote}`);
+            } else if (bad.length) {
+                showWarningToast(`${keys.length - bad.length} of ${keys.length} keys work. Failed: ${bad.map(r => `${maskKeyForDisplay(r.key)}: ${r.error}`).join('; ')}`, 12000);
+            } else {
+                showSuccessToast(`✅ All ${keys.length} keys work. ${readyNote}`);
+            }
+            return results;
+        }
+
         function showDeleteProviderConfirmation(apiType, providerName) {
             const dialog = document.getElementById('confirmDialog');
             const message = document.getElementById('confirmMessage');
@@ -3839,10 +3861,11 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
         async function exportConfiguration() {
             try {
                 // Fetch the .env file content from the server
-                const response = await fetch('/admin/api/env-file');
-                if (!response.ok) {
-                    throw new Error('Failed to fetch .env file');
-                }
+                // The server checks the password itself before handing over the file
+                const response = await askPassword('The .env file holds every API key. Copy it to the clipboard?', (password) => fetch('/admin/api/env-file', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password })
+                }));
+                if (!response) return;
 
                 let envContent = await response.text();
 
@@ -4408,6 +4431,53 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             if (resolve) resolve(choice);
         }
 
+        // Ask for the admin password again. check(password) sends it to the server and
+        // resolves to the Response; the dialog stays open on a wrong password.
+        // Resolves to that ok Response, or null if cancelled.
+        let _passwordState = null;
+        const verifyPassword = (password) => fetch('/admin/api/verify-password', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password })
+        });
+        function askPassword(message, check = verifyPassword) {
+            document.getElementById('passwordDialogMessage').textContent = message;
+            document.getElementById('passwordDialogError').classList.add('hidden');
+            const input = document.getElementById('passwordDialogInput');
+            input.value = '';
+            document.getElementById('passwordDialog').classList.remove('hidden');
+            input.focus();
+            return new Promise(resolve => { _passwordState = { resolve, check }; });
+        }
+
+        async function answerPassword(submit) {
+            const state = _passwordState;
+            if (!state) return;
+            const close = (result) => {
+                document.getElementById('passwordDialog').classList.add('hidden');
+                _passwordState = null;
+                state.resolve(result);
+            };
+            if (!submit) { close(null); return; }
+            const input = document.getElementById('passwordDialogInput');
+            const error = document.getElementById('passwordDialogError');
+            const btn = document.getElementById('passwordDialogBtn');
+            if (!input.value) { input.focus(); return; }
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span> Checking…';
+            try {
+                const response = await state.check(input.value);
+                if (response.ok) { close(response); return; }
+                const data = await response.json().catch(() => ({}));
+                error.textContent = data.error || 'Wrong password';
+            } catch (e) {
+                error.textContent = e.message;
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Continue';
+            }
+            error.classList.remove('hidden');
+            input.select();
+        }
+
         // ---- Key checks: results shown as a dot per key and a note per provider ----
         const keyTestResults = new Map(); // "<apiType>_<name>|<stored key>" -> { state: ok | limited | fail, error }
 
@@ -4500,6 +4570,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             }
             const total = providers.reduce((n, p) => n + p.keys.length, 0);
             if (!total) { showInfoToast('No keys to test yet'); return; }
+            if (!await askPassword(`Test all ${total} key${total === 1 ? '' : 's'}?`)) return;
 
             // One question for the whole run; it only applies to providers set to use the proxy
             const proxied = providers.filter(p => providerUsesProxy(p.apiType, p.name));
@@ -4706,6 +4777,34 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             return token ? joinKeyValues(token, values) : '';
         }
 
+        // Every key in a row: the key box takes several at once, split on spaces, commas or new lines.
+        // The row's value inputs fill in each of them, like for a single key.
+        function readKeysFrom(row) {
+            if (!row) return [];
+            const tokenInput = row.querySelector('[data-key-token]') || row.querySelector('input');
+            const shared = {};
+            row.querySelectorAll('[data-value-name]').forEach(input => {
+                if (input.value.trim()) shared[input.dataset.valueName] = input.value.trim();
+            });
+            const keys = tokenInput.value.split(/[\s,]+/).filter(Boolean).map(raw => {
+                const { token, values } = splitKeyValues(raw);
+                return joinKeyValues(token, { ...values, ...shared });
+            });
+            return [...new Set(keys)];
+        }
+
+        // A one-line input drops the line breaks of a pasted list, gluing the keys
+        // together - turn them into spaces first
+        document.addEventListener('paste', (event) => {
+            const input = event.target;
+            if (!input.matches || !input.matches('input[data-key-token], input.new-provider-key')) return;
+            const text = event.clipboardData && event.clipboardData.getData('text');
+            if (!text || !/[\r\n]/.test(text)) return;
+            event.preventDefault();
+            input.setRangeText(text.trim().split(/\s*[\r\n]+\s*/).join(' '), input.selectionStart, input.selectionEnd, 'end');
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+
         // Warn before a test that is bound to fail because a value is empty
         function hasAllKeyValues(key, ...urls) {
             const { values } = splitKeyValues(key);
@@ -4857,11 +4956,18 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
 
             keys.splice(keyIndex, 1);
 
-            if (keys.length === 0) {
-                // If no keys left, delete the entire provider using the same logic as deleteProvider
-                providerVarKeys(apiType, providerName).forEach(key => delete envVars[key]);
+            const prefix = `${apiType.toUpperCase()}_${providerName.toUpperCase()}`;
+            const lastKey = keys.length === 0;
+            if (lastKey) {
+                // The provider stays, switched off and moved to the end, until a key is added.
+                // Its base URL is what keeps a key-less provider in the file, so write the default one down.
+                delete envVars[keysVar];
+                envVars[`${prefix}_BASE_URL`] = envVars[`${prefix}_BASE_URL`] || getDefaultProviderConfig(apiType).baseUrl;
+                envVars[`${prefix}_DISABLED`] = 'true';
+                const pk = `${apiType}_${providerName}`;
+                if (_providerOrder) _providerOrder = [..._providerOrder.filter(k => k !== pk), pk];
             } else {
-                envVars[keysVar] = keys.filter(k => k.trim()).join(',');
+                envVars[keysVar] = keys.join(',');
             }
 
             try {
@@ -4873,7 +4979,9 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 
                 if (response.ok) {
                     renderEnvVars();
-                    showSuccessToast(`🗑️ API key deleted from provider '${providerName}'`);
+                    showSuccessToast(lastKey
+                        ? `🗑️ Last key deleted. '${providerName}' is turned off until you add a key`
+                        : `🗑️ API key deleted from provider '${providerName}'`);
                 } else {
                     showErrorToast('Failed to delete API key');
                 }
@@ -4882,89 +4990,65 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             }
         }
         
+        // Adds every key in the box (one or a pasted list), testing each first; only the working ones are saved
         async function saveProviderKey(apiType, providerName) {
             const inputId = `newKey_${apiType}_${providerName}`;
-            const newKey = readKeyFrom(document.getElementById(`newKeyRow_${apiType}_${providerName}`));
-            
-            if (!newKey) {
+            const candidates = readKeysFrom(document.getElementById(`newKeyRow_${apiType}_${providerName}`));
+
+            if (!candidates.length) {
                 showWarningToast('Please enter an API key');
                 return;
             }
-            if (!hasAllKeyValues(newKey, ...providerUrls(apiType, providerName))) return;
+            if (!candidates.every(k => hasAllKeyValues(k, ...providerUrls(apiType, providerName)))) return;
 
-            // Check for duplicate key in this provider
-            const keysVarCheck = `${apiType.toUpperCase()}_${providerName.toUpperCase()}_API_KEYS`;
-            const existingKeysRaw = envVars[keysVarCheck] ? envVars[keysVarCheck].split(',').map(k => k.trim().replace(/^~/, '')) : [];
-            if (existingKeysRaw.includes(newKey)) {
-                showWarningToast('This key already exists in this provider');
-                return;
-            }
-
-            const maskedKey = maskKeyForDisplay(newKey);
-
-            // Get the base URL for this provider to use for testing
-            const baseUrlVar = `${apiType.toUpperCase()}_${providerName.toUpperCase()}_BASE_URL`;
-            const baseUrl = envVars[baseUrlVar] || '';
-            
-            // Test the API key before saving
-            showInfoToast(`Testing API key ${maskedKey} before saving...`);
-            
-            try {
-                const testResponse = await fetch('/admin/api/test', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
-                        apiType: apiType, 
-                        apiKey: newKey,
-                        baseUrl: baseUrl 
-                    })
-                });
-                
-                const testResult = await testResponse.json();
-                
-                if (!testResult.success) {
-                    showErrorToast(`❌ API key ${maskedKey} is invalid: ${testResult.error || 'Unknown error'}`);
-                    return;
-                }
-                
-                showSuccessToast(`✅ API key ${maskedKey} is valid! Saving...`);
-            } catch (error) {
-                showErrorToast(`❌ Failed to test API key ${maskedKey}: ${error.message}`);
-                return;
-            }
-            
-            // If test passes, save the key
             const keysVar = `${apiType.toUpperCase()}_${providerName.toUpperCase()}_API_KEYS`;
-            const existingKeys = envVars[keysVar] ? envVars[keysVar].split(',') : [];
-            existingKeys.push(newKey);
-            envVars[keysVar] = existingKeys.filter(k => k.trim()).join(',');
-            
+            const previous = envVars[keysVar];
+            const existing = (previous || '').split(',').map(k => k.trim()).filter(Boolean);
+            const existingRaw = existing.map(k => k.replace(/^~/, ''));
+            const newKeys = candidates.filter(k => !existingRaw.includes(k));
+            const dupes = candidates.length - newKeys.length;
+            if (!newKeys.length) {
+                showWarningToast(candidates.length === 1 ? 'This key already exists in this provider' : 'All of these keys already exist in this provider');
+                return;
+            }
+
+            const baseUrl = envVars[`${apiType.toUpperCase()}_${providerName.toUpperCase()}_BASE_URL`] || '';
+            const results = await testKeyList(apiType, baseUrl, newKeys);
+            const valid = results.filter(r => r.ok).map(r => r.key);
+            const invalid = results.filter(r => !r.ok);
+            const failNote = invalid.map(r => `${maskKeyForDisplay(r.key)}: ${r.error}`).join('; ');
+            const dupeNote = dupes ? ` ${dupes} already there, skipped.` : '';
+
+            if (!valid.length) {
+                showErrorToast(invalid.length === 1 ? `❌ API key ${maskKeyForDisplay(invalid[0].key)} is invalid: ${invalid[0].error}` : `❌ None of the ${invalid.length} keys work. ${failNote}`, 12000);
+                return;
+            }
+
+            envVars[keysVar] = [...existing, ...valid].join(',');
             try {
                 const response = await fetch('/admin/api/env', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(envVars)
                 });
-                
-                if (response.ok) {
-                    document.getElementById(inputId).value = '';
-                    renderEnvVars();
-                    
-                    showSuccessToast(`✅ Tested and valid API key ${maskedKey} added to provider '${providerName}'!`);
+                if (!response.ok) throw new Error('server refused');
+                renderEnvVars();
+                // Keep the ones that failed in the (re-rendered) box, so they can be fixed or retried
+                const input = document.getElementById(inputId);
+                if (input) input.value = invalid.map(r => splitKeyValues(r.key).token).join(' ');
+                if (invalid.length) {
+                    showWarningToast(`Added ${valid.length} of ${newKeys.length} keys to '${providerName}'.${dupeNote} ${invalid.length} failed: ${failNote}`, 12000);
                 } else {
-                    showErrorToast('Failed to save API key');
-                    // Revert the change
-                    const revertedKeys = existingKeys.slice(0, -1);
-                    envVars[keysVar] = revertedKeys.filter(k => k.trim()).join(',');
+                    showSuccessToast(valid.length === 1
+                        ? `✅ Tested and valid API key ${maskKeyForDisplay(valid[0])} added to provider '${providerName}'!${dupeNote}`
+                        : `✅ All ${valid.length} keys tested and added to '${providerName}'.${dupeNote}`);
                 }
             } catch (error) {
+                if (previous === undefined) delete envVars[keysVar]; else envVars[keysVar] = previous;
                 showErrorToast(`Failed to save API key: ${error.message}`);
-                // Revert the change
-                const revertedKeys = existingKeys.slice(0, -1);
-                envVars[keysVar] = revertedKeys.filter(k => k.trim()).join(',');
             }
         }
-        
+
         function toggleKeyEdit(editId) {
             const panel = document.getElementById(editId);
             if (!panel) return;
@@ -5026,45 +5110,18 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
         }
 
         async function testProviderNewKey(apiType, providerName) {
-            const newKey = readKeyFrom(document.getElementById(`newKeyRow_${apiType}_${providerName}`));
-            
-            if (!newKey) {
+            const keys = readKeysFrom(document.getElementById(`newKeyRow_${apiType}_${providerName}`));
+
+            if (!keys.length) {
                 showWarningToast('Please enter an API key to test');
                 return;
             }
-            if (!hasAllKeyValues(newKey, ...providerUrls(apiType, providerName))) return;
-            
-            // Get provider's base URL
-            const keysVar = `${apiType.toUpperCase()}_${providerName.toUpperCase()}_API_KEYS`;
-            const baseUrlVar = `${apiType.toUpperCase()}_${providerName.toUpperCase()}_BASE_URL`;
-            const baseUrl = envVars[baseUrlVar] || null;
-            
-            const maskedKey = maskKeyForDisplay(newKey);
-            showInfoToast(`Testing API key ${maskedKey} for provider '${providerName}'...`);
-            
-            try {
-                const response = await fetch('/admin/api/test', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
-                        apiType: apiType, 
-                        apiKey: newKey,
-                        baseUrl: baseUrl
-                    })
-                });
-                
-                const result = await response.json();
-                
-                if (result.success) {
-                    showSuccessToast(`✅ API key ${maskedKey} is valid! Ready to add to provider '${providerName}'.`);
-                } else {
-                    showErrorToast(`❌ API key ${maskedKey} is invalid: ${result.error || 'Unknown error'}`);
-                }
-            } catch (error) {
-                showErrorToast(`❌ API key test failed: ${error.message}`);
-            }
+            if (!keys.every(k => hasAllKeyValues(k, ...providerUrls(apiType, providerName)))) return;
+
+            const baseUrl = envVars[`${apiType.toUpperCase()}_${providerName.toUpperCase()}_BASE_URL`] || null;
+            await testKeyList(apiType, baseUrl, keys, `Ready to add to provider '${providerName}'.`);
         }
-        
+
         // Removed legacy key functions - everything is now managed as providers
         
         // Removed old functions - replaced with provider management

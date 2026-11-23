@@ -171,6 +171,18 @@ assert.strictEqual(cfg.providers.get('gemini').apiType, 'gemini');
 // A malformed URL is not a route and must not throw (it used to crash the process)
 assert.strictEqual(ProxyServer.prototype.parseRoute.call({ config: { getProvider: () => null } }, '//['), null);
 
+// Password re-check (Test all, Copy .env): wrong is 403 (401 would sign the panel out), 5 misses lock it
+{
+  const srv = { loginAttempts: new Map(), getAdminPassword: () => 'pw', loginState: ProxyServer.prototype.loginState };
+  const check = (pw) => ProxyServer.prototype.checkPassword.call(srv, { socket: { remoteAddress: '1.2.3.4' } }, pw);
+  assert.strictEqual(check('pw'), null);
+  assert.strictEqual(check('nope').status, 403);
+  assert.strictEqual(check(undefined).status, 403);
+  check('x'); check('x');
+  assert.strictEqual(check('x').status, 429);                                      // 5th miss locks
+  assert.strictEqual(check('pw').status, 429);                                     // even the right one, for now
+}
+
 // Proxy pool: turning auto-fetch off mid-sweep leaves it empty; back on refills at once
 (async () => {
   const ProxyPool = require('../src/proxyPool');
