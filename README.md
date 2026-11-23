@@ -162,7 +162,7 @@ Some APIs work without a key. Leave the keys empty in the **Add provider** dialo
 OPENAI_POLLINATIONS_BASE_URL=https://text.pollinations.ai/openai
 ```
 
-Requests go out with no key of their own (a caller's own `Authorization` header still goes through), everything else works as usual — proxies, retries, access key, logs — and the logs show **no API key** in the key column. Adding a key later turns it into a normal provider; deleting its last key still removes the whole provider.
+Requests go out with no key of their own (a caller's own `Authorization` header still goes through), everything else works as usual — proxies, retries, access key, logs — and the logs show **no API key** in the key column. Adding a key later turns it into a normal provider.
 
 ## Custom Models URL
 
@@ -197,7 +197,7 @@ PROXY_AUTO_FETCH=true
 
 Pulls the SOCKS5, SOCKS4 and HTTP lists from [monosans/proxy-list](https://github.com/monosans/proxy-list) and [proxifly/free-proxy-list](https://github.com/proxifly/free-proxy-list) (~10k entries after removing duplicates), **validates every one**, and keeps only those that respond — typically several hundred. A full sweep takes a few minutes; when the pool starts empty, proxies are handed over as they are found, so the first requests don't wait for the whole sweep. Validation opens the proxy tunnel to one of your configured providers and completes the TLS handshake, then hangs up — no HTTP request is sent, no API key is used, and no third-party "what is my IP" service is involved.
 
-The pool is held in memory and never written to `.env`. The list is re-fetched every 30 minutes, and sooner when fewer than 5 green proxies are left (at most one fetch every 5 minutes). Auto-fetch works on its own — you don't need any proxies of your own.
+The pool is held in memory and never written to `.env`. The list is re-fetched every 30 minutes by default (`PROXY_FETCH_MINUTES`, 5–1440), and sooner when fewer than 15 green proxies are left (at most one fetch every 5 minutes). Each refresh re-tests the proxies already in the list along with the fresh downloads, so a good one isn't lost because it dropped off its source list. **Refresh & test** in the Proxy tab does it now — and tests your own proxies too; with auto-fetch off it tests just yours. Auto-fetch works on its own — you don't need any proxies of your own.
 
 Expect heavy attrition: typically a quarter to a third of the entries answer, and SOCKS5 fares far better than SOCKS4 (many SOCKS4 proxies don't implement the SOCKS4a hostname extension this needs). Some providers (Groq, for one) block most free-proxy IPs outright. Treat proxy rotation as best-effort.
 
@@ -212,17 +212,20 @@ Each request gets a **random green proxy**. Proxies come out of a shuffled list,
 ```env
 PROXY_GOOD_MS=1000     # green below this many ms
 PROXY_MAX_TRIES=5      # proxies one request may try before the next key
+PROXY_FETCH_MINUTES=30 # fetch the free lists again this often
+PROXY_CHECK_MINUTES=2  # re-test every proxy this often
 ```
 
 Both are editable in the Proxy tab.
 
 ### Background checks
 
-Every couple of minutes rotato re-checks the list, least recently checked first:
+Every 2 minutes by default (`PROXY_CHECK_MINUTES`, 1–60) rotato re-checks the list, least recently checked first, 50 at a time:
 
 1. **Every proxy** gets a handshake check, under traffic too: tunnel + TLS handshake to a proxied provider's host, then hang up. No request, no API key. Its timing becomes the proxy's speed, so proxies move between green and red, and a benched proxy that passes is back in play at once. Real requests never use red proxies, so without this a proxy that turned red would stay red.
-2. **When green runs low** (fewer than 5) even during traffic, red and benched proxies get an immediate handshake check — at most once a minute, until 10 are green again — so proxies that were only slow under load come back instead of requests going direct.
-3. **Green proxies**, while no proxied request has gone out for 30 seconds, also list a provider's models through the proxy, each at most once every 10 minutes, one call every few seconds, taking turns across proxied providers and their keys. Listing models is free, and unlike a handshake it catches a provider blocking the proxy's IP (a 403/407 counts against it).
+2. **Dead ones are dropped.** A fetched proxy that fails two checks in a row leaves the list; the next refresh brings it back if it revives. Your own proxies are never dropped.
+3. **When green runs low** (fewer than 15) after a check or during traffic, a fresh list is fetched, and red and benched proxies get an immediate handshake check — at most once a minute, until 10 are green again — so proxies that were only slow under load come back instead of requests going direct.
+4. **Green proxies**, while no proxied request has gone out for 30 seconds, also list a provider's models through the proxy, each at most once every 10 minutes, one call every few seconds, taking turns across proxied providers and their keys. Listing models is free, and unlike a handshake it catches a provider blocking the proxy's IP (a 403/407 counts against it).
 
 ### Timeouts and recovery
 
@@ -290,10 +293,14 @@ Old day directories are deleted at startup and hourly after that. `logs/` is git
 7. Keys are validated even for providers without a `/models` endpoint
 8. **Proxy picking** — proxies are green (under 1000ms by default) or red; each request takes a random green one no other request is using, moves on to the next on failure (5 tries by default), and background checks keep the list and its colours current. Both numbers are set in the Proxy tab
 9. **Providers without a key** — leave the keys empty when adding a provider; it's added only if its models list answers without one, and it works with proxies like any other
-10. **More free proxies** — the auto-fetched pool also pulls proxifly/free-proxy-list and HTTP proxies (~10k candidates, several hundred usually alive, up from a few dozen), and an empty pool starts using proxies while the first sweep is still running
-11. **Proxy on means proxied** — a rotated key gets a different proxy; with few or no green proxies a request reuses one or takes a red one rather than going direct; right after a start it waits for the list to load
-12. Key tests can go through the proxy or direct for providers that use it, and the Proxy tab can select all/none
-13. Removed the keep-alive ping setting: it pinged the server from inside itself, so it couldn't keep a free host awake
+10. **Refresh & test** — one button in the Proxy tab fetches fresh lists and tests every proxy, yours included. Refreshes every 30 minutes (both timers are set in the Proxy tab) and whenever green drops under 15, keeps the proxies that still work, and drops fetched ones that fail two checks in a row, so the list shows what actually works
+11. **More free proxies** — the auto-fetched pool also pulls proxifly/free-proxy-list and HTTP proxies (~10k candidates, several hundred usually alive, up from a few dozen), and an empty pool starts using proxies while the first sweep is still running
+12. **Proxy on means proxied** — a rotated key gets a different proxy; with few or no green proxies a request reuses one or takes a red one rather than going direct; right after a start it waits for the list to load
+13. Key tests can go through the proxy or direct for providers that use it, and the Proxy tab can select all/none
+14. **Deleting a provider's last key keeps the provider** — it's switched off and moved to the end until you add a key (deleting a provider is still its own action)
+15. **Paste many keys at once** — the key boxes take several keys separated by spaces, commas or new lines; each is tested, the working ones are added, and the failed ones stay in the box
+16. **Test all** and **Copy .env** ask for the admin password again first; the server checks it before handing out the `.env` file
+17. Removed the keep-alive ping setting: it pinged the server from inside itself, so it couldn't keep a free host awake
 
 **Breaking Changes**:
 1. The old `400+` (above 400) and `400=+` (400 and above) status code forms are gone. Use `>400` and `>=400` instead

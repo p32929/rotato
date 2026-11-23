@@ -598,6 +598,16 @@ class ProxyManager {
     entry.deadUntil = 0;
     entry.checkedAt = Date.now();
     entry.latencyMs = ms;
+    entry.checkFails = 0;
+  }
+
+  /** Drop fetched proxies (never your own) from the rotation. */
+  removeAuto(urls) {
+    const gone = new Set(urls.filter((u) => !this.manualUrls.includes(u)));
+    if (!gone.size) return;
+    this.autoUrls = this.autoUrls.filter((u) => !gone.has(u));
+    this._bag = this._bag.filter((u) => !gone.has(u));
+    for (const u of gone) { this.health.delete(u); this._agentCache.delete(u); }
   }
 
   /** Average round-trip in ms, or -1 if never measured. */
@@ -805,7 +815,7 @@ class ProxyManager {
 ProxyManager.DEFAULT_GOOD_MS = 1000;
 ProxyManager.DEFAULT_MAX_TRIES = 5;
 ProxyManager.STARTUP_WAIT_MS = 30000; // a fresh fetch + check takes ~20s
-ProxyManager.MIN_GREEN = 5; // fewer green than this and a fresh list is fetched
+ProxyManager.MIN_GREEN = 15; // fewer green than this: re-check the red ones and fetch a fresh list
 
 module.exports = ProxyManager;
 module.exports.ProxyAgent = ProxyAgent;

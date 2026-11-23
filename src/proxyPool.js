@@ -37,7 +37,9 @@ class ProxyPool {
 
     this.enabled = false;
     this.concurrency = options.concurrency || 300;
-    this.probeTimeoutMs = options.probeTimeoutMs || 6000;
+    // A proxy that needs over 4s just to open a tunnel is no use for requests
+    this.probeTimeoutMs = options.probeTimeoutMs || 4000;
+    // Set from the Proxy tab (PROXY_FETCH_MINUTES); setRefreshInterval() changes it live
     this.refreshIntervalMs = options.refreshIntervalMs || 30 * 60 * 1000;
     // Floor between refreshes so a burst of failures can't hammer GitHub
     this.minRefreshGapMs = options.minRefreshGapMs || 5 * 60 * 1000;
@@ -45,6 +47,7 @@ class ProxyPool {
     this.live = [];
     this.lastRefreshAt = null;
     this.lastTested = 0;
+    this.lastLive = null;
     this.lastError = null;
     this.refreshing = false;
     this.timer = null;
@@ -72,11 +75,27 @@ class ProxyPool {
     }
   }
 
+  setRefreshInterval(ms) {
+    if (!(ms > 0) || ms === this.refreshIntervalMs) return;
+    this.refreshIntervalMs = ms;
+    if (this.timer) {
+      clearInterval(this.timer);
+      this.timer = setInterval(() => this.refresh('scheduled'), this.refreshIntervalMs);
+      if (this.timer.unref) this.timer.unref();
+    }
+  }
+
   /** Take over the list saved before a restart (see proxyCache.js). */
   restore(cache) {
     this.live = cache.live.filter((e) => e && typeof e.url === 'string');
     this.lastRefreshAt = cache.lastRefreshAt || null;
     this.lastTested = cache.lastTested || 0;
+  }
+
+  /** Forget proxies the background checks found dead; the next sweep can bring them back. */
+  remove(urls) {
+    const gone = new Set(urls);
+    this.live = this.live.filter((e) => !gone.has(e.url));
   }
 
   stop() {
@@ -91,6 +110,7 @@ class ProxyPool {
     this.live = [];
     this.lastRefreshAt = null;
     this.lastTested = 0;
+    this.lastLive = null;
     this.lastError = null;
     this.onUpdate(this);
   }
@@ -100,6 +120,7 @@ class ProxyPool {
       enabled: this.enabled,
       refreshing: this.refreshing,
       live: this.live.length,
+      lastLive: this.lastLive, // answered the last refresh; live shrinks as dead ones are dropped
       tested: this.lastTested,
       lastRefreshAt: this.lastRefreshAt,
       lastError: this.lastError,
@@ -147,7 +168,11 @@ class ProxyPool {
     const startedAt = Date.now();
 
     try {
+      // The ones we have are re-tested along with the fresh lists, so a good
+      // proxy isn't lost just because it dropped off its source list
       const candidates = await this.fetchCandidates();
+      const seen = new Set(candidates.map(ProxyManager.hostPort));
+      for (const e of this.live) if (!seen.has(ProxyManager.hostPort(e.url))) { seen.add(ProxyManager.hostPort(e.url)); candidates.push(e.url); }
       if (candidates.length === 0) throw new Error('no usable entries in the source lists');
 
       this.progress = { phase: 'testing', tested: 0, total: candidates.length, live: 0 };
@@ -167,6 +192,7 @@ class ProxyPool {
       if (stale()) return this.getStatus(); // turned off mid-sweep - keep it empty
 
       this.live = live;
+      this.lastLive = live.length;
       this.lastTested = candidates.length;
       this.lastRefreshAt = Date.now();
       const fastest = live.length ? `${live[0].ms}ms` : 'n/a';

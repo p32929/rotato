@@ -122,6 +122,32 @@ assert.ok(cfg.providers.has('foo_bar'));
 assert.strictEqual(cfg.providers.get('dup').apiType, 'openai');
 assert.strictEqual(cfg.providers.get('gemini').apiType, 'gemini');
 
+// Proxy timers: 30 min fetch / 2 min re-test by default; out-of-range values fall back
+{
+  const pc = Object.create(Config.prototype);
+  pc.providers = new Map();
+  pc.parseProxyConfig({});
+  assert.deepStrictEqual([pc.proxyFetchMinutes, pc.proxyCheckMinutes], [30, 2]);
+  pc.parseProxyConfig({ PROXY_FETCH_MINUTES: '45', PROXY_CHECK_MINUTES: '5' });
+  assert.deepStrictEqual([pc.proxyFetchMinutes, pc.proxyCheckMinutes], [45, 5]);
+  pc.parseProxyConfig({ PROXY_FETCH_MINUTES: '1', PROXY_CHECK_MINUTES: '999' });
+  assert.deepStrictEqual([pc.proxyFetchMinutes, pc.proxyCheckMinutes], [30, 2]);
+
+  // A new interval takes effect on the running timers
+  const pool = new (require('../src/proxyPool'))();
+  pool.timer = setInterval(() => {}, 1e9);
+  const before = pool.timer;
+  pool.setRefreshInterval(45 * 60 * 1000);
+  assert.ok(pool.timer !== before && pool.refreshIntervalMs === 45 * 60 * 1000);
+  clearInterval(pool.timer);
+  const ck = new (require('../src/proxyChecker'))({ getManager: () => null, getTargets: () => [] });
+  ck.start();
+  const t = ck.timer;
+  ck.setInterval(5 * 60 * 1000);
+  assert.ok(ck.timer && ck.timer !== t && ck.intervalMs === 5 * 60 * 1000);
+  ck.stop();
+}
+
 // Keyless providers: a named provider with a base URL and no keys gets one empty key;
 // requests carry no auth, logs say "no API key". A legacy bare BASE_URL is not a provider.
 {
@@ -144,6 +170,18 @@ assert.strictEqual(cfg.providers.get('gemini').apiType, 'gemini');
 
 // A malformed URL is not a route and must not throw (it used to crash the process)
 assert.strictEqual(ProxyServer.prototype.parseRoute.call({ config: { getProvider: () => null } }, '//['), null);
+
+// Password re-check (Test all, Copy .env): wrong is 403 (401 would sign the panel out), 5 misses lock it
+{
+  const srv = { loginAttempts: new Map(), getAdminPassword: () => 'pw', loginState: ProxyServer.prototype.loginState };
+  const check = (pw) => ProxyServer.prototype.checkPassword.call(srv, { socket: { remoteAddress: '1.2.3.4' } }, pw);
+  assert.strictEqual(check('pw'), null);
+  assert.strictEqual(check('nope').status, 403);
+  assert.strictEqual(check(undefined).status, 403);
+  check('x'); check('x');
+  assert.strictEqual(check('x').status, 429);                                      // 5th miss locks
+  assert.strictEqual(check('pw').status, 429);                                     // even the right one, for now
+}
 
 // Proxy pool: turning auto-fetch off mid-sweep leaves it empty; back on refills at once
 (async () => {
@@ -177,6 +215,20 @@ assert.strictEqual(ProxyServer.prototype.parseRoute.call({ config: { getProvider
     updates.length = 0;                                                 // a pool that has proxies waits for the full sweep
     await p.refresh('test', true);
     assert.deepStrictEqual(updates.map(u => u.n), [3]);
+  }
+
+  // A refresh re-tests the proxies we already have, even if the lists dropped them
+  {
+    const p = new ProxyPool();
+    p.enabled = true;
+    p.live = [{ url: 'socks5://9.9.9.9:1', ms: 100 }];
+    p.fetchCandidates = async () => ['socks5://8.8.8.8:1', 'socks4://9.9.9.9:1'];   // same machine, other scheme
+    const tested = [];
+    p.probe = async (u) => { tested.push(u); return { ok: true, ms: 5 }; };
+    await p.refresh('test', true);
+    assert.deepStrictEqual(tested.sort(), ['socks4://9.9.9.9:1', 'socks5://8.8.8.8:1']);
+    p.remove(['socks5://8.8.8.8:1']);
+    assert.deepStrictEqual(p.live.map(e => e.url), ['socks4://9.9.9.9:1']);
   }
 
   // Lists that write the scheme on each line are read the same as bare host:port
@@ -367,8 +419,37 @@ assert.strictEqual(ProxyServer.prototype.parseRoute.call({ config: { getProvider
     let probed = 0; ck.probe = async () => { probed++; return { ok: true, ms: 1 }; };
     for (const u of urls) pm._entry(u).modelCheckedAt = 0;
     await ck.cycle();
-    assert.strictEqual(probed, 4);                                                    // red ones still get their chance back
+    assert.strictEqual(probed, 3);                                                    // red ones still get their chance back; the one that failed twice was dropped
+    assert.ok(!pm.autoUrls.includes(urls[2]));
     assert.strictEqual(modelChecked.length, 3);                                       // but no model calls while busy
+    ck.stop();
+
+    // Test all: every proxy, with no timer running and nothing proxied yet (falls back to the probe target)
+    const hosts = [];
+    const all = new ProxyChecker({ getManager: () => pm, getTargets: () => [], probe: async (url, host) => { hosts.push(host); return { ok: url !== urls[0], ms: 200 }; }, modelCheck: async () => {} });
+    const done = await all.checkAll('api.fallback.com');
+    assert.deepStrictEqual({ ...done }, { running: false, done: 3, total: 3, ok: 2, failed: 1 });
+    assert.ok(hosts.every(h => h === 'api.fallback.com'));
+    assert.deepStrictEqual(urls.map(u => pm.isGreen(u)), [true, true, true, true]);   // 200ms now; one failure is not a bench
+  }
+
+  // Dead fetched proxies leave; your own never do; too few green after a pass asks for more
+  {
+    const mine = 'socks5://10.0.7.1:1080', fetched = 'socks5://10.0.7.2:1080';
+    const pm = new ProxyManager([mine], true, { goodMs: 1000 });
+    pm.setAutoProxies([{ url: fetched, ms: 300 }]);
+    let asked = 0; pm.onPoolExhausted = () => { asked++; };
+    const dropped = [];
+    const ck = new (require('../src/proxyChecker'))({ getManager: () => pm, getTargets: () => ['h'], probe: async () => ({ ok: false }), modelCheck: async () => {}, onDead: (u) => dropped.push(...u) });
+    ck.start();
+    await ck.cycle();
+    assert.ok(asked > 0);                                                             // 2 green is under MIN_GREEN
+    assert.deepStrictEqual(pm.proxyUrls, [mine, fetched]);                            // one failed check isn't dead
+    await ck.cycle();
+    assert.deepStrictEqual(pm.proxyUrls, [mine]);                                     // two in a row is
+    assert.deepStrictEqual(dropped, [fetched]);
+    await ck.cycle(); await ck.cycle();
+    assert.deepStrictEqual(pm.proxyUrls, [mine]);                                     // yours stays, however often it fails
     ck.stop();
   }
 

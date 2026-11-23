@@ -586,7 +586,8 @@
 
         /* Key check results */
         .key-status { width: 0.5rem; height: 0.5rem; border-radius: var(--radius-full); flex-shrink: 0; }
-        .key-status:not(.ok):not(.limited):not(.fail) { display: none; } /* untested: no dot */
+        .key-status:not(.ok):not(.limited):not(.fail):not(.testing) { display: none; } /* untested: no dot */
+        .key-status.testing { width: 0.7rem; height: 0.7rem; border: 2px solid color-mix(in srgb, var(--muted-foreground) 30%, transparent); border-top-color: var(--foreground); animation: spin 0.8s linear infinite; }
         .key-status.ok { background: var(--success); }
         .key-status.limited { background: var(--warning); }
         .key-status.fail { background: var(--destructive); }
@@ -792,6 +793,24 @@
         .seg-item.active { background: var(--card); color: var(--foreground); box-shadow: var(--shadow-sm); }
         .seg-item:disabled { opacity: 0.4; cursor: not-allowed; }
 
+        /* Loading state: the area's content is hidden and a spinner with
+           data-loading text sits in its place until the data arrives */
+        .is-loading { position: relative; min-height: 240px; }
+        .is-loading > * { visibility: hidden; }
+        .is-loading::before, .spinner {
+            content: ""; display: inline-block; width: 22px; height: 22px; border-radius: 50%;
+            border: 2.5px solid color-mix(in srgb, currentColor 20%, transparent); border-top-color: currentColor;
+            animation: spin 0.8s linear infinite; color: var(--foreground);
+        }
+        .is-loading::before { position: absolute; left: 50%; top: 96px; margin-left: -11px; }
+        .is-loading::after {
+            content: attr(data-loading); position: absolute; left: 0; right: 0; top: 130px;
+            text-align: center; font-size: var(--text-xs); color: var(--muted-foreground);
+        }
+        .spinner { width: 14px; height: 14px; border-width: 2px; vertical-align: -2px; color: inherit; }
+        #loginForm.is-loading::before { top: calc(50% - 30px); }
+        #loginForm.is-loading::after { top: calc(50% + 4px); }
+
         /* Skeleton loader (F2) */
         .skeleton {
             background: linear-gradient(90deg, var(--muted) 25%, color-mix(in srgb, var(--muted) 60%, var(--card)) 37%, var(--muted) 63%);
@@ -939,7 +958,7 @@
 </head>
 <body class="min-h-screen bg-background" id="mainBody">
     <!-- Login Form -->
-    <div id="loginForm" class="min-h-screen flex items-center justify-center p-4">
+    <div id="loginForm" class="min-h-screen flex items-center justify-center p-4 is-loading" data-loading="Loading…">
         <div class="w-full max-w-md space-y-8">
             <div class="text-center">
                 <div class="mx-auto h-12 w-12 flex items-center justify-center bg-primary text-primary-foreground rounded-lg mb-4">
@@ -1006,7 +1025,7 @@
                         </div>
                         <div>
                             <h1 class="text-base font-semibold text-foreground leading-tight">rotato</h1>
-                            <p class="text-xs text-muted-foreground">API key rotation proxy</p>
+                            <p class="text-xs text-muted-foreground">API key rotation proxy<span id="appVersion"></span></p>
                         </div>
                     </div>
                     <div class="flex items-center space-x-3">
@@ -1121,7 +1140,8 @@
                             class="btn btn-secondary btn-md"
                             title="Check every key of every provider (no tokens are spent)"
                         >
-                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                            <svg id="testAllIcon" class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                            <span id="testAllSpinner" class="spinner hidden"></span>
                             <span id="testAllLabel">Test all</span>
                         </button>
                         <button
@@ -1254,7 +1274,7 @@
                             <div class="flex items-start justify-between gap-4">
                                 <div>
                                     <div class="text-xs font-medium text-foreground">Automatically fetch free proxies</div>
-                                    <p class="text-xs text-muted-foreground mt-1">Pulls the SOCKS5, SOCKS4 and HTTP lists from <span class="text-foreground">monosans/proxy-list</span> and <span class="text-foreground">proxifly/free-proxy-list</span> (~10k entries), tests every entry against your provider, and keeps the ones that answer. The list is re-fetched every 30 minutes, and while rotato is idle every proxy is re-checked every couple of minutes.</p>
+                                    <p class="text-xs text-muted-foreground mt-1">Pulls the SOCKS5, SOCKS4 and HTTP lists from <span class="text-foreground">monosans/proxy-list</span> and <span class="text-foreground">proxifly/free-proxy-list</span> (~10k entries), tests every entry against your provider, and keeps the ones that answer, then keeps re-testing them. Both run on the timers below; Refresh &amp; test does both right now.</p>
                                     <p class="text-xs text-muted-foreground mt-1">These are run by strangers. Your API keys stay encrypted inside the TLS tunnel, but whoever runs the proxy can see which hosts you reach and can stall or drop traffic.</p>
                                 </div>
                                 <label class="toggle-switch flex-shrink-0" title="Automatically fetch free proxies">
@@ -1265,11 +1285,28 @@
                             <div>
                                 <div class="flex items-center gap-2">
                                     <span id="proxyAutoStatus" class="text-xs text-muted-foreground flex-1">—</span>
-                                    <button id="proxyRefreshBtn" onclick="refreshProxyPool(this)" class="btn btn-secondary px-3 py-1.5 text-xs font-medium flex-shrink-0">Refresh now</button>
+                                    <button id="proxyRefreshBtn" onclick="refreshProxyPool(this)" class="btn btn-secondary px-3 py-1.5 text-xs font-medium flex-shrink-0">Refresh &amp; test</button>
                                 </div>
                                 <div id="proxyAutoProgress" class="hidden mt-2">
                                     <div class="h-1.5 w-full rounded-full overflow-hidden" style="background:var(--muted)">
                                         <div id="proxyAutoProgressBar" class="h-full rounded-full transition-all duration-300" style="width:0%;background:var(--info)"></div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                <div>
+                                    <label for="proxyFetchMinutes" class="block text-xs font-medium text-muted-foreground mb-1">Fetch new lists every</label>
+                                    <div class="flex items-center gap-2">
+                                        <input type="number" id="proxyFetchMinutes" class="input-field w-28 px-3 py-2 rounded-md text-sm tabular-nums" min="5" max="1440" step="1" value="30">
+                                        <span class="text-xs text-muted-foreground">minutes — sooner when green runs low</span>
+                                    </div>
+                                </div>
+                                <div>
+                                    <label for="proxyCheckMinutes" class="block text-xs font-medium text-muted-foreground mb-1">Re-test every proxy every</label>
+                                    <div class="flex items-center gap-2">
+                                        <input type="number" id="proxyCheckMinutes" class="input-field w-28 px-3 py-2 rounded-md text-sm tabular-nums" min="1" max="60" step="1" value="2">
+                                        <span class="text-xs text-muted-foreground">minutes — ones that stop answering are dropped</span>
                                     </div>
                                 </div>
                             </div>
@@ -1339,7 +1376,6 @@
                                 </svg>
                                 Saved proxies
                             </h3>
-                            <button onclick="testAllProxies(this)" class="btn btn-secondary px-3 py-1.5 text-xs font-medium flex-shrink-0">Test All</button>
                         </div>
                         <div class="space-y-3">
                             <div>
@@ -1364,7 +1400,7 @@
                             Where to get proxies
                         </h3>
                         <div class="space-y-3">
-                            <p class="text-xs text-muted-foreground">Grab a few from these public lists, paste them above, then hit <span class="text-foreground">Test All</span> to keep the ones that respond. Free proxies rotate and die often, so add several. These are third-party lists — not endorsements.</p>
+                            <p class="text-xs text-muted-foreground">Grab a few from these public lists, paste them above, then hit <span class="text-foreground">Refresh &amp; test</span> to keep the ones that respond. Free proxies rotate and die often, so add several. These are third-party lists — not endorsements.</p>
                             <div class="flex flex-wrap gap-2">
                                 <a href="https://free-proxy-list.net/" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">free-proxy-list.net</a>
                                 <a href="https://geonode.com/free-proxy-list" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">geonode.com</a>
@@ -1747,6 +1783,24 @@
         </div>
     </div>
 
+    <!-- Password again before a sensitive action -->
+    <div id="passwordDialog" class="ds-overlay hidden fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-modal" onclick="if(event.target===this)answerPassword(false)" role="dialog" aria-modal="true" aria-labelledby="passwordDialogTitle">
+        <form onsubmit="event.preventDefault(); answerPassword(true)" class="ds-dialog-panel bg-card border border-border rounded-xl w-full max-w-md shadow-xl">
+            <div class="px-5 pt-4 pb-3 border-b border-border">
+                <h3 id="passwordDialogTitle" class="text-base font-semibold text-foreground">Enter your password</h3>
+                <p id="passwordDialogMessage" class="text-xs text-muted-foreground mt-1"></p>
+            </div>
+            <div class="px-5 pt-3">
+                <input type="password" id="passwordDialogInput" autocomplete="current-password" class="input-field w-full px-3 py-2 rounded-md text-sm" placeholder="Admin password">
+                <p id="passwordDialogError" class="hidden text-xs text-destructive mt-2"></p>
+            </div>
+            <div class="flex items-center justify-end gap-2 px-5 py-3">
+                <button type="button" onclick="answerPassword(false)" class="btn btn-ghost btn-md mr-auto">Cancel</button>
+                <button type="submit" id="passwordDialogBtn" class="btn btn-primary btn-md">Continue</button>
+            </div>
+        </form>
+    </div>
+
     <!-- Models browser -->
     <div id="modelsDialog" class="ds-overlay hidden fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-modal" onclick="if(event.target===this)closeModelsDialog()">
         <div class="ds-dialog-panel bg-card border border-border rounded-xl w-full max-w-dialog h-[85vh] flex flex-col shadow-xl overflow-hidden">
@@ -2125,7 +2179,8 @@
         const _PENDING_LABELS = [
             ['POST', '/admin/login', 'Signing in…'],
             ['POST', '/admin/logout', 'Signing out…'],
-            ['GET', '/admin/api/env-file', 'Preparing export…'],
+            ['POST', '/admin/api/env-file', 'Preparing export…'],
+            ['POST', '/admin/api/verify-password', 'Checking password…'],
             ['POST', '/admin/api/env', 'Saving configuration…'],
             ['POST', '/admin/api/test', 'Testing API key…'],
             ['POST', '/admin/api/toggle-key', 'Updating key…'],
@@ -2281,6 +2336,10 @@
         async function login() {
             const password = document.getElementById('password').value;
             const errorDiv = document.getElementById('loginError');
+            const button = document.getElementById('loginButton');
+            const buttonHtml = button.innerHTML;
+            button.disabled = true;
+            button.innerHTML = '<span class="spinner"></span> Signing in…';
 
             try {
                 const response = await fetch('/admin/login', {
@@ -2318,7 +2377,17 @@
             } catch (error) {
                 errorDiv.textContent = 'Login failed: ' + error.message;
                 errorDiv.classList.remove('hidden');
+            } finally {
+                button.innerHTML = buttonHtml;
+                if (!document.getElementById('rateLimitMessage') || document.getElementById('rateLimitMessage').classList.contains('hidden')) button.disabled = false;
             }
+        }
+
+        // Spinner in place of an area's content (see .is-loading)
+        function setLoading(el, on, text = 'Loading…') {
+            if (!el) return;
+            el.classList.toggle('is-loading', on);
+            if (on) el.dataset.loading = text;
         }
 
         function startLoginCountdown(seconds, passwordInput, loginButton, errorDiv) {
@@ -2386,7 +2455,10 @@
         }
         
         // Environment variables functionality
+        let _envLoaded = false;
         async function loadEnvVars() {
+            // First load only - later reloads keep the providers on screen
+            if (!_envLoaded) setLoading(document.getElementById('environment'), true, 'Loading providers…');
             try {
                 const [envResponse, usageResponse, settingsResponse] = await Promise.all([
                     fetch('/admin/api/env'),
@@ -2404,8 +2476,11 @@
                 }
                 renderEnvVars();
                 updateProviderPreview();
+                _envLoaded = true;
             } catch (error) {
                 showError('envError', 'Failed to load environment variables: ' + error.message);
+            } finally {
+                setLoading(document.getElementById('environment'), false);
             }
         }
         
@@ -2994,7 +3069,7 @@
                                         id="newKey_${provider.apiType}_${provider.name}" 
                                         data-key-token
                                         class="input-field flex-1 min-w-0 basis-40 px-2 py-1 text-xs rounded transition-colors" 
-                                        placeholder="Add another key"
+                                        placeholder="Add keys (paste several: spaces, commas or new lines)"
                                     >
                                     ${valueInputsHtml(placeholderNames(provider.baseUrl, provider.modelsUrl))}
                                     <div class="key-actions">
@@ -3292,9 +3367,8 @@
             const keyInputs = document.querySelectorAll('.new-provider-key');
             const apiKeys = [];
             for (const input of keyInputs) {
-                const key = readKeyFrom(input.parentElement);
-                if (key) {
-                    apiKeys.push(key);
+                for (const key of readKeysFrom(input.parentElement)) {
+                    if (!apiKeys.includes(key)) apiKeys.push(key);
                 }
             }
             
@@ -3609,40 +3683,44 @@
         async function testNewProviderKey(keyIndex) {
             const apiType = document.getElementById('newProviderApiType').value;
             const baseUrl = document.getElementById('newProviderBaseUrl').value.trim();
-            const apiKey = readKeyFrom(document.querySelector(`div[data-key-index="${keyIndex}"]`));
-            
-            if (!apiKey) {
+            const keys = readKeysFrom(document.querySelector(`div[data-key-index="${keyIndex}"]`));
+
+            if (!keys.length) {
                 showWarningToast('Please enter an API key to test');
                 return;
             }
-            if (!hasAllKeyValues(apiKey, baseUrl, document.getElementById('newProviderModelsUrl').value.trim())) return;
-            
-            const maskedKey = maskKeyForDisplay(apiKey);
-            showInfoToast(`Testing new API key ${maskedKey}...`);
-            
-            try {
-                const response = await fetch('/admin/api/test', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
-                        apiType: apiType, 
-                        apiKey: apiKey,
-                        baseUrl: baseUrl 
-                    })
-                });
-                
-                const result = await response.json();
-                
-                if (result.success) {
-                    showSuccessToast(`✅ API key ${maskedKey} is valid! Ready to save.`);
-                } else {
-                    showErrorToast(`❌ API key ${maskedKey} is invalid: ${result.error || 'Unknown error'}`);
-                }
-            } catch (error) {
-                showErrorToast(`❌ API key test failed: ${error.message}`);
-            }
+            if (!keys.every(k => hasAllKeyValues(k, baseUrl, document.getElementById('newProviderModelsUrl').value.trim()))) return;
+            await testKeyList(apiType, baseUrl, keys, 'Ready to save.');
         }
-        
+
+        // Test one key or a pasted list, then one toast for the lot. Resolves to [{ key, ok, error }].
+        async function testKeyList(apiType, baseUrl, keys, readyNote) {
+            showInfoToast(keys.length === 1 ? `Testing API key ${maskKeyForDisplay(keys[0])}...` : `Testing ${keys.length} keys...`);
+            const results = await Promise.all(keys.map(async (key) => {
+                try {
+                    const result = await (await fetch('/admin/api/test', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ apiType, apiKey: key, baseUrl })
+                    })).json();
+                    return { key, ok: !!result.success, error: result.error || 'Unknown error' };
+                } catch (error) {
+                    return { key, ok: false, error: error.message };
+                }
+            }));
+            if (!readyNote) return results;
+            const bad = results.filter(r => !r.ok);
+            if (keys.length === 1) {
+                if (bad.length) showErrorToast(`❌ API key ${maskKeyForDisplay(keys[0])} is invalid: ${bad[0].error}`);
+                else showSuccessToast(`✅ API key ${maskKeyForDisplay(keys[0])} is valid! ${readyNote}`);
+            } else if (bad.length) {
+                showWarningToast(`${keys.length - bad.length} of ${keys.length} keys work. Failed: ${bad.map(r => `${maskKeyForDisplay(r.key)}: ${r.error}`).join('; ')}`, 12000);
+            } else {
+                showSuccessToast(`✅ All ${keys.length} keys work. ${readyNote}`);
+            }
+            return results;
+        }
+
         function showDeleteProviderConfirmation(apiType, providerName) {
             const dialog = document.getElementById('confirmDialog');
             const message = document.getElementById('confirmMessage');
@@ -3783,10 +3861,11 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
         async function exportConfiguration() {
             try {
                 // Fetch the .env file content from the server
-                const response = await fetch('/admin/api/env-file');
-                if (!response.ok) {
-                    throw new Error('Failed to fetch .env file');
-                }
+                // The server checks the password itself before handing over the file
+                const response = await askPassword('The .env file holds every API key. Copy it to the clipboard?', (password) => fetch('/admin/api/env-file', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password })
+                }));
+                if (!response) return;
 
                 let envContent = await response.text();
 
@@ -4352,11 +4431,61 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             if (resolve) resolve(choice);
         }
 
+        // Ask for the admin password again. check(password) sends it to the server and
+        // resolves to the Response; the dialog stays open on a wrong password.
+        // Resolves to that ok Response, or null if cancelled.
+        let _passwordState = null;
+        const verifyPassword = (password) => fetch('/admin/api/verify-password', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password })
+        });
+        function askPassword(message, check = verifyPassword) {
+            document.getElementById('passwordDialogMessage').textContent = message;
+            document.getElementById('passwordDialogError').classList.add('hidden');
+            const input = document.getElementById('passwordDialogInput');
+            input.value = '';
+            document.getElementById('passwordDialog').classList.remove('hidden');
+            input.focus();
+            return new Promise(resolve => { _passwordState = { resolve, check }; });
+        }
+
+        async function answerPassword(submit) {
+            const state = _passwordState;
+            if (!state) return;
+            const close = (result) => {
+                document.getElementById('passwordDialog').classList.add('hidden');
+                _passwordState = null;
+                state.resolve(result);
+            };
+            if (!submit) { close(null); return; }
+            const input = document.getElementById('passwordDialogInput');
+            const error = document.getElementById('passwordDialogError');
+            const btn = document.getElementById('passwordDialogBtn');
+            if (!input.value) { input.focus(); return; }
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span> Checking…';
+            try {
+                const response = await state.check(input.value);
+                if (response.ok) { close(response); return; }
+                const data = await response.json().catch(() => ({}));
+                error.textContent = data.error || 'Wrong password';
+            } catch (e) {
+                error.textContent = e.message;
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Continue';
+            }
+            error.classList.remove('hidden');
+            input.select();
+        }
+
         // ---- Key checks: results shown as a dot per key and a note per provider ----
         const keyTestResults = new Map(); // "<apiType>_<name>|<stored key>" -> { state: ok | limited | fail, error }
 
+        const _keysTesting = new Set(); // `${pk}|${rawKey}` with a test in flight
         async function testOneKey(apiType, providerName, rawKey, quiet, viaProxy = false) {
             const pk = `${apiType}_${providerName}`;
+            _keysTesting.add(`${pk}|${rawKey}`);
+            refreshKeyTestUi(apiType, providerName);
             const baseUrl = envVars[`${apiType.toUpperCase()}_${providerName.toUpperCase()}_BASE_URL`] || null;
             let result;
             try {
@@ -4375,6 +4504,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             } catch (e) {
                 result = { state: 'fail', error: e.message };
             }
+            _keysTesting.delete(`${pk}|${rawKey}`);
             keyTestResults.set(`${pk}|${rawKey}`, result);
             refreshKeyTestUi(apiType, providerName);
             return result;
@@ -4384,11 +4514,13 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
 
         function keyStatusDotHtml(pk, index, rawKey) {
             const r = keyTestResults.get(`${pk}|${rawKey}`);
+            if (_keysTesting.has(`${pk}|${rawKey}`)) return `<span id="keyStatus_${pk}_${index}" class="key-status testing" title="Testing…" aria-label="Testing…"></span>`;
             const title = r ? `${KEY_STATE_LABEL[r.state]}${r.proxy ? ` via ${r.proxy}` : ''}${r.error ? ': ' + r.error : ''}` : 'Not tested yet';
             return `<span id="keyStatus_${pk}_${index}" class="key-status${r ? ' ' + r.state : ''}" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}"></span>`;
         }
 
         function providerTestSummaryHtml(pk, rawKeys) {
+            if (rawKeys.some(k => _keysTesting.has(`${pk}|${k}`))) return '<span class="opacity-50"> · </span><span class="spinner"></span> testing…';
             const results = rawKeys.map(k => keyTestResults.get(`${pk}|${k}`)).filter(Boolean);
             if (!results.length) return '';
             const count = (st) => results.filter(r => r.state === st).length;
@@ -4419,7 +4551,9 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
         function updateTestAllButton() {
             const label = document.getElementById('testAllLabel');
             if (!label) return;
-            label.textContent = testAllRun ? (testAllRun.cancelled ? 'Stopping…' : `Stop · ${testAllRun.done}/${testAllRun.total}`) : 'Test all';
+            label.textContent = testAllRun ? (testAllRun.cancelled ? 'Stopping…' : `Testing ${testAllRun.done}/${testAllRun.total} · Stop`) : 'Test all';
+            document.getElementById('testAllIcon')?.classList.toggle('hidden', !!testAllRun);
+            document.getElementById('testAllSpinner')?.classList.toggle('hidden', !testAllRun);
             document.getElementById('testAllBtn').title = testAllRun ? 'Stop testing' : 'Check every key of every provider (no tokens are spent)';
         }
 
@@ -4436,6 +4570,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             }
             const total = providers.reduce((n, p) => n + p.keys.length, 0);
             if (!total) { showInfoToast('No keys to test yet'); return; }
+            if (!await askPassword(`Test all ${total} key${total === 1 ? '' : 's'}?`)) return;
 
             // One question for the whole run; it only applies to providers set to use the proxy
             const proxied = providers.filter(p => providerUsesProxy(p.apiType, p.name));
@@ -4642,6 +4777,34 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             return token ? joinKeyValues(token, values) : '';
         }
 
+        // Every key in a row: the key box takes several at once, split on spaces, commas or new lines.
+        // The row's value inputs fill in each of them, like for a single key.
+        function readKeysFrom(row) {
+            if (!row) return [];
+            const tokenInput = row.querySelector('[data-key-token]') || row.querySelector('input');
+            const shared = {};
+            row.querySelectorAll('[data-value-name]').forEach(input => {
+                if (input.value.trim()) shared[input.dataset.valueName] = input.value.trim();
+            });
+            const keys = tokenInput.value.split(/[\s,]+/).filter(Boolean).map(raw => {
+                const { token, values } = splitKeyValues(raw);
+                return joinKeyValues(token, { ...values, ...shared });
+            });
+            return [...new Set(keys)];
+        }
+
+        // A one-line input drops the line breaks of a pasted list, gluing the keys
+        // together - turn them into spaces first
+        document.addEventListener('paste', (event) => {
+            const input = event.target;
+            if (!input.matches || !input.matches('input[data-key-token], input.new-provider-key')) return;
+            const text = event.clipboardData && event.clipboardData.getData('text');
+            if (!text || !/[\r\n]/.test(text)) return;
+            event.preventDefault();
+            input.setRangeText(text.trim().split(/\s*[\r\n]+\s*/).join(' '), input.selectionStart, input.selectionEnd, 'end');
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+
         // Warn before a test that is bound to fail because a value is empty
         function hasAllKeyValues(key, ...urls) {
             const { values } = splitKeyValues(key);
@@ -4793,11 +4956,18 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
 
             keys.splice(keyIndex, 1);
 
-            if (keys.length === 0) {
-                // If no keys left, delete the entire provider using the same logic as deleteProvider
-                providerVarKeys(apiType, providerName).forEach(key => delete envVars[key]);
+            const prefix = `${apiType.toUpperCase()}_${providerName.toUpperCase()}`;
+            const lastKey = keys.length === 0;
+            if (lastKey) {
+                // The provider stays, switched off and moved to the end, until a key is added.
+                // Its base URL is what keeps a key-less provider in the file, so write the default one down.
+                delete envVars[keysVar];
+                envVars[`${prefix}_BASE_URL`] = envVars[`${prefix}_BASE_URL`] || getDefaultProviderConfig(apiType).baseUrl;
+                envVars[`${prefix}_DISABLED`] = 'true';
+                const pk = `${apiType}_${providerName}`;
+                if (_providerOrder) _providerOrder = [..._providerOrder.filter(k => k !== pk), pk];
             } else {
-                envVars[keysVar] = keys.filter(k => k.trim()).join(',');
+                envVars[keysVar] = keys.join(',');
             }
 
             try {
@@ -4809,7 +4979,9 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 
                 if (response.ok) {
                     renderEnvVars();
-                    showSuccessToast(`🗑️ API key deleted from provider '${providerName}'`);
+                    showSuccessToast(lastKey
+                        ? `🗑️ Last key deleted. '${providerName}' is turned off until you add a key`
+                        : `🗑️ API key deleted from provider '${providerName}'`);
                 } else {
                     showErrorToast('Failed to delete API key');
                 }
@@ -4818,89 +4990,65 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             }
         }
         
+        // Adds every key in the box (one or a pasted list), testing each first; only the working ones are saved
         async function saveProviderKey(apiType, providerName) {
             const inputId = `newKey_${apiType}_${providerName}`;
-            const newKey = readKeyFrom(document.getElementById(`newKeyRow_${apiType}_${providerName}`));
-            
-            if (!newKey) {
+            const candidates = readKeysFrom(document.getElementById(`newKeyRow_${apiType}_${providerName}`));
+
+            if (!candidates.length) {
                 showWarningToast('Please enter an API key');
                 return;
             }
-            if (!hasAllKeyValues(newKey, ...providerUrls(apiType, providerName))) return;
+            if (!candidates.every(k => hasAllKeyValues(k, ...providerUrls(apiType, providerName)))) return;
 
-            // Check for duplicate key in this provider
-            const keysVarCheck = `${apiType.toUpperCase()}_${providerName.toUpperCase()}_API_KEYS`;
-            const existingKeysRaw = envVars[keysVarCheck] ? envVars[keysVarCheck].split(',').map(k => k.trim().replace(/^~/, '')) : [];
-            if (existingKeysRaw.includes(newKey)) {
-                showWarningToast('This key already exists in this provider');
-                return;
-            }
-
-            const maskedKey = maskKeyForDisplay(newKey);
-
-            // Get the base URL for this provider to use for testing
-            const baseUrlVar = `${apiType.toUpperCase()}_${providerName.toUpperCase()}_BASE_URL`;
-            const baseUrl = envVars[baseUrlVar] || '';
-            
-            // Test the API key before saving
-            showInfoToast(`Testing API key ${maskedKey} before saving...`);
-            
-            try {
-                const testResponse = await fetch('/admin/api/test', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
-                        apiType: apiType, 
-                        apiKey: newKey,
-                        baseUrl: baseUrl 
-                    })
-                });
-                
-                const testResult = await testResponse.json();
-                
-                if (!testResult.success) {
-                    showErrorToast(`❌ API key ${maskedKey} is invalid: ${testResult.error || 'Unknown error'}`);
-                    return;
-                }
-                
-                showSuccessToast(`✅ API key ${maskedKey} is valid! Saving...`);
-            } catch (error) {
-                showErrorToast(`❌ Failed to test API key ${maskedKey}: ${error.message}`);
-                return;
-            }
-            
-            // If test passes, save the key
             const keysVar = `${apiType.toUpperCase()}_${providerName.toUpperCase()}_API_KEYS`;
-            const existingKeys = envVars[keysVar] ? envVars[keysVar].split(',') : [];
-            existingKeys.push(newKey);
-            envVars[keysVar] = existingKeys.filter(k => k.trim()).join(',');
-            
+            const previous = envVars[keysVar];
+            const existing = (previous || '').split(',').map(k => k.trim()).filter(Boolean);
+            const existingRaw = existing.map(k => k.replace(/^~/, ''));
+            const newKeys = candidates.filter(k => !existingRaw.includes(k));
+            const dupes = candidates.length - newKeys.length;
+            if (!newKeys.length) {
+                showWarningToast(candidates.length === 1 ? 'This key already exists in this provider' : 'All of these keys already exist in this provider');
+                return;
+            }
+
+            const baseUrl = envVars[`${apiType.toUpperCase()}_${providerName.toUpperCase()}_BASE_URL`] || '';
+            const results = await testKeyList(apiType, baseUrl, newKeys);
+            const valid = results.filter(r => r.ok).map(r => r.key);
+            const invalid = results.filter(r => !r.ok);
+            const failNote = invalid.map(r => `${maskKeyForDisplay(r.key)}: ${r.error}`).join('; ');
+            const dupeNote = dupes ? ` ${dupes} already there, skipped.` : '';
+
+            if (!valid.length) {
+                showErrorToast(invalid.length === 1 ? `❌ API key ${maskKeyForDisplay(invalid[0].key)} is invalid: ${invalid[0].error}` : `❌ None of the ${invalid.length} keys work. ${failNote}`, 12000);
+                return;
+            }
+
+            envVars[keysVar] = [...existing, ...valid].join(',');
             try {
                 const response = await fetch('/admin/api/env', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(envVars)
                 });
-                
-                if (response.ok) {
-                    document.getElementById(inputId).value = '';
-                    renderEnvVars();
-                    
-                    showSuccessToast(`✅ Tested and valid API key ${maskedKey} added to provider '${providerName}'!`);
+                if (!response.ok) throw new Error('server refused');
+                renderEnvVars();
+                // Keep the ones that failed in the (re-rendered) box, so they can be fixed or retried
+                const input = document.getElementById(inputId);
+                if (input) input.value = invalid.map(r => splitKeyValues(r.key).token).join(' ');
+                if (invalid.length) {
+                    showWarningToast(`Added ${valid.length} of ${newKeys.length} keys to '${providerName}'.${dupeNote} ${invalid.length} failed: ${failNote}`, 12000);
                 } else {
-                    showErrorToast('Failed to save API key');
-                    // Revert the change
-                    const revertedKeys = existingKeys.slice(0, -1);
-                    envVars[keysVar] = revertedKeys.filter(k => k.trim()).join(',');
+                    showSuccessToast(valid.length === 1
+                        ? `✅ Tested and valid API key ${maskKeyForDisplay(valid[0])} added to provider '${providerName}'!${dupeNote}`
+                        : `✅ All ${valid.length} keys tested and added to '${providerName}'.${dupeNote}`);
                 }
             } catch (error) {
+                if (previous === undefined) delete envVars[keysVar]; else envVars[keysVar] = previous;
                 showErrorToast(`Failed to save API key: ${error.message}`);
-                // Revert the change
-                const revertedKeys = existingKeys.slice(0, -1);
-                envVars[keysVar] = revertedKeys.filter(k => k.trim()).join(',');
             }
         }
-        
+
         function toggleKeyEdit(editId) {
             const panel = document.getElementById(editId);
             if (!panel) return;
@@ -4962,45 +5110,18 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
         }
 
         async function testProviderNewKey(apiType, providerName) {
-            const newKey = readKeyFrom(document.getElementById(`newKeyRow_${apiType}_${providerName}`));
-            
-            if (!newKey) {
+            const keys = readKeysFrom(document.getElementById(`newKeyRow_${apiType}_${providerName}`));
+
+            if (!keys.length) {
                 showWarningToast('Please enter an API key to test');
                 return;
             }
-            if (!hasAllKeyValues(newKey, ...providerUrls(apiType, providerName))) return;
-            
-            // Get provider's base URL
-            const keysVar = `${apiType.toUpperCase()}_${providerName.toUpperCase()}_API_KEYS`;
-            const baseUrlVar = `${apiType.toUpperCase()}_${providerName.toUpperCase()}_BASE_URL`;
-            const baseUrl = envVars[baseUrlVar] || null;
-            
-            const maskedKey = maskKeyForDisplay(newKey);
-            showInfoToast(`Testing API key ${maskedKey} for provider '${providerName}'...`);
-            
-            try {
-                const response = await fetch('/admin/api/test', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
-                        apiType: apiType, 
-                        apiKey: newKey,
-                        baseUrl: baseUrl
-                    })
-                });
-                
-                const result = await response.json();
-                
-                if (result.success) {
-                    showSuccessToast(`✅ API key ${maskedKey} is valid! Ready to add to provider '${providerName}'.`);
-                } else {
-                    showErrorToast(`❌ API key ${maskedKey} is invalid: ${result.error || 'Unknown error'}`);
-                }
-            } catch (error) {
-                showErrorToast(`❌ API key test failed: ${error.message}`);
-            }
+            if (!keys.every(k => hasAllKeyValues(k, ...providerUrls(apiType, providerName)))) return;
+
+            const baseUrl = envVars[`${apiType.toUpperCase()}_${providerName.toUpperCase()}_BASE_URL`] || null;
+            await testKeyList(apiType, baseUrl, keys, `Ready to add to provider '${providerName}'.`);
         }
-        
+
         // Removed legacy key functions - everything is now managed as providers
         
         // Removed old functions - replaced with provider management
@@ -5206,10 +5327,13 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             }
         }
 
+        let _logsLoaded = false;
         async function refreshLogs() {
             // Show skeletons only on the very first load
-            if (_logsCache.length === 0 && document.getElementById('logsTableBody') && !document.getElementById('logsTableBody').children.length) {
+            if (!_logsLoaded) {
                 logSkeletonRows();
+                const count = document.getElementById('logCount');
+                if (count) count.innerHTML = '<span class="spinner"></span> Loading logs…';
             }
             try {
                 const response = await fetch('/admin/api/logs');
@@ -5219,6 +5343,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 _logHasMore = !!data.hasMore;
                 if (data.storage) _logStorage = data.storage;
                 _mergeLogs(logs);
+                _logsLoaded = true;
 
                 populateLogProviderFilter();
                 renderLogs();
@@ -6353,7 +6478,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 return;
             }
 
-            list.innerHTML = '<div class="p-8 text-center text-sm text-muted-foreground">Loading models…</div>';
+            list.innerHTML = '<div class="p-8 text-center text-sm text-muted-foreground"><span class="spinner"></span> Loading models…</div>';
             document.getElementById('mdCount').textContent = '';
             subtitle.textContent = `GET /${provider}/models`;
 
@@ -6735,7 +6860,9 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             updateProxySelectAllButton();
         }
 
+        let _proxyLoaded = false;
         async function loadProxySettings() {
+            if (!_proxyLoaded) setLoading(document.getElementById('proxy'), true, 'Loading proxy settings…');
             try {
                 const res = await fetch('/admin/api/proxy');
                 if (!res.ok) throw new Error('Failed to load proxy settings');
@@ -6744,12 +6871,17 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 document.getElementById('proxyAutoFetch').checked = !!data.autoFetch;
                 document.getElementById('proxyGoodMs').value = data.goodMs || 1000;
                 document.getElementById('proxyMaxTries').value = data.maxTries || 5;
+                document.getElementById('proxyFetchMinutes').value = data.fetchMinutes || 30;
+                document.getElementById('proxyCheckMinutes').value = data.checkMinutes || 2;
                 renderProxyProviders(data.providers || []);
                 document.getElementById('proxyUrls').value = (data.proxies || []).map(p => p.url).join('\n');
                 renderProxyList(data.proxies || []);
                 renderProxyAuto(data);
+                _proxyLoaded = true;
             } catch (e) {
                 showErrorToast('Failed to load proxy settings: ' + e.message);
+            } finally {
+                setLoading(document.getElementById('proxy'), false);
             }
         }
 
@@ -6758,14 +6890,15 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
         // or after every proxy failed), so the tab picks that up too.
         let _proxyProgressTimer = null;
 
-        function renderProxyProgress(auto) {
+        function renderProxyProgress(auto, check) {
             const wrap = document.getElementById('proxyAutoProgress');
             const bar = document.getElementById('proxyAutoProgressBar');
             const statusEl = document.getElementById('proxyAutoStatus');
             if (!wrap || !bar) return false;
 
             const p = (auto && auto.progress) || {};
-            const running = !!(auto && auto.refreshing);
+            const checking = !!(check && check.running);
+            const running = !!(auto && auto.refreshing) || checking;
 
             if (!running) {
                 wrap.classList.add('hidden');
@@ -6778,6 +6911,10 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 const pct = Math.round((p.tested / p.total) * 100);
                 bar.style.width = pct + '%';
                 if (statusEl) statusEl.textContent = `Testing ${p.tested} of ${p.total} — ${p.live} alive so far (${pct}%)`;
+            } else if (checking && !(auto && auto.refreshing)) {
+                const pct = check.total ? Math.round((check.done / check.total) * 100) : 0;
+                bar.style.width = pct + '%';
+                if (statusEl) statusEl.textContent = `Testing your proxies: ${check.done} of ${check.total}`;
             } else {
                 bar.style.width = '8%';
                 if (statusEl) statusEl.textContent = 'Fetching proxy lists…';
@@ -6800,13 +6937,13 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                     const res = await fetch('/admin/api/proxy/status', { background: true });
                     if (!res.ok) return;
                     const data = await res.json();
-                    if (!renderProxyProgress(data.auto)) {
+                    if (!renderProxyProgress(data.auto, data.check)) {
                         // Sweep finished - redraw only the fetched list, so unsaved
                         // edits to the providers or manual proxies survive
                         stopProxyProgressPolling();
-                        proxyState = { ...proxyState, auto: data.auto, pool: data.pool, details: data.details };
+                        proxyState = { ...proxyState, auto: data.auto, pool: data.pool, details: data.details, check: data.check };
                         renderProxyAuto(proxyState);
-                        if (onDone) onDone(data.auto);
+                        if (onDone) onDone(data.auto, data.pool || {});
                     }
                 } catch (e) {
                     stopProxyProgressPolling();
@@ -6820,8 +6957,8 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             if (!btn || !checkbox) return;
 
             btn.title = checkbox.checked
-                ? 'Fetch the lists again and re-test every proxy'
-                : "Turn on 'Automatically fetch free proxies' first";
+                ? 'Fetch the lists again and test every proxy, yours included'
+                : 'Test your own proxies';
         }
 
         // Auto-fetched pool: read-only list plus a one-line summary of the last sweep
@@ -6836,14 +6973,14 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 if (unsaved) {
                     statusEl.textContent = 'Auto-fetch is not active yet — hit Save Proxy Settings.';
                 } else if (!auto.enabled) {
-                    statusEl.textContent = 'Auto-fetch is off.';
+                    statusEl.textContent = pool.total ? `Auto-fetch is off · your proxies: ${pool.green || 0} green · ${pool.red || 0} red` : 'Auto-fetch is off.';
                 } else if (auto.refreshing) {
                     statusEl.textContent = 'Fetching and testing free proxies…';
                 } else if (auto.lastError) {
                     statusEl.textContent = `Last refresh failed: ${auto.lastError}`;
                 } else if (auto.lastRefreshAt) {
                     const benched = pool.benched ? ` · ${pool.benched} benched` : '';
-                    statusEl.textContent = `${pool.green || 0} green · ${pool.red || 0} red${benched} · ${auto.live} of ${auto.tested} answered the last fetch, ${relativeTime(new Date(auto.lastRefreshAt).toISOString()).text}`;
+                    statusEl.textContent = `${pool.green || 0} green · ${pool.red || 0} red${benched} · ${(auto.lastLive ?? auto.live).toLocaleString()} of ${(auto.tested || 0).toLocaleString()} answered the last refresh, ${relativeTime(new Date(auto.lastRefreshAt).toISOString()).text}`;
                 } else {
                     statusEl.textContent = 'Waiting for the first refresh…';
                 }
@@ -6856,7 +6993,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
 
             updateProxyAutoControls();
 
-            if (renderProxyProgress(auto) && !_proxyProgressTimer) startProxyProgressPolling();
+            if (renderProxyProgress(auto, data && data.check) && !_proxyProgressTimer) startProxyProgressPolling();
 
             // Live state from the rotator: green (used), red (too slow), benched
             const list = ((data && data.details) || []).filter(d => !d.manual);
@@ -6909,7 +7046,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                     const res = await fetch('/admin/api/proxy/status', { background: true });
                     if (!res.ok) return;
                     const data = await res.json();
-                    proxyState = { ...proxyState, auto: data.auto, pool: data.pool, details: data.details };
+                    proxyState = { ...proxyState, auto: data.auto, pool: data.pool, details: data.details, check: data.check };
                     renderProxyAuto(proxyState);
                     renderProxyList(proxyState.proxies || []);
                 } catch (e) { /* next tick */ }
@@ -6923,15 +7060,9 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
         // Force a fresh fetch + validation sweep right now
         async function refreshProxyPool(btn) {
             const checkbox = document.getElementById('proxyAutoFetch');
-            if (checkbox && !checkbox.checked) {
-                showWarningToast("Turn on 'Automatically fetch free proxies' first");
-                return;
-            }
-
             try {
-                // The server acts on saved settings, so apply the toggle if the
-                // user turned it on but hasn't pressed Save yet.
-                if (!(proxyState && proxyState.autoFetch)) {
+                // The server acts on saved settings, so apply an unsaved toggle first
+                if (checkbox && checkbox.checked !== !!(proxyState && proxyState.autoFetch)) {
                     await persistProxySettings();
                 }
 
@@ -6939,11 +7070,11 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 const res = await fetch('/admin/api/proxy/refresh', { method: 'POST' });
                 const data = await res.json();
                 if (!res.ok || !data.success) throw new Error(data.error || 'Refresh failed');
-                renderProxyProgress(data.auto);
-                startProxyProgressPolling((auto) => {
+                renderProxyProgress(data.auto, data.check);
+                startProxyProgressPolling((auto, pool) => {
+                    renderProxyList(proxyState.proxies || []);
                     if (auto.lastError) showErrorToast('Could not refresh proxies: ' + auto.lastError);
-                    else if (!auto.tested) showWarningToast('No proxies could be fetched — check the server log');
-                    else showSuccessToast(`${auto.live} of ${auto.tested} free proxies responded`);
+                    else showSuccessToast(`Done — ${pool.green || 0} green, ${pool.red || 0} red${auto.enabled ? ` (${auto.live} of ${auto.tested} fetched proxies answered)` : ''}`);
                 });
             } catch (e) {
                 stopProxyProgressPolling();
@@ -6995,6 +7126,8 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                     proxies, autoFetch, providerProxies: _proxyProviderState,
                     goodMs: Number(document.getElementById('proxyGoodMs').value) || 1000,
                     maxTries: Number(document.getElementById('proxyMaxTries').value) || 5,
+                    fetchMinutes: Number(document.getElementById('proxyFetchMinutes').value) || 30,
+                    checkMinutes: Number(document.getElementById('proxyCheckMinutes').value) || 2,
                 }),
             });
             const data = await res.json();
@@ -7060,19 +7193,6 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             }
         }
 
-        async function testAllProxies(btn) {
-            const original = btn ? btn.textContent : '';
-            if (btn) { btn.disabled = true; btn.textContent = 'Testing...'; }
-            const rows = document.querySelectorAll('#proxyListContainer > div');
-            const proxies = proxyState.proxies || [];
-            for (let i = 0; i < rows.length; i++) {
-                const rowBtn = rows[i].querySelector('button');
-                const resultEl = rows[i].querySelector('.proxy-test-result');
-                if (proxies[i]) await testProxy(proxies[i].url, rowBtn, resultEl);
-            }
-            if (btn) { btn.disabled = false; btn.textContent = original; }
-        }
-        
         // Utility functions
         // These used to paint inline banners that only had light-theme colours, so
         // the same event looked different depending on which tab you were on. They
@@ -7121,6 +7241,8 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
                 const r = await fetch('/admin/api/status');
                 if (!r.ok) return;
                 const s = await r.json();
+                const ver = document.getElementById('appVersion');
+                if (ver && s.version) ver.textContent = ` · v${s.version}`;
                 const dot = (color) => `<span class="provider-dot" style="--pc:${color}"></span>`;
                 const item = (label, valueHtml) => `<span class="inline-flex items-center gap-1.5"><span class="opacity-60">${label}</span>${valueHtml}</span>`;
                 const sep = '<span class="opacity-30">•</span>';
@@ -7163,6 +7285,7 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             } catch (error) {
                 console.log('Auth check failed, showing login form');
             }
+            setLoading(document.getElementById('loginForm'), false);
         }
 
         async function checkLoginRateLimit() {
@@ -7298,7 +7421,9 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
         }
     }
 
+    let _settingsLoaded = false;
     async function loadTelegramSettings() {
+        if (!_settingsLoaded) setLoading(document.getElementById('settings'), true, 'Loading settings…');
         try {
             const response = await fetch('/admin/api/telegram');
             if (!response.ok) return;
@@ -7320,8 +7445,11 @@ ${googApiKeyHeader}  -H "Content-Type: application/json" \\
             } else {
                 statusEl.innerHTML = '<span class="text-muted-foreground">Bot not configured</span>';
             }
+            _settingsLoaded = true;
         } catch (err) {
             console.error('Failed to load telegram settings:', err);
+        } finally {
+            setLoading(document.getElementById('settings'), false);
         }
     }
 
