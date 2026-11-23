@@ -1,27 +1,38 @@
 # rotato
 
-Node.js proxy server for automatic API key rotation across multiple LLM providers (OpenAI, Gemini, Groq, OpenRouter, etc.). Includes a built-in Telegram bot for chatting with any model. ***Zero external dependencies***.
+rotato is a small proxy you run yourself that rotates your API keys for OpenAI, Gemini, Groq, OpenRouter and any OpenAI or Gemini compatible API. Free and cheap keys hit their rate limit fast. Give rotato several keys, and when one is limited it quietly tries the next, so your app keeps working.
+
+**No third-party packages, so there is no supply chain to attack.** Most tools like this pull in hundreds of npm packages, and any one of them could be hijacked to steal the API keys you give it. rotato uses only Node.js itself: there is nothing to `npm install`, no `node_modules`, and every line that touches your keys is in this repo where you can read it. The admin panel's code and Tailwind styles are served from this repo too (only its font comes from Google Fonts).
 
 <img width="3024" height="1714" alt="rotato admin panel" src="https://github.com/user-attachments/assets/f265cc8f-941e-43e4-998e-c713dacfd248" />
 
 ## Features
 
-- **Automatic Key Rotation**: Rotates keys on configurable status codes (default: 429)
-- **Outbound Proxy Rotation**: HTTP/HTTPS/SOCKS4/SOCKS5, with optional auto-fetched free proxies
-- **Universal API Compatibility**: Works with any OpenAI or Gemini-compatible API
-- **Streaming Support**: Full pass-through for SSE/streaming responses (`"stream": true`)
-- **Smart Key Shuffling**: Avoids recently failed keys using intelligent rotation
-- **Key Management**: Reorder keys, disable/enable individual keys or entire providers
-- **Key Usage Tracking**: See how many times each key has been used (in-memory)
-- **Live Key Validation**: API keys automatically tested before saving
-- **Hot Configuration**: Add, edit, rename, or delete providers without restart
-- **Custom Status Codes**: Configure which HTTP codes trigger rotation per request
-- **Optional Access Control**: Secure providers with access keys requiring authorization
-- **Default Models**: Pre-save models for easy curl command generation
-- **Modern Admin Panel**: Dark/light theme support for comfortable management
-- **Request Monitoring**: Last 100 requests logged with key usage details (which key succeeded/failed)
-- **Persistent Logs**: Keep full requests and responses on disk for N days, or in memory only — switchable from the admin panel
-- **Telegram Bot**: Chat with any configured model directly from Telegram (text, images, image generation)
+1. **Switches keys for you** when a provider answers with a rate limit (429 by default) or any other codes you choose.
+2. **Works with any OpenAI or Gemini compatible API,** each provider on its own path, like `/groq` or `/gemini`.
+3. **Streaming works,** so chat replies still arrive word by word.
+4. **Avoids keys that just failed,** and lets you reorder keys or turn off a key or a whole provider.
+5. **Checks a key before saving it,** and counts how often each key is used.
+6. **Change providers without a restart:** add, edit, rename or delete them from the admin panel.
+7. **Optional access key,** so only your own apps can use your proxy.
+8. **Request logs** that show which key worked and which failed, kept in memory or on disk for as many days as you like.
+9. **Optional outbound proxies** (HTTP, HTTPS, SOCKS4, SOCKS5), including free public ones that rotato finds and checks itself.
+10. **Telegram bot** to chat with any of your models from your phone, with images too.
+11. **Light and dark admin panel.**
+
+## Screenshots
+
+<img width="3600" height="2110" alt="Image" src="https://github.com/user-attachments/assets/e2dba567-31b7-4b1a-9b60-6bd4532aeb1f" />
+
+<img width="3600" height="2110" alt="Image" src="https://github.com/user-attachments/assets/0dcfeac0-f1fa-40ab-8afa-5f1a83cc2b74" />
+
+<img width="3600" height="2110" alt="Image" src="https://github.com/user-attachments/assets/d550796a-5b51-427f-a81c-d0e7a881782c" />
+
+<img width="3600" height="2110" alt="Image" src="https://github.com/user-attachments/assets/e4da21f4-0e33-4089-9982-e61cfeffdb5d" />
+
+<img width="3600" height="2110" alt="Image" src="https://github.com/user-attachments/assets/d459f988-eae2-4495-bcb0-98aa6587419e" />
+
+<img width="3600" height="2110" alt="Image" src="https://github.com/user-attachments/assets/5faa6bee-0eee-4b1f-8772-c1828184b1d1" />
 
 ## Quick Start
 
@@ -76,11 +87,11 @@ Leave `TELEGRAM_ALLOWED_USERS` empty to allow anyone.
 
 ### Bot Features
 
-- **Model Selection**: Browse providers → fetch available models → select, or type a custom model name
-- **Conversation History**: Maintains up to 50 messages per user
-- **Image Input**: Send photos to vision-capable models (auto-converts to base64)
-- **Image Generation**: Supports image gen models — renders base64 and URL responses as Telegram photos
-- **All requests go through the proxy**, so you get key rotation, access key validation, and logging automatically
+1. **Model Selection**: Browse providers → fetch available models → select, or type a custom model name
+2. **Conversation History**: Maintains up to 50 messages per user
+3. **Image Input**: Send photos to vision-capable models (auto-converts to base64)
+4. **Image Generation**: Supports image gen models — renders base64 and URL responses as Telegram photos
+5. **All requests go through the proxy**, so you get key rotation, access key validation, and logging automatically
 
 ## API Usage Examples
 
@@ -211,18 +222,18 @@ Both are editable in the Proxy tab.
 
 Every 2 minutes by default (`PROXY_CHECK_MINUTES`, 1–60) rotato re-checks the list, least recently checked first, 50 at a time:
 
-- **Every proxy** gets a handshake check, under traffic too: tunnel + TLS handshake to a proxied provider's host, then hang up. No request, no API key. Its timing becomes the proxy's speed, so proxies move between green and red, and a benched proxy that passes is back in play at once. Real requests never use red proxies, so without this a proxy that turned red would stay red.
-- **Dead ones are dropped.** A fetched proxy that fails two checks in a row leaves the list; the next refresh brings it back if it revives. Your own proxies are never dropped.
-- **When green runs low** (fewer than 15) after a check or during traffic, a fresh list is fetched, and red and benched proxies get an immediate handshake check — at most once a minute, until 10 are green again — so proxies that were only slow under load come back instead of requests going direct.
-- **Green proxies**, while no proxied request has gone out for 30 seconds, also list a provider's models through the proxy, each at most once every 10 minutes, one call every few seconds, taking turns across proxied providers and their keys. Listing models is free, and unlike a handshake it catches a provider blocking the proxy's IP (a 403/407 counts against it).
+1. **Every proxy** gets a handshake check, under traffic too: tunnel + TLS handshake to a proxied provider's host, then hang up. No request, no API key. Its timing becomes the proxy's speed, so proxies move between green and red, and a benched proxy that passes is back in play at once. Real requests never use red proxies, so without this a proxy that turned red would stay red.
+2. **Dead ones are dropped.** A fetched proxy that fails two checks in a row leaves the list; the next refresh brings it back if it revives. Your own proxies are never dropped.
+3. **When green runs low** (fewer than 15) after a check or during traffic, a fresh list is fetched, and red and benched proxies get an immediate handshake check — at most once a minute, until 10 are green again — so proxies that were only slow under load come back instead of requests going direct.
+4. **Green proxies**, while no proxied request has gone out for 30 seconds, also list a provider's models through the proxy, each at most once every 10 minutes, one call every few seconds, taking turns across proxied providers and their keys. Listing models is free, and unlike a handshake it catches a provider blocking the proxy's IP (a 403/407 counts against it).
 
 ### Timeouts and recovery
 
 Every request is bounded. A proxy that accepts the tunnel and then goes silent used to hang the caller indefinitely; now:
 
-- **Connect (tunnel + TLS)** is capped per proxy, scaled to its measured speed — a proxy that benchmarked at 400ms gets 4s, never the full 8s ceiling.
-- **Response** is capped at 60s through a proxy, 120s direct. For streaming, only the wait for headers is bounded; the stream itself may run as long as it likes.
-- **On a proxy failure the same API key is retried through the next proxy** (up to `PROXY_MAX_TRIES`) rather than burning the key or failing the request. With a single key configured, one dead proxy no longer fails the call.
+1. **Connect (tunnel + TLS)** is capped per proxy, scaled to its measured speed — a proxy that benchmarked at 400ms gets 4s, never the full 8s ceiling.
+2. **Response** is capped at 60s through a proxy, 120s direct. For streaming, only the wait for headers is bounded; the stream itself may run as long as it likes.
+3. **On a proxy failure the same API key is retried through the next proxy** (up to `PROXY_MAX_TRIES`) rather than burning the key or failing the request. With a single key configured, one dead proxy no longer fails the call.
 
 A stall benches the proxy immediately rather than after three strikes, since silence is conclusive. An HTTP **403 or 407 through a proxy** counts as a strike too, and the request moves on to the next proxy — a blocked proxy IP answers quickly. If every proxy tried gets one, the provider's answer is passed on.
 
@@ -273,132 +284,75 @@ Old day directories are deleted at startup and hourly after that. `logs/` is git
 ## Changelog
 
 ### Version 7.x.x
-- **Status code ranges and comparisons** — `[STATUS_CODES:...]` and the default in Settings take codes, ranges and comparisons, mixed with commas: `403, 420-429, >=500`. Settings refuses anything it can't read instead of silently dropping it, and tells you which codes it covers
-- **Per-key values** — a key can carry values for `{placeholders}` in its provider's URLs (`token|accountId=abc`), so providers like Cloudflare Workers AI rotate across accounts
-- **Custom models URL** — any provider can list its models from somewhere other than `{base URL}/models`; the models browser and Telegram bot read lists in any common shape
-- **Redesigned admin panel** — collapsible providers with expand/collapse all, an Add provider dialog, drag-to-reorder keys, and a full phone layout
-- **Test all** — one button checks every key of every provider without spending tokens; each key gets a status dot and each provider a summary
-- Request logs show the model each request asked for (searchable and sortable)
-- Keys are validated even for providers without a `/models` endpoint
-- **Proxy picking** — proxies are green (under 1000ms by default) or red; each request takes a random green one no other request is using, moves on to the next on failure (5 tries by default), and background checks keep the list and its colours current. Both numbers are set in the Proxy tab
-- **Providers without a key** — leave the keys empty when adding a provider; it's added only if its models list answers without one, and it works with proxies like any other
-- **Refresh & test** — one button in the Proxy tab fetches fresh lists and tests every proxy, yours included. Refreshes every 30 minutes (both timers are set in the Proxy tab) and whenever green drops under 15, keeps the proxies that still work, and drops fetched ones that fail two checks in a row, so the list shows what actually works
-- **More free proxies** — the auto-fetched pool also pulls proxifly/free-proxy-list and HTTP proxies (~10k candidates, several hundred usually alive, up from a few dozen), and an empty pool starts using proxies while the first sweep is still running
-- **Proxy on means proxied** — a rotated key gets a different proxy; with few or no green proxies a request reuses one or takes a red one rather than going direct; right after a start it waits for the list to load
-- Key tests can go through the proxy or direct for providers that use it, and the Proxy tab can select all/none
-- **Deleting a provider's last key keeps the provider** — it's switched off and moved to the end until you add a key (deleting a provider is still its own action)
-- **Paste many keys at once** — the key boxes take several keys separated by spaces, commas or new lines; each is tested, the working ones are added, and the failed ones stay in the box
-- **Test all** and **Copy .env** ask for the admin password again first; the server checks it before handing out the `.env` file
-- Removed the keep-alive ping setting: it pinged the server from inside itself, so it couldn't keep a free host awake
+1. **Status code ranges and comparisons** — `[STATUS_CODES:...]` and the default in Settings take codes, ranges and comparisons, mixed with commas: `403, 420-429, >=500`. Settings refuses anything it can't read instead of silently dropping it, and tells you which codes it covers
+2. **Per-key values** — a key can carry values for `{placeholders}` in its provider's URLs (`token|accountId=abc`), so providers like Cloudflare Workers AI rotate across accounts
+3. **Custom models URL** — any provider can list its models from somewhere other than `{base URL}/models`; the models browser and Telegram bot read lists in any common shape
+4. **Redesigned admin panel** — collapsible providers with expand/collapse all, an Add provider dialog, drag-to-reorder keys, and a full phone layout
+5. **Test all** — one button checks every key of every provider without spending tokens; each key gets a status dot and each provider a summary
+6. Request logs show the model each request asked for (searchable and sortable)
+7. Keys are validated even for providers without a `/models` endpoint
+8. **Proxy picking** — proxies are green (under 1000ms by default) or red; each request takes a random green one no other request is using, moves on to the next on failure (5 tries by default), and background checks keep the list and its colours current. Both numbers are set in the Proxy tab
+9. **Providers without a key** — leave the keys empty when adding a provider; it's added only if its models list answers without one, and it works with proxies like any other
+10. **Refresh & test** — one button in the Proxy tab fetches fresh lists and tests every proxy, yours included. Refreshes every 30 minutes (both timers are set in the Proxy tab) and whenever green drops under 15, keeps the proxies that still work, and drops fetched ones that fail two checks in a row, so the list shows what actually works
+11. **More free proxies** — the auto-fetched pool also pulls proxifly/free-proxy-list and HTTP proxies (~10k candidates, several hundred usually alive, up from a few dozen), and an empty pool starts using proxies while the first sweep is still running
+12. **Proxy on means proxied** — a rotated key gets a different proxy; with few or no green proxies a request reuses one or takes a red one rather than going direct; right after a start it waits for the list to load
+13. Key tests can go through the proxy or direct for providers that use it, and the Proxy tab can select all/none
+14. **Deleting a provider's last key keeps the provider** — it's switched off and moved to the end until you add a key (deleting a provider is still its own action)
+15. **Paste many keys at once** — the key boxes take several keys separated by spaces, commas or new lines; each is tested, the working ones are added, and the failed ones stay in the box
+16. **Test all** and **Copy .env** ask for the admin password again first; the server checks it before handing out the `.env` file
+17. Removed the keep-alive ping setting: it pinged the server from inside itself, so it couldn't keep a free host awake
 
 **Breaking Changes**:
-- The old `400+` (above 400) and `400=+` (400 and above) status code forms are gone. Use `>400` and `>=400` instead
-- **Migration**: search your apps for `[STATUS_CODES:` and replace any `NNN+` with `>NNN` and `NNN=+` with `>=NNN`. In a header, an old form is now ignored; if nothing else in it is valid, rotato rotates on 429 only
+1. The old `400+` (above 400) and `400=+` (400 and above) status code forms are gone. Use `>400` and `>=400` instead
+2. **Migration**: search your apps for `[STATUS_CODES:` and replace any `NNN+` with `>NNN` and `NNN=+` with `>=NNN`. In a header, an old form is now ignored; if nothing else in it is valid, rotato rotates on 429 only
 
 ### Version 6.x.x
-- **Telegram Bot** — chat with any model from Telegram with interactive model selection, conversation history, image input/output support
-- **File Logging** — all API requests logged to `logs.jsonl` with debounced writes
-- **Settings Panel** — gear icon in admin panel for configuring Telegram bot
-- Admin panel improvements: password input autofocus, logs sorted newest-first, disabled providers shown at bottom
+1. **Telegram Bot** — chat with any model from Telegram with interactive model selection, conversation history, image input/output support
+2. **File Logging** — all API requests logged to `logs.jsonl` with debounced writes
+3. **Settings Panel** — gear icon in admin panel for configuring Telegram bot
+4. Admin panel improvements: password input autofocus, logs sorted newest-first, disabled providers shown at bottom
 
 ### Version 5.x.x
-- Streaming support — SSE responses piped through without buffering
-- Disable/enable individual API keys (persisted via `~` prefix in `.env`)
-- Disable/enable entire providers (`_DISABLED=true` in `.env`)
-- Reorder API keys to control rotation priority
-- Per-key usage tracking displayed in admin panel
-- Logs now show which key was used and which keys failed per request
+1. Streaming support — SSE responses piped through without buffering
+2. Disable/enable individual API keys (persisted via `~` prefix in `.env`)
+3. Disable/enable entire providers (`_DISABLED=true` in `.env`)
+4. Reorder API keys to control rotation priority
+5. Per-key usage tracking displayed in admin panel
+6. Logs now show which key was used and which keys failed per request
 
 ### Version 4.x.x
-- Dynamic status code configuration via headers
-- Optional ACCESS_KEY for provider-level security
-- Enhanced admin panel with improved UX
-- Auto-generated curl commands reflect the new API format
+1. Dynamic status code configuration via headers
+2. Optional ACCESS_KEY for provider-level security
+3. Enhanced admin panel with improved UX
+4. Auto-generated curl commands reflect the new API format
 
 **Breaking Changes**:
-- API endpoints changed from `/provider/v1/*` to `/provider/*`
-- Version suffix (`/v1`) now derived from provider's base URL configuration
-- **Migration**: Simply copy the curl command from admin panel to see the new format in action
+1. API endpoints changed from `/provider/v1/*` to `/provider/*`
+2. Version suffix (`/v1`) now derived from provider's base URL configuration
+3. **Migration**: Simply copy the curl command from admin panel to see the new format in action
 
 ### Version 3.x.x
-- Enhanced admin panel with better UI/UX
-- No breaking changes
+1. Enhanced admin panel with better UI/UX
+2. No breaking changes
 
 ### Version 2.x.x
-- Added admin panel for dynamic provider management
-- No breaking changes
+1. Added admin panel for dynamic provider management
+2. No breaking changes
 
 ### Version 1.x.x
-- Basic API key rotation
-- OpenAI and Gemini-compatible API support
-
-### Screenshots
-
-<img width="3600" height="2110" alt="Image" src="https://github.com/user-attachments/assets/e2dba567-31b7-4b1a-9b60-6bd4532aeb1f" />
-
-<img width="3600" height="2110" alt="Image" src="https://github.com/user-attachments/assets/0dcfeac0-f1fa-40ab-8afa-5f1a83cc2b74" />
-
-<img width="3600" height="2110" alt="Image" src="https://github.com/user-attachments/assets/d550796a-5b51-427f-a81c-d0e7a881782c" />
-
-<img width="3600" height="2110" alt="Image" src="https://github.com/user-attachments/assets/e4da21f4-0e33-4089-9982-e61cfeffdb5d" />
-
-<img width="3600" height="2110" alt="Image" src="https://github.com/user-attachments/assets/d459f988-eae2-4495-bcb0-98aa6587419e" />
-
-<img width="3600" height="2110" alt="Image" src="https://github.com/user-attachments/assets/5faa6bee-0eee-4b1f-8772-c1828184b1d1" />
-
-## Contributing
-
-Contributions are warmly welcomed and greatly appreciated! Whether it's a bug fix, new feature, or improvement, your input helps make this project better for everyone.
-
-Before submitting a pull request, please:
-
-1. Create an issue describing the feature or bug fix you'd like to work on
-2. Wait for discussion and approval to ensure alignment with project goals
-3. Fork the repository and create your feature branch
-4. Submit your pull request with a clear description of changes
-
-This approach helps avoid duplicate efforts and ensures smooth collaboration. Thank you for considering contributing!
+1. Basic API key rotation
+2. OpenAI and Gemini-compatible API support
 
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## Share
+## Contributing
 
-Sharing this repository with your friends is just one click away from here
+Contributions are very welcome, thank you! Before you start on a pull request, please open an issue and tell me what you would like to add or change. That way we can agree on it first, and your time is not wasted on something that might not fit. Thanks for helping make rotato better.
 
-[![facebook](https://user-images.githubusercontent.com/6418354/179013321-ac1d1452-0689-493f-9066-940cf2302b6e.png)](https://www.facebook.com/sharer/sharer.php?u=https://github.com/p32929/rotato/)
-[![twitter](https://user-images.githubusercontent.com/6418354/179013351-7d8d6d1c-4ce2-46ab-bef8-4c4765a1b888.png)](https://twitter.com/intent/tweet?url=https://github.com/p32929/rotato/)
-[![tumblr](https://user-images.githubusercontent.com/6418354/179013343-3111f55a-3b90-40c7-8487-9777348672b0.png)](https://www.tumblr.com/share?v=3&u=https://github.com/p32929/rotato/)
-[![pocket](https://user-images.githubusercontent.com/6418354/179013334-b095c45f-becf-49f4-9ee1-5a731a9b1f85.png)](https://getpocket.com/save?url=https://github.com/p32929/rotato/)
-[![pinterest](https://user-images.githubusercontent.com/6418354/179013331-44cd9206-11b1-4b65-becb-5863b61c828f.png)](https://pinterest.com/pin/create/button/?url=https://github.com/p32929/rotato/)
-[![reddit](https://user-images.githubusercontent.com/6418354/179013338-7416ae3f-73ba-4522-86e1-1374d7082d22.png)](https://www.reddit.com/submit?url=https://github.com/p32929/rotato/)
-[![linkedin](https://user-images.githubusercontent.com/6418354/179013327-ca7b7102-1da8-4b1c-858f-1a6e5f21bd70.png)](https://www.linkedin.com/shareArticle?mini=true&url=https://github.com/p32929/rotato/)
-[![whatsapp](https://user-images.githubusercontent.com/6418354/179013353-f477fa0b-3e6f-4138-a357-c9991b23ff88.png)](https://api.whatsapp.com/send?text=https://github.com/p32929/rotato/)
+## You might also like
 
----
+<p><a href="https://openstore.pfay.workers.dev/more/p32929/rotato/personal/0"><picture><source media="(prefers-color-scheme: dark)" srcset="https://openstore.pfay.workers.dev/more/p32929/rotato/personal/0-dark.svg"><img src="https://openstore.pfay.workers.dev/more/p32929/rotato/personal/0-light.svg" width="50%" align="top" alt="More apps by p32929 on OpenStore (1)"></picture></a><a href="https://openstore.pfay.workers.dev/more/p32929/rotato/personal/1"><picture><source media="(prefers-color-scheme: dark)" srcset="https://openstore.pfay.workers.dev/more/p32929/rotato/personal/1-dark.svg"><img src="https://openstore.pfay.workers.dev/more/p32929/rotato/personal/1-light.svg" width="50%" align="top" alt="More apps by p32929 on OpenStore (2)"></picture></a><br><a href="https://openstore.pfay.workers.dev/more/p32929/rotato/personal/2"><picture><source media="(prefers-color-scheme: dark)" srcset="https://openstore.pfay.workers.dev/more/p32929/rotato/personal/2-dark.svg"><img src="https://openstore.pfay.workers.dev/more/p32929/rotato/personal/2-light.svg" width="50%" align="top" alt="More apps by p32929 on OpenStore (3)"></picture></a><a href="https://openstore.pfay.workers.dev/more/p32929/rotato/personal/3"><picture><source media="(prefers-color-scheme: dark)" srcset="https://openstore.pfay.workers.dev/more/p32929/rotato/personal/3-dark.svg"><img src="https://openstore.pfay.workers.dev/more/p32929/rotato/personal/3-light.svg" width="50%" align="top" alt="More apps by p32929 on OpenStore (4)"></picture></a></p>
 
-## Support
-
-If this saved you time, you can buy me a coffee — it keeps these projects maintained and free.
-
-[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-%E2%98%95-FFDD00?style=for-the-badge&logo=buymeacoffee&logoColor=black)](https://www.buymeacoffee.com/p32929)
-
-**Sponsor a mention** — $499 one-time: your name + link in this section for 3 months. **$1,200 one-time:** featured placement at the top of this section, plus a pinned mention on [my X profile](https://x.com/p32929), for 3 months. Email **[fayazdevinbox@uberip.com](mailto:fayazdevinbox@uberip.com)** for an invoice.
-
-<!-- hire-block -->
-
----
-
-## 💼 Using this at a company?
-
-I do fixed-price delivery work on my own projects. One invoice, one date, no hourly billing:
-
-| | |
-|---|---|
-| **White-label build** — this project rebranded, extended and deployed as yours | **$6,500** · 3 weeks |
-| **Custom app from scratch** on my own stack, signed and auto-updating | **$12,500** · 6 weeks |
-| **Production-hardening sprint** — 72 hours on this project, for your load and your security review | **$999** |
-| **Ongoing capacity** — one project-week of my time reserved every month | **$9,000 / month** |
-
-Full details → **[p32929.github.io/hire](https://p32929.github.io/hire/)** · Email **[fayazdevinbox@uberip.com](mailto:fayazdevinbox@uberip.com)** — scoping and quotes are free and I answer within one business day.
+<p><a href="https://p32929.github.io/share/?repo=rotato"><picture><source media="(prefers-color-scheme: dark)" srcset="https://p32929.github.io/readme/footer-share-dark.svg"><img src="https://p32929.github.io/readme/footer-share-light.svg" width="50%" align="top" alt="Share this project with your friends in one click"></picture></a><a href="https://p32929.github.io/support/"><picture><source media="(prefers-color-scheme: dark)" srcset="https://p32929.github.io/readme/footer-support-dark.svg"><img src="https://p32929.github.io/readme/footer-support-light.svg" width="50%" align="top" alt="If you like my work and want to support me, feel free to support"></picture></a><br><a href="https://openstore.pfay.workers.dev/add"><picture><source media="(prefers-color-scheme: dark)" srcset="https://p32929.github.io/readme/footer-join-dark.svg"><img src="https://p32929.github.io/readme/footer-join-light.svg" width="100%" align="top" alt="Put your own apps on OpenStore: free, your listing lives in your own repo"></picture></a></p>
